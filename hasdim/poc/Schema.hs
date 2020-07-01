@@ -18,117 +18,143 @@ import           Data.Text                      ( Text )
 import           Data.Vector.Storable          as V
 
 
+-- general interface for data tables
+
 class Table t where
-  countRows :: t -> IO Int
   type RefTables t
   type RowType t
+
+  countRows :: t -> IO Int
+
   getRow :: RefTables t -> t -> Int -> IO (RowType t)
 
+  enumRows :: RefTables t -> t -> (Int -> RowType t-> IO ()) -> IO ()
+  enumRows !refs !tab !process = do
+    rowCnt <- countRows  tab
+    let   go :: Int -> IO ()
+          go !rowNo = if rowNo >= rowCnt
+            then return ()
+            else do
+              row <- getRow refs tab rowNo
+              process rowNo row
+              go (rowNo + 1)
+    go 0
 
--- atomic data types
+-- tag for a data field type, mapping field definition type to respective
+-- storage data type
+-- the result types should normally each have a Storable instance
+type family Field field
+
+-- encode the storage data type of a table column as a Vector of its
+-- respective field's Storable data type
+newtype Column field = Column (Vector (Field field))
+
+
+
+-- atomic storage data types
+
 type InstrumentId = Text
 type TradeTime = Int64
 type TradeMinutes = Int32
+type Price = Double
 
 
--- encode a field definition with a vanilla type
+-- encode field definitions as vanilla ADTs with Field instance
+
 newtype TradeBegin = TradeBegin TradeTime
+type instance Field TradeBegin = TradeTime
+
 newtype TradeDuration = TradeDuration TradeMinutes
+type instance Field TradeDuration = TradeMinutes
+
+-- the field referencing a row in TradePeriod table
+newtype MinuBar'TradePeriod = MinuBar'TradePeriod Int
+type instance Field MinuBar'TradePeriod = Int
+
+-- open time of a bar, since begin of the trade period
+newtype MinuBarOpen = MinuBarOpen TradeMinutes
+type instance Field MinuBarOpen = TradeMinutes
+
+newtype OpenPrice = OpenPrice Price
+type instance Field OpenPrice = Price
+newtype HighPrice = HighPrice Price
+type instance Field HighPrice = Price
+newtype LowPrice = LowPrice Price
+type instance Field LowPrice = Price
+newtype ClosePrice = ClosePrice Price
+type instance Field ClosePrice = Price
 
 
--- encode a table structure definition with a closed type family
-type family TradePeriod field where
-  -- encode table fields with data instances, 
-  -- stating a column's atomic data type
-  TradePeriod TradeBegin = TradeTime
-  TradePeriod TradeDuration = TradeMinutes
 
--- encode the storage of a table column with a vector of its atomic data type
-newtype TradePeriod'Column field = TradePeriod'Column
-  (Vector (TradePeriod field))
-
--- encode the storage of a table with a vanilla ADT
+-- encode the storage data type of a table as a vanilla ADT
 data TradePeriod'Table = TradePeriod'Table
   !InstrumentId
-  !(TradePeriod'Column TradeBegin)
-  !(TradePeriod'Column TradeDuration)
+  !(Column TradeBegin)
+  !(Column TradeDuration)
 
--- encode the row type of a table with a vanilla ADT
+-- encode the row type of a table as a vanilla ADT
 data TradePeriod'Row = TradePeriod'Row
-  !(TradePeriod TradeBegin)
-  !(TradePeriod TradeDuration)
+  !(Field TradeBegin)
+  !(Field TradeDuration)
 
+-- implement the Table class
 instance Table TradePeriod'Table where
-  countRows (TradePeriod'Table _ (TradePeriod'Column !colTradeBegin) (TradePeriod'Column !colTradeDuration))
+  type RefTables TradePeriod'Table = ()
+  type RowType TradePeriod'Table = TradePeriod'Row
+
+  countRows (TradePeriod'Table _ (Column !colTradeBegin) (Column !colTradeDuration))
     = do
       let cnt = V.length colTradeBegin
       unless (cnt == V.length colTradeDuration) $ throwIO $ TypeError
         "length mismatch across columns"
       return cnt
-  type RefTables TradePeriod'Table = ()
-  type RowType TradePeriod'Table = TradePeriod'Row
-  getRow () tab@(TradePeriod'Table _ (TradePeriod'Column !colTradeBegin) (TradePeriod'Column !colTradeDuration)) !row
+  getRow () tab@(TradePeriod'Table _ (Column !colTradeBegin) (Column !colTradeDuration)) !row
     = do
       rowCnt <- countRows tab
       unless (row >= 0 && row < rowCnt) $ throwIO $ TypeError
         "row index out of range"
       return $ TradePeriod'Row (unsafeIndex colTradeBegin row)
                                (unsafeIndex colTradeDuration row)
-
--- boilerplate code for enumeration of all rows from a table
-enumRowsOfTradePeriod
-  :: TradePeriod'Table -> (Int -> TradePeriod'Row -> IO ()) -> IO ()
-enumRowsOfTradePeriod tab@(TradePeriod'Table _ (TradePeriod'Column !colTradeBegin) (TradePeriod'Column !colTradeDuration)) !process
-  = do
-    rowCnt <- countRows tab
-    let go :: Int -> IO ()
-        go !row = if row >= rowCnt
-          then return ()
-          else do
-            process row $ TradePeriod'Row (unsafeIndex colTradeBegin row)
-                                          (unsafeIndex colTradeDuration row)
-            go $ row + 1
-    go 0
+  -- boilerplate code to enumerate all rows from a table, eliding
+  -- bounds checks for better performance
+  enumRows () tab@(TradePeriod'Table _ (Column !colTradeBegin) (Column !colTradeDuration)) !process
+    = do
+      rowCnt <- countRows tab
+      let go :: Int -> IO ()
+          go !row = if row >= rowCnt
+            then return ()
+            else do
+              process row $ TradePeriod'Row (unsafeIndex colTradeBegin row)
+                                            (unsafeIndex colTradeDuration row)
+              go $ row + 1
+      go 0
 
 
 
--- the field referencing a row in TradePeriod table
-newtype MinuBar'TradePeriod = MinuBar'TradePeriod Int
-
--- open time of a bar, since begin of the trade period
-newtype MinuBarOpen = MinuBarOpen TradeMinutes
-
--- minute bar table structure
-type family MinuBar field where
-  MinuBar MinuBar'TradePeriod = Int
-  MinuBar MinuBarOpen = TradeMinutes
-
--- column data type for minute bar table
-newtype MinuBar'Column field = MinuBar'Column
-  (Vector (MinuBar field))
-
--- data type of a minute bar table
+-- storage data type of minute bar table
 data MinuBar'Table = MinuBar'Table
   !InstrumentId
   !TradeMinutes -- single bar span
-  !(MinuBar'Column MinuBar'TradePeriod)
-  !(MinuBar'Column MinuBarOpen)
+  !(Column MinuBar'TradePeriod)
+  !(Column MinuBarOpen)
 
--- data type of a minute bar table raw
+-- row type of minute bar table
 data MinuBar'Row = MinuBar'Row
   !TradePeriod'Row
-  !(MinuBar MinuBarOpen)
+  !(Field MinuBarOpen)
 
+-- implement the Table class
 instance Table MinuBar'Table where
-  countRows (MinuBar'Table _ _ (MinuBar'Column !col'MinuBar'TradePeriod) (MinuBar'Column !col'MinuBarOpen))
+  type RefTables MinuBar'Table = TradePeriod'Table
+  type RowType MinuBar'Table = MinuBar'Row
+
+  countRows (MinuBar'Table _ _ (Column !col'MinuBar'TradePeriod) (Column !col'MinuBarOpen))
     = do
       let cnt = V.length col'MinuBar'TradePeriod
       unless (cnt == V.length col'MinuBarOpen) $ throwIO $ TypeError
         "length mismatch across columns"
       return cnt
-  type RefTables MinuBar'Table = TradePeriod'Table
-  type RowType MinuBar'Table = MinuBar'Row
-  getRow !tabTradePeriod tab@(MinuBar'Table _ _ (MinuBar'Column !col'MinuBar'TradePeriod) (MinuBar'Column !col'MinuBarOpen)) !row
+  getRow !tabTradePeriod tab@(MinuBar'Table _ _ (Column !col'MinuBar'TradePeriod) (Column !col'MinuBarOpen)) !row
     = do
       rowCnt <- countRows tab
       unless (row >= 0 && row < rowCnt) $ throwIO $ TypeError
@@ -140,37 +166,27 @@ instance Table MinuBar'Table where
 
 
 
-type Price = Double
-
-newtype OpenPrice = OpenPrice Price
-newtype HighPrice = HighPrice Price
-newtype LowPrice = LowPrice Price
-newtype ClosePrice  =ClosePrice Price
-
-type family MinuOHLC field where
-  MinuOHLC OpenPrice = Price
-  MinuOHLC HighPrice = Price
-  MinuOHLC LowPrice = Price
-  MinuOHLC ClosePrice = Price
-
-newtype MinuOHLC'Column field = MinuOHLC'Column
-  (Vector (MinuOHLC field))
-
+-- the storage data type of minute ohlc bar table
 data MinuOHLC'Table = MinuOHLC'Table
-  !(MinuOHLC'Column OpenPrice)
-  !(MinuOHLC'Column HighPrice)
-  !(MinuOHLC'Column LowPrice)
-  !(MinuOHLC'Column ClosePrice)
+  !(Column OpenPrice)
+  !(Column HighPrice)
+  !(Column LowPrice)
+  !(Column ClosePrice)
 
+-- row type of minute ohlc bar table
 data MinuOHLC'Row = MinuOHLC'Row
   !MinuBar'Row
-  !(MinuOHLC OpenPrice)
-  !(MinuOHLC HighPrice)
-  !(MinuOHLC LowPrice)
-  !(MinuOHLC ClosePrice)
+  !(Field OpenPrice)
+  !(Field HighPrice)
+  !(Field LowPrice)
+  !(Field ClosePrice)
 
+-- implement the Table class
 instance Table MinuOHLC'Table where
-  countRows (MinuOHLC'Table (MinuOHLC'Column !col'OpenPrice) (MinuOHLC'Column !col'HighPrice) (MinuOHLC'Column !col'LowPrice) (MinuOHLC'Column !col'ClosePrice))
+  type RefTables MinuOHLC'Table = (TradePeriod'Table, MinuBar'Table)
+  type RowType MinuOHLC'Table = MinuOHLC'Row
+
+  countRows (MinuOHLC'Table (Column !col'OpenPrice) (Column !col'HighPrice) (Column !col'LowPrice) (Column !col'ClosePrice))
     = do
       let cnt = V.length col'OpenPrice
       unless (cnt == V.length col'HighPrice) $ throwIO $ TypeError
@@ -180,9 +196,7 @@ instance Table MinuOHLC'Table where
       unless (cnt == V.length col'ClosePrice) $ throwIO $ TypeError
         "length mismatch across columns"
       return cnt
-  type RefTables MinuOHLC'Table = (TradePeriod'Table, MinuBar'Table)
-  type RowType MinuOHLC'Table = MinuOHLC'Row
-  getRow (!tabTradePeriod, !tabMinuBar) tab@(MinuOHLC'Table (MinuOHLC'Column !col'OpenPrice) (MinuOHLC'Column !col'HighPrice) (MinuOHLC'Column !col'LowPrice) (MinuOHLC'Column !col'ClosePrice)) !row
+  getRow (!tabTradePeriod, !tabMinuBar) tab@(MinuOHLC'Table (Column !col'OpenPrice) (Column !col'HighPrice) (Column !col'LowPrice) (Column !col'ClosePrice)) !row
     = do
       rowCnt0 <- countRows tabMinuBar
       rowCnt  <- countRows tab
@@ -196,26 +210,19 @@ instance Table MinuOHLC'Table where
                             (unsafeIndex col'HighPrice row)
                             (unsafeIndex col'LowPrice row)
                             (unsafeIndex col'ClosePrice row)
-
-enumRowsOfMinuOHLC
-  :: TradePeriod'Table
-  -> MinuBar'Table
-  -> MinuOHLC'Table
-  -> (Int -> MinuOHLC'Row -> IO ())
-  -> IO ()
-enumRowsOfMinuOHLC !tabTradePeriod !tabMinuBar tab@(MinuOHLC'Table (MinuOHLC'Column !col'OpenPrice) (MinuOHLC'Column !col'HighPrice) (MinuOHLC'Column !col'LowPrice) (MinuOHLC'Column !col'ClosePrice)) !process
-  = do
-    rowCnt <- countRows tab
-    let go :: Int -> IO ()
-        go !row = if row >= rowCnt
-          then return ()
-          else do
-            rowTradePeriod <- getRow tabTradePeriod tabMinuBar row
-            process row $ MinuOHLC'Row rowTradePeriod
-                                       (unsafeIndex col'OpenPrice row)
-                                       (unsafeIndex col'HighPrice row)
-                                       (unsafeIndex col'LowPrice row)
-                                       (unsafeIndex col'ClosePrice row)
-            go $ row + 1
-    go 0
+  enumRows (!tabTradePeriod, !tabMinuBar) tab@(MinuOHLC'Table (Column !col'OpenPrice) (Column !col'HighPrice) (Column !col'LowPrice) (Column !col'ClosePrice)) !process
+    = do
+      rowCnt <- countRows tab
+      let go :: Int -> IO ()
+          go !row = if row >= rowCnt
+            then return ()
+            else do
+              rowTradePeriod <- getRow tabTradePeriod tabMinuBar row
+              process row $ MinuOHLC'Row rowTradePeriod
+                                         (unsafeIndex col'OpenPrice row)
+                                         (unsafeIndex col'HighPrice row)
+                                         (unsafeIndex col'LowPrice row)
+                                         (unsafeIndex col'ClosePrice row)
+              go $ row + 1
+      go 0
 
