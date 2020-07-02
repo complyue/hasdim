@@ -100,8 +100,8 @@ data MinuBar'Table = MinuBar'Table {
     meta'MinuBar'InstruId :: !InstrumentId
     -- single bar span
   , meta'MinuBar'Freq :: !TradeMinutes
-    -- reference TradePeriod table
-  , fk'MinuBar'TradePeriod'Begin :: !(Column Int)
+    -- foreign key, referencing TradePeriod table
+  , fk'MinuBar'TradePeriod :: !(Column Int)
     -- number of minutes elapsed since period begin
   , col'MinuBar'OpenTime :: !(Column TradeMinutes)
   }
@@ -134,8 +134,13 @@ instance Table MinuBar'Table where
 
 
 -- the storage data type of minute ohlc bar table
+-- physically aligned with the MinuBar table having same instru & freq
 data MinuOHLC'Table = MinuOHLC'Table {
-    col'MinuOHLC'OpenPrice :: !(Column Price)
+    meta'MinuOHLC'InstruId
+    -- single bar span
+  , meta'MinuOHLC'Freq :: !TradeMinutes
+    -- ohlc as 4 columns
+  , col'MinuOHLC'OpenPrice :: !(Column Price)
   , col'MinuOHLC'HighPrice ::  !(Column Price)
   , col'MinuOHLC'LowPrice ::  !(Column Price)
   , col'MinuOHLC'ClosePrice ::  !(Column Price)
