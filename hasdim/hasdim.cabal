@@ -22,7 +22,7 @@ source-repository head
 
 library
     exposed-modules:
-        Dim.Batteries
+        Dim.EHI
     hs-source-dirs: pub
     default-language: Haskell2010
     default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase
@@ -72,6 +72,7 @@ library hasdim-poc
                         RankNTypes
     ghc-options: -Wall
     build-depends:
+        hasdim-internal -any,
         base >=4.12,
         stm >=2.5,
         nedh -any,
@@ -97,6 +98,7 @@ library hasdim-poc
 
 library hasdim-internal
     exposed-modules:
+        Dim.XCHG
         Dim.Dim
         Dim.Fact
         Dim.Array
@@ -104,6 +106,7 @@ library hasdim-internal
     default-language: Haskell2010
     default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase
                         BangPatterns TupleSections ScopedTypeVariables
+                        FlexibleInstances UndecidableInstances
     ghc-options: -Wall
     build-depends:
         base >=4.12,

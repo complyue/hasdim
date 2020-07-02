@@ -1,6 +1,7 @@
 
-module Dim.Batteries
+module Dim.EHI
   ( installDimBatteries
+  , module Dim.XCHG
   , module Dim.Array
   )
 where
@@ -15,6 +16,8 @@ import qualified Data.HashMap.Strict           as Map
 import           Dim.Array
 
 import           Language.Edh.EHI
+
+import           Dim.XCHG
 
 
 installDimBatteries :: EdhWorld -> IO ()

@@ -9,43 +9,16 @@ import           Foreign
 import           Control.Exception
 import           Control.Monad.Reader
 
-import           Control.Concurrent.STM
 
 import           Data.Text                      ( Text )
-import qualified Data.Text                     as T
+-- import qualified Data.Text                     as T
 -- import qualified Data.HashMap.Strict           as Map
 -- import           Data.Dynamic
 -- import           Data.Hashable
 
 import           Data.Vector.Storable          as V
 
-import           Data.Lossless.Decimal         as D
-
-import           Language.Edh.EHI
-
-
-
-class EdhXchg t where
-  toEdh :: (Storable t) => EdhProgState -> t -> (EdhValue -> STM ()) -> STM ()
-  fromEdh :: (Storable t) => EdhProgState  -> EdhValue -> (t -> STM ()) -> STM ()
-
-instance {-# OVERLAPPABLE #-} EdhXchg Double where
-  toEdh _pgs !n !exit = exit $ EdhDecimal $ fromRational $ toRational n
-  fromEdh _pgs (EdhDecimal !n) !exit = exit $ fromRational $ toRational n
-  fromEdh !pgs !v _ =
-    throwEdhSTM pgs EvalError $ "Number expected but given a " <> T.pack
-      (edhTypeNameOf v)
-
-instance {-# OVERLAPPABLE #-} (Integral a) => EdhXchg a where
-  toEdh _pgs !n !exit = exit $ EdhDecimal $ fromRational $ toRational n
-  fromEdh !pgs (EdhDecimal !n) !exit = case D.decimalToInteger n of
-    Nothing ->
-      throwEdhSTM pgs EvalError $ "Not an integer: " <> T.pack (show n)
-    Just !i -> exit $ fromInteger i
-  fromEdh !pgs !v _ =
-    throwEdhSTM pgs EvalError $ "Number expected but given a " <> T.pack
-      (edhTypeNameOf v)
-
+import           Dim.XCHG
 
 
 -- general interface for data tables
@@ -72,6 +45,7 @@ class Table t where
 
 -- tag for a data field type
 type Field t = (EdhXchg t, Storable t) => t
+-- column storage type for a field
 type Column t = (EdhXchg t, Storable t) => Vector t
 
 
