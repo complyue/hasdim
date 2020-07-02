@@ -66,17 +66,17 @@ type Price = Double
 
 
 
--- encode the storage data type of a table as a vanilla ADT
+-- encode the storage data type of a table as a vanilla strict ADT
 data TradePeriod'Table = TradePeriod'Table {
     meta'TradePeriod'InstruId :: !InstrumentId
   , pk'TradePeriod'Begin :: !(Column TradeTime)
   , col'TradePeriod'Duration :: !(Column TradeMinutes)
   }
 
--- encode the row type of a table as a vanilla ADT
+-- encode the row type of a table as a vanilla lazy ADT
 data TradePeriod'Row = TradePeriod'Row {
-    row'TradePeriod'Begin :: !(Field TradeTime)
-  , row'TradePeriod'Duration :: !(Field TradeMinutes)
+    row'TradePeriod'Begin :: (Field TradeTime)
+  , row'TradePeriod'Duration :: (Field TradeMinutes)
   }
 
 -- implement the Table class
@@ -108,8 +108,8 @@ data MinuBar'Table = MinuBar'Table {
 
 -- row type of minute bar table
 data MinuBar'Row = MinuBar'Row {
-    ref'MinuBar'TradePeriod :: !TradePeriod'Row
-  , row'MinuBar'OpenTime :: !(Field TradeMinutes)
+    ref'MinuBar'TradePeriod :: TradePeriod'Row
+  , row'MinuBar'OpenTime :: (Field TradeMinutes)
   }
 
 -- implement the Table class
@@ -148,11 +148,11 @@ data MinuOHLC'Table = MinuOHLC'Table {
 
 -- row type of minute ohlc bar table
 data MinuOHLC'Row = MinuOHLC'Row {
-    ref'MinuOHLC'MinuBar :: !MinuBar'Row
-  , row'MinuOHLC'OpenPrice :: !(Field Price)
-  , row'MinuOHLC'HighPrice ::  !(Field Price)
-  , row'MinuOHLC'LowPrice ::  !(Field Price)
-  , row'MinuOHLC'ClosePrice ::  !(Field Price)
+    ref'MinuOHLC'MinuBar :: MinuBar'Row
+  , row'MinuOHLC'OpenPrice :: (Field Price)
+  , row'MinuOHLC'HighPrice ::  (Field Price)
+  , row'MinuOHLC'LowPrice ::  (Field Price)
+  , row'MinuOHLC'ClosePrice ::  (Field Price)
   }
 
 -- implement the Table class
@@ -160,7 +160,7 @@ instance Table MinuOHLC'Table where
   type RefTables MinuOHLC'Table = (TradePeriod'Table, MinuBar'Table)
   type RowType MinuOHLC'Table = MinuOHLC'Row
 
-  countRows (!tabTradePeriod, !tabMinuBar) (MinuOHLC'Table (!col'OpenPrice) (!col'HighPrice) (!col'LowPrice) (!col'ClosePrice))
+  countRows (!tabTradePeriod, !tabMinuBar) (MinuOHLC'Table _ _ (!col'OpenPrice) (!col'HighPrice) (!col'LowPrice) (!col'ClosePrice))
     = do
       cnt <- countRows tabTradePeriod tabMinuBar
       unless (cnt == V.length col'OpenPrice) $ throwIO $ TypeError
@@ -172,7 +172,7 @@ instance Table MinuOHLC'Table where
       unless (cnt == V.length col'ClosePrice) $ throwIO $ TypeError
         "length mismatch across columns"
       return cnt
-  unsafeGetRow (!tabTradePeriod, !tabMinuBar) (MinuOHLC'Table (!col'OpenPrice) (!col'HighPrice) (!col'LowPrice) (!col'ClosePrice)) !rowNo
+  unsafeGetRow (!tabTradePeriod, !tabMinuBar) (MinuOHLC'Table _ _ (!col'OpenPrice) (!col'HighPrice) (!col'LowPrice) (!col'ClosePrice)) !rowNo
     = do
       rowMinuBar <- unsafeGetRow tabTradePeriod tabMinuBar rowNo
       return $ MinuOHLC'Row rowMinuBar
