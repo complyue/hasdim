@@ -100,13 +100,13 @@ library hasdim-internal
     exposed-modules:
         Dim.XCHG
         Dim.Dim
-        Dim.Fact
+        Dim.Table
         Dim.Array
     hs-source-dirs: src
     default-language: Haskell2010
     default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase
                         BangPatterns TupleSections ScopedTypeVariables
-                        FlexibleInstances UndecidableInstances
+                        GADTs FlexibleInstances UndecidableInstances
     ghc-options: -Wall
     build-depends:
         base >=4.12,
