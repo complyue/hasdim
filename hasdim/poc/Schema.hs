@@ -27,18 +27,25 @@ class Table t where
   type RefTables t
   type RowType t
 
-  countRows :: t -> IO Int
+  countRows :: RefTables t -> t -> IO Int
+
+  unsafeGetRow :: RefTables t -> t -> Int -> IO (RowType t)
 
   getRow :: RefTables t -> t -> Int -> IO (RowType t)
+  getRow !refs !tab !rowNo = do
+      rowCnt <- countRows refs tab
+      unless (rowNo >= 0 && rowNo < rowCnt) $ throwIO $ TypeError
+        "row index out of range"
+      unsafeGetRow refs tab rowNo
 
   enumRows :: RefTables t -> t -> (Int -> RowType t-> IO ()) -> IO ()
   enumRows !refs !tab !process = do
-    rowCnt <- countRows  tab
+    rowCnt <- countRows refs tab
     let   go :: Int -> IO ()
           go !rowNo = if rowNo >= rowCnt
             then return ()
             else do
-              row <- getRow refs tab rowNo
+              row <- unsafeGetRow refs tab rowNo
               process rowNo row
               go (rowNo + 1)
     go 0
@@ -77,31 +84,14 @@ instance Table TradePeriod'Table where
   type RefTables TradePeriod'Table = ()
   type RowType TradePeriod'Table = TradePeriod'Row
 
-  countRows (TradePeriod'Table _ (!colTradeBegin) (!colTradeDuration)) = do
+  countRows () (TradePeriod'Table _ (!colTradeBegin) (!colTradeDuration)) = do
     let cnt = V.length colTradeBegin
     unless (cnt == V.length colTradeDuration) $ throwIO $ TypeError
       "length mismatch across columns"
     return cnt
-  getRow () tab@(TradePeriod'Table _ (!colTradeBegin) (!colTradeDuration)) !row
-    = do
-      rowCnt <- countRows tab
-      unless (row >= 0 && row < rowCnt) $ throwIO $ TypeError
-        "row index out of range"
-      return $ TradePeriod'Row (unsafeIndex colTradeBegin row)
-                               (unsafeIndex colTradeDuration row)
-  -- boilerplate code to enumerate all rows from a table, eliding
-  -- bounds checks for better performance
-  enumRows () tab@(TradePeriod'Table _ (!colTradeBegin) (!colTradeDuration)) !process
-    = do
-      rowCnt <- countRows tab
-      let go :: Int -> IO ()
-          go !row = if row >= rowCnt
-            then return ()
-            else do
-              process row $ TradePeriod'Row (unsafeIndex colTradeBegin row)
-                                            (unsafeIndex colTradeDuration row)
-              go $ row + 1
-      go 0
+  unsafeGetRow () (TradePeriod'Table _ (!colTradeBegin) (!colTradeDuration)) !rowNo
+    = return $ TradePeriod'Row (unsafeIndex colTradeBegin rowNo)
+                               (unsafeIndex colTradeDuration rowNo)
 
 
 
@@ -112,7 +102,7 @@ data MinuBar'Table = MinuBar'Table {
   , meta'MinuBar'Freq :: !TradeMinutes
     -- reference TradePeriod table
   , fk'MinuBar'TradePeriod'Begin :: !(Column Int)
-    -- since period begin
+    -- number of minutes elapsed since period begin
   , col'MinuBar'OpenTime :: !(Column TradeMinutes)
   }
 
@@ -127,21 +117,19 @@ instance Table MinuBar'Table where
   type RefTables MinuBar'Table = TradePeriod'Table
   type RowType MinuBar'Table = MinuBar'Row
 
-  countRows (MinuBar'Table _ _ (!col'MinuBar'TradePeriod) (!col'MinuBarOpen)) =
-    do
+  countRows _tabTradePeriod (MinuBar'Table _ _ (!col'MinuBar'TradePeriod) (!col'MinuBarOpen))
+    = do
       let cnt = V.length col'MinuBar'TradePeriod
       unless (cnt == V.length col'MinuBarOpen) $ throwIO $ TypeError
         "length mismatch across columns"
       return cnt
-  getRow !tabTradePeriod tab@(MinuBar'Table _ _ (!col'MinuBar'TradePeriod) (!col'MinuBarOpen)) !row
+  unsafeGetRow !tabTradePeriod (MinuBar'Table _ _ (!col'MinuBar'TradePeriod) (!col'MinuBarOpen)) !rowNo
     = do
-      rowCnt <- countRows tab
-      unless (row >= 0 && row < rowCnt) $ throwIO $ TypeError
-        "row index out of range"
-      rowTradePeriod <- getRow ()
-                               tabTradePeriod
-                               (unsafeIndex col'MinuBar'TradePeriod row)
-      return $ MinuBar'Row rowTradePeriod (unsafeIndex col'MinuBarOpen row)
+      rowTradePeriod <- unsafeGetRow
+        ()
+        tabTradePeriod
+        (unsafeIndex col'MinuBar'TradePeriod rowNo)
+      return $ MinuBar'Row rowTradePeriod (unsafeIndex col'MinuBarOpen rowNo)
 
 
 
@@ -167,9 +155,11 @@ instance Table MinuOHLC'Table where
   type RefTables MinuOHLC'Table = (TradePeriod'Table, MinuBar'Table)
   type RowType MinuOHLC'Table = MinuOHLC'Row
 
-  countRows (MinuOHLC'Table (!col'OpenPrice) (!col'HighPrice) (!col'LowPrice) (!col'ClosePrice))
+  countRows (!tabTradePeriod, !tabMinuBar) (MinuOHLC'Table (!col'OpenPrice) (!col'HighPrice) (!col'LowPrice) (!col'ClosePrice))
     = do
-      let cnt = V.length col'OpenPrice
+      cnt <- countRows tabTradePeriod tabMinuBar
+      unless (cnt == V.length col'OpenPrice) $ throwIO $ TypeError
+        "length mismatch across columns"
       unless (cnt == V.length col'HighPrice) $ throwIO $ TypeError
         "length mismatch across columns"
       unless (cnt == V.length col'LowPrice) $ throwIO $ TypeError
@@ -177,33 +167,13 @@ instance Table MinuOHLC'Table where
       unless (cnt == V.length col'ClosePrice) $ throwIO $ TypeError
         "length mismatch across columns"
       return cnt
-  getRow (!tabTradePeriod, !tabMinuBar) tab@(MinuOHLC'Table (!col'OpenPrice) (!col'HighPrice) (!col'LowPrice) (!col'ClosePrice)) !row
+  unsafeGetRow (!tabTradePeriod, !tabMinuBar) (MinuOHLC'Table (!col'OpenPrice) (!col'HighPrice) (!col'LowPrice) (!col'ClosePrice)) !rowNo
     = do
-      rowCnt0 <- countRows tabMinuBar
-      rowCnt  <- countRows tab
-      unless (rowCnt == rowCnt0) $ throwIO $ TypeError
-        "row count mismatch across tables"
-      unless (row >= 0 && row < rowCnt) $ throwIO $ TypeError
-        "row index out of range"
-      rowTradePeriod <- getRow tabTradePeriod tabMinuBar row
-      return $ MinuOHLC'Row rowTradePeriod
-                            (unsafeIndex col'OpenPrice row)
-                            (unsafeIndex col'HighPrice row)
-                            (unsafeIndex col'LowPrice row)
-                            (unsafeIndex col'ClosePrice row)
-  enumRows (!tabTradePeriod, !tabMinuBar) tab@(MinuOHLC'Table (!col'OpenPrice) (!col'HighPrice) (!col'LowPrice) (!col'ClosePrice)) !process
-    = do
-      rowCnt <- countRows tab
-      let go :: Int -> IO ()
-          go !row = if row >= rowCnt
-            then return ()
-            else do
-              rowTradePeriod <- getRow tabTradePeriod tabMinuBar row
-              process row $ MinuOHLC'Row rowTradePeriod
-                                         (unsafeIndex col'OpenPrice row)
-                                         (unsafeIndex col'HighPrice row)
-                                         (unsafeIndex col'LowPrice row)
-                                         (unsafeIndex col'ClosePrice row)
-              go $ row + 1
-      go 0
+      rowMinuBar <- unsafeGetRow tabTradePeriod tabMinuBar rowNo
+      return $ MinuOHLC'Row rowMinuBar
+                            (unsafeIndex col'OpenPrice rowNo)
+                            (unsafeIndex col'HighPrice rowNo)
+                            (unsafeIndex col'LowPrice rowNo)
+                            (unsafeIndex col'ClosePrice rowNo)
+
 
