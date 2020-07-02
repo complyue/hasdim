@@ -51,9 +51,9 @@ class Table t where
     go 0
 
 -- tag for a data field type
-type Field t = (EdhXchg t, Storable t) => t
+type Field t = t
 -- column storage type for a field
-type Column t = (EdhXchg t, Storable t) => Vector t
+type Column t = (EdhXchg (Field t), Storable (Field t)) => Vector (Field t)
 
 
 
