@@ -9,6 +9,8 @@ where
 import           Prelude
 -- import           Debug.Trace
 
+import           Control.Concurrent.STM
+
 import           Control.Monad.Reader
 
 import           Data.Int
@@ -20,11 +22,14 @@ import           Language.Edh.EHI
 
 import           Dim.XCHG
 import           Dim.DataType
+import           Dim.Table
 import           Dim.Array
 
 
 installDimBatteries :: EdhWorld -> IO ()
 installDimBatteries !world = do
+
+  defaultDataTypeVar <- atomically $ newTVar EdhNil
 
   void $ installEdhModule world "dim/dtypes" $ \pgs exit -> do
 
@@ -52,6 +57,9 @@ installDimBatteries !world = do
 
     seqcontSTM (wrapDataType pgs dtypeClass <$> dtypes) $ \ !dts -> do
 
+      -- use the first defined dt as default
+      writeTVar defaultDataTypeVar $ snd $ head dts
+
       artsDict <- createEdhDict
         $ Map.fromList [ (EdhString k, v) | (names, v) <- dts, k <- names ]
       updateEntityAttrs pgs (objEntity modu)
@@ -59,6 +67,27 @@ installDimBatteries !world = do
         ++ [(AttrByName "__exports__", artsDict)]
 
       exit
+
+
+  void $ installEdhModule world "dim/Table" $ \pgs exit -> do
+
+    let moduScope = contextScope $ edh'context pgs
+        modu      = thisObject moduScope
+
+    defaultDataType <- readTVar defaultDataTypeVar
+
+    !moduArts       <- sequence
+      [ (nm, ) <$> mkHostClass moduScope nm True hc
+      | (nm, hc) <- [("Column", colCtor defaultDataType)]
+      ]
+
+    artsDict <- createEdhDict
+      $ Map.fromList [ (EdhString k, v) | (k, v) <- moduArts ]
+    updateEntityAttrs pgs (objEntity modu)
+      $  [ (AttrByName k, v) | (k, v) <- moduArts ]
+      ++ [(AttrByName "__exports__", artsDict)]
+
+    exit
 
 
   void $ installEdhModule world "dim/Array" $ \pgs exit -> do

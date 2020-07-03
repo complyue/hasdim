@@ -14,16 +14,13 @@ import           Control.Concurrent.STM
 
 
 import           Data.Text                      ( Text )
--- import qualified Data.Text                     as T
+import qualified Data.Text                     as T
 import qualified Data.HashMap.Strict           as Map
 import           Data.Dynamic
--- import           Data.Hashable
 
--- import           Data.Typeable
 
 import           Data.Vector.Storable          as V
 import           Data.Vector.Storable.Mutable  as MV
--- import qualified Data.Vector.Storable.Internal as V
 
 import           Language.Edh.EHI
 
@@ -39,7 +36,7 @@ data DataType a where
     , read'data'vector'cell :: EdhProgState
         -> Int -> IOVector a -> (EdhValue -> STM ()) -> STM ()
     , write'data'vector'cell :: EdhProgState
-        -> EdhValue -> Int -> IOVector a -> STM () -> STM ()
+        -> EdhValue -> Int -> IOVector a -> (EdhValue -> STM ()) -> STM ()
     , grow'data'vector :: EdhProgState
         -> IOVector a -> EdhValue -> Int -> (IOVector a -> STM ()) -> STM ()
   }-> DataType a
@@ -47,14 +44,27 @@ data DataType a where
 dataType :: forall a . (Storable a, EdhXchg a) => DataType a
 dataType = DataType createVector readVectorCell writeVectorCell growVector
  where
+  reguIdx !pgs !vec !idx !exit =
+    let !posIdx = if idx < 0  -- Python style negative index
+          then idx + MV.length vec
+          else idx
+    in  if posIdx < 0 || posIdx >= MV.length vec
+          then
+            throwEdhSTM pgs EvalError
+            $  "Index out of bounds: "
+            <> T.pack (show idx)
+            <> " vs "
+            <> T.pack (show $ MV.length vec)
+          else exit posIdx
   createVector !pgs !iv !cap !exit =
     fromEdh pgs iv $ \ !isv -> exit $ doThraw $ V.replicate cap isv
-  readVectorCell !pgs !idx !vec !exit =
-    edhPerformIO pgs (MV.unsafeWith vec $ \ !vPtr -> peekElemOff vPtr idx)
+  readVectorCell !pgs !idx !vec !exit = reguIdx pgs vec idx $ \ !posIdx ->
+    edhPerformIO pgs (MV.unsafeWith vec $ \ !vPtr -> peekElemOff vPtr posIdx)
       $ \ !sv -> contEdhSTM $ toEdh pgs sv $ \ !val -> exit val
-  writeVectorCell !pgs !val !idx !vec !exit = fromEdh pgs val $ \ !sv -> do
-    unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr -> pokeElemOff vPtr idx sv
-    exit
+  writeVectorCell !pgs !val !idx !vec !exit =
+    reguIdx pgs vec idx $ \ !posIdx -> fromEdh pgs val $ \ !sv -> do
+      unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr -> pokeElemOff vPtr posIdx sv
+      toEdh pgs sv $ \ !val' -> exit val'
   growVector !pgs !vec !iv !cap !exit = if cap <= MV.length vec
     then exit $ MV.unsafeSlice 0 cap vec
     else fromEdh pgs iv $ \ !isv -> do
@@ -72,7 +82,7 @@ dataType = DataType createVector readVectorCell writeVectorCell growVector
 
 data ConcreteDataType where
   ConcreteDataType ::(Storable a, EdhXchg a) => {
-      canonical'data'type'name :: !Text
+      concrete'data'type'repr :: !Text
     , concrete'data'type :: !(DataType a)
     } -> ConcreteDataType
  deriving Typeable

@@ -4,6 +4,7 @@ export {
   # namespace dtypes () # better to nest dtypes within a namespace ?
   import * 'dim/dtypes'
 
+  import * 'dim/Table'
   import * 'dim/Array'
 
 }
