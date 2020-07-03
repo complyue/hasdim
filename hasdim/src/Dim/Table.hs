@@ -11,7 +11,7 @@ import           Control.Monad.Reader
 import           Control.Concurrent.STM
 
 
-import           Data.Text                      ( Text )
+-- import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 import qualified Data.HashMap.Strict           as Map
 import           Data.Dynamic
@@ -33,10 +33,9 @@ import           Dim.DataType
 -- safely typed for data manipulation.
 data Column where
   Column ::(Storable a, EdhXchg a) => {
-      column'data'type'repr :: !Text
       -- convey type safe manipulation operations by an instance, making
       -- each column suitable to be wrapped within an untyped Edh object
-    , column'data'type :: !(DataType a)
+      column'data'type :: !(DataType a)
       -- column length is number of valid elements, always smaller or equals
       -- to storage vector's length
     , column'length :: !(TVar Int)
@@ -53,32 +52,32 @@ createColumn
   -> TVar Int
   -> (Column -> STM ())
   -> STM ()
-createColumn !pgs (ConcreteDataType !dtr !dt) !cap !clv !exit =
+createColumn !pgs (ConcreteDataType _ !dt) !cap !clv !exit =
   create'data'vector dt pgs cap
-    $ \ !cs -> join $ exit . Column dtr dt clv <$> newTVar cs
+    $ \ !cs -> join $ exit . Column dt clv <$> newTVar cs
 
 columnCapacity :: Column -> STM Int
-columnCapacity (Column _ _ _ !csv) = MV.length <$> readTVar csv
+columnCapacity (Column _ _ !csv) = MV.length <$> readTVar csv
 
 columnLength :: Column -> STM Int
-columnLength (Column _ _ !clv _) = readTVar clv
+columnLength (Column _ !clv _) = readTVar clv
 
 markColumnLength :: Column -> Int -> STM ()
-markColumnLength (Column _ _ !clv _) !newLen = writeTVar clv newLen
+markColumnLength (Column _ !clv _) !newLen = writeTVar clv newLen
 
 readColumnCell
   :: EdhProgState -> Int -> Column -> (EdhValue -> STM ()) -> STM ()
-readColumnCell !pgs !idx (Column _ !dt _ !csv) !exit =
+readColumnCell !pgs !idx (Column !dt _ !csv) !exit =
   readTVar csv >>= \ !cs -> read'data'vector'cell dt pgs idx cs exit
 
 writeColumnCell
   :: EdhProgState -> EdhValue -> Int -> Column -> (EdhValue -> STM ()) -> STM ()
-writeColumnCell !pgs !val !idx (Column _ !dt _ !csv) !exit =
+writeColumnCell !pgs !val !idx (Column !dt _ !csv) !exit =
   readTVar csv >>= \ !cs -> write'data'vector'cell dt pgs val idx cs exit
 
 growColumn :: EdhProgState -> Column -> Int -> STM () -> STM ()
-growColumn !pgs (Column _ !dt !clv !csv) !cap !exit =
-  readTVar csv >>= \ !cs -> grow'data'vector dt pgs cs cap $ \ !cs' -> do
+growColumn !pgs (Column !dt !clv !csv) !cap !exit = readTVar csv >>= \ !cs ->
+  grow'data'vector dt pgs cs cap $ \ !cs' -> do
     writeTVar csv cs'
     !cl <- readTVar clv
     when (cl > cap) $ writeTVar clv cap
@@ -94,7 +93,7 @@ growColumn !pgs (Column _ !dt !clv !csv) !cap !exit =
 -- this avoids going through the IO Monad as to convert IOVector to Vector
 -- by Data.Vector.Storable.Mutable api
 columnData :: forall a . (Storable a, EdhXchg a) => Column -> STM (Vector a)
-columnData (Column _ _ !clv !csv) = do
+columnData (Column _ !clv !csv) = do
   !cl <- readTVar clv
   !cs <- readTVar csv
   case MV.unsafeToForeignPtr0 cs of
@@ -317,24 +316,28 @@ colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
   colReprProc :: EdhProcedure
   colReprProc _ !exit = do
     pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Just (Column !dtr _ !clv !csv) -> do
-          !cl <- readTVar clv
-          !cs <- readTVar csv
-          exitEdhSTM pgs exit
-            $  EdhString
-            $  "Column("
-            <> T.pack (show $ MV.length cs)
-            <> ", "
-            <> T.pack (show cl)
-            <> ", dtype="
-            <> dtr
-            <> ")"
-        _ ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a Column: " <> T.pack
-            (show esd)
+    let
+      !this = thisObject $ contextScope $ edh'context pgs
+      !es   = entity'store $ objEntity this
+      withDtRepr !dtr = do
+        esd <- readTVar es
+        case fromDynamic esd of
+          Just (Column _ !clv !csv) -> do
+            !cl <- readTVar clv
+            !cs <- readTVar csv
+            exitEdhSTM pgs exit
+              $  EdhString
+              $  "Column("
+              <> T.pack (show $ MV.length cs)
+              <> ", "
+              <> T.pack (show cl)
+              <> ", dtype="
+              <> dtr
+              <> ")"
+          _ ->
+            throwEdhSTM pgs UsageError $ "bug: this is not a Column: " <> T.pack
+              (show esd)
+    contEdhSTM $ lookupEdhObjAttr pgs this (AttrByName "dtype") >>= \case
+      EdhNil -> withDtRepr "f8" -- this is impossible but just in case
+      !dto   -> edhValueReprSTM pgs dto $ \dtr -> withDtRepr dtr
 
