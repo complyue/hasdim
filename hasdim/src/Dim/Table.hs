@@ -49,13 +49,12 @@ data Column where
 createColumn
   :: EdhProgState
   -> ConcreteDataType
-  -> EdhValue
   -> Int
   -> TVar Int
   -> (Column -> STM ())
   -> STM ()
-createColumn !pgs (ConcreteDataType !dtr !dt) !iv !cap !clv !exit =
-  create'data'vector dt pgs iv cap
+createColumn !pgs (ConcreteDataType !dtr !dt) !cap !clv !exit =
+  create'data'vector dt pgs cap
     $ \ !cs -> join $ exit . Column dtr dt clv <$> newTVar cs
 
 columnCapacity :: Column -> STM Int
@@ -77,10 +76,13 @@ writeColumnCell
 writeColumnCell !pgs !val !idx (Column _ !dt _ !csv) !exit =
   readTVar csv >>= \ !cs -> write'data'vector'cell dt pgs val idx cs exit
 
-growColumn :: EdhProgState -> Column -> EdhValue -> Int -> STM () -> STM ()
-growColumn !pgs (Column _ !dt _ !csv) !iv !cap !exit =
-  readTVar csv >>= \ !cs ->
-    grow'data'vector dt pgs cs iv cap $ \ !cs' -> writeTVar csv cs' >> exit
+growColumn :: EdhProgState -> Column -> Int -> STM () -> STM ()
+growColumn !pgs (Column _ !dt !clv !csv) !cap !exit =
+  readTVar csv >>= \ !cs -> grow'data'vector dt pgs cs cap $ \ !cs' -> do
+    writeTVar csv cs'
+    !cl <- readTVar clv
+    when (cl > cap) $ writeTVar clv cap
+    exit
 
 
 -- obtain valid column data as an immutable Storable Vector
@@ -150,8 +152,7 @@ colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
             $  methods
             ++ [(AttrByName "dtype", dto)]
           lv <- newTVar $ if len < 0 then cap else len
-          createColumn pgsCtor cdt (EdhDecimal 0) cap lv
-            $ \ !col -> ctorExit $ toDyn col
+          createColumn pgsCtor cdt cap lv $ \ !col -> ctorExit $ toDyn col
       case dto of
         EdhObject !o ->
           fromDynamic <$> readTVar (entity'store $ objEntity o) >>= \case
@@ -303,7 +304,7 @@ colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
           esd <- readTVar es
           case fromDynamic esd of
             Just col@Column{} ->
-              growColumn pgs col (EdhDecimal 0) (fromInteger newCap)
+              growColumn pgs col (fromInteger newCap)
                 $ exitEdhSTM pgs exit
                 $ EdhObject this
             _ ->

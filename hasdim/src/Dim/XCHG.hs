@@ -8,6 +8,8 @@ import           Control.Concurrent.STM
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 
+import           Data.Scientific
+
 import           Data.Lossless.Decimal         as D
 
 import           Language.Edh.EHI
@@ -33,14 +35,16 @@ instance {-# OVERLAPPABLE #-} EdhXchg Char where
     Nothing      -> exit '\0'
 
 instance {-# OVERLAPPABLE #-} EdhXchg Double where
-  toEdh _pgs !n !exit = exit $ EdhDecimal $ fromRational $ toRational n
+  toEdh _pgs !n !exit =
+    exit $ EdhDecimal $ D.decimalFromScientific $ fromFloatDigits n
   fromEdh _pgs (EdhDecimal !n) !exit = exit $ fromRational $ toRational n
   fromEdh !pgs !v _ =
     throwEdhSTM pgs EvalError $ "Number expected but given a " <> T.pack
       (edhTypeNameOf v)
 
 instance {-# OVERLAPPABLE #-} EdhXchg Float where
-  toEdh _pgs !n !exit = exit $ EdhDecimal $ fromRational $ toRational n
+  toEdh _pgs !n !exit =
+    exit $ EdhDecimal $ D.decimalFromScientific $ fromFloatDigits n
   fromEdh _pgs (EdhDecimal !n) !exit = exit $ fromRational $ toRational n
   fromEdh !pgs !v _ =
     throwEdhSTM pgs EvalError $ "Number expected but given a " <> T.pack

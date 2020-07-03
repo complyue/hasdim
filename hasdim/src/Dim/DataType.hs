@@ -19,7 +19,7 @@ import qualified Data.HashMap.Strict           as Map
 import           Data.Dynamic
 
 
-import           Data.Vector.Storable          as V
+-- import           Data.Vector.Storable          as V
 import           Data.Vector.Storable.Mutable  as MV
 
 import           Language.Edh.EHI
@@ -32,13 +32,13 @@ import           Dim.XCHG
 data DataType a where
   DataType ::(Storable a, EdhXchg a) => {
       create'data'vector :: EdhProgState
-        -> EdhValue -> Int -> (IOVector a -> STM ()) -> STM ()
+        ->  Int -> (IOVector a -> STM ()) -> STM ()
     , read'data'vector'cell :: EdhProgState
         -> Int -> IOVector a -> (EdhValue -> STM ()) -> STM ()
     , write'data'vector'cell :: EdhProgState
         -> EdhValue -> Int -> IOVector a -> (EdhValue -> STM ()) -> STM ()
     , grow'data'vector :: EdhProgState
-        -> IOVector a -> EdhValue -> Int -> (IOVector a -> STM ()) -> STM ()
+        -> IOVector a -> Int -> (IOVector a -> STM ()) -> STM ()
   }-> DataType a
  deriving Typeable
 dataType :: forall a . (Storable a, EdhXchg a) => DataType a
@@ -56,8 +56,12 @@ dataType = DataType createVector readVectorCell writeVectorCell growVector
             <> " vs "
             <> T.pack (show $ MV.length vec)
           else exit posIdx
-  createVector !pgs !iv !cap !exit =
-    fromEdh pgs iv $ \ !isv -> exit $ doThraw $ V.replicate cap isv
+  createVector !_ !cap !exit = do
+    vec <- unsafeIOToSTM $ do
+      !p  <- callocArray cap
+      !fp <- newForeignPtr finalizerFree p
+      return $ MV.unsafeFromForeignPtr0 fp cap
+    exit vec
   readVectorCell !pgs !idx !vec !exit = reguIdx pgs vec idx $ \ !posIdx ->
     edhPerformIO pgs (MV.unsafeWith vec $ \ !vPtr -> peekElemOff vPtr posIdx)
       $ \ !sv -> contEdhSTM $ toEdh pgs sv $ \ !val -> exit val
@@ -65,19 +69,15 @@ dataType = DataType createVector readVectorCell writeVectorCell growVector
     reguIdx pgs vec idx $ \ !posIdx -> fromEdh pgs val $ \ !sv -> do
       unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr -> pokeElemOff vPtr posIdx sv
       toEdh pgs sv $ \ !val' -> exit val'
-  growVector !pgs !vec !iv !cap !exit = if cap <= MV.length vec
+  growVector _ !vec !cap !exit = if cap <= MV.length vec
     then exit $ MV.unsafeSlice 0 cap vec
-    else fromEdh pgs iv $ \ !isv -> do
-      let !vec'  = doThraw $ V.replicate cap isv
-          cpData = MV.unsafeWith vec $ \ !p ->
-            MV.unsafeWith vec' $ \ !p' -> copyArray p' p $ MV.length vec
-      edhPerformIO pgs cpData $ \_ -> contEdhSTM $ exit vec'
-  -- taking advantage of ForeignPtr under the hood in implementation details,
-  -- this avoids going through the IO Monad as to create IOVector by
-  -- Data.Vector.Storable.Mutable api
-  doThraw :: Vector a -> IOVector a
-  doThraw !vec = case V.unsafeToForeignPtr0 vec of
-    (!p, !n) -> MV.unsafeFromForeignPtr0 p n
+    else do
+      vec' <- unsafeIOToSTM $ do
+        !p'  <- callocArray cap
+        !fp' <- newForeignPtr finalizerFree p'
+        MV.unsafeWith vec $ \ !p -> copyArray p' p $ MV.length vec
+        return $ MV.unsafeFromForeignPtr0 fp' cap
+      exit vec'
 
 
 data ConcreteDataType where
