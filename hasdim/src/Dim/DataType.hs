@@ -33,16 +33,22 @@ data DataType a where
   DataType ::(Storable a, EdhXchg a) => {
       create'data'vector :: EdhProgState
         ->  Int -> (IOVector a -> STM ()) -> STM ()
+    , grow'data'vector :: EdhProgState
+        -> IOVector a -> Int -> (IOVector a -> STM ()) -> STM ()
     , read'data'vector'cell :: EdhProgState
         -> Int -> IOVector a -> (EdhValue -> STM ()) -> STM ()
     , write'data'vector'cell :: EdhProgState
         -> EdhValue -> Int -> IOVector a -> (EdhValue -> STM ()) -> STM ()
-    , grow'data'vector :: EdhProgState
-        -> IOVector a -> Int -> (IOVector a -> STM ()) -> STM ()
+    , update'data'vector :: EdhProgState
+        -> [(Int,a)]  -> IOVector a  -> STM () -> STM ()
   }-> DataType a
  deriving Typeable
 dataType :: forall a . (Storable a, EdhXchg a) => DataType a
-dataType = DataType createVector readVectorCell writeVectorCell growVector
+dataType = DataType createVector
+                    growVector
+                    readVectorCell
+                    writeVectorCell
+                    updateVector
  where
   reguIdx !pgs !vec !idx !exit =
     let !posIdx = if idx < 0  -- Python style negative index
@@ -62,13 +68,6 @@ dataType = DataType createVector readVectorCell writeVectorCell growVector
       !fp <- newForeignPtr finalizerFree p
       return $ MV.unsafeFromForeignPtr0 fp cap
     exit vec
-  readVectorCell !pgs !idx !vec !exit = reguIdx pgs vec idx $ \ !posIdx ->
-    edhPerformIO pgs (MV.unsafeWith vec $ \ !vPtr -> peekElemOff vPtr posIdx)
-      $ \ !sv -> contEdhSTM $ toEdh pgs sv $ \ !val -> exit val
-  writeVectorCell !pgs !val !idx !vec !exit =
-    reguIdx pgs vec idx $ \ !posIdx -> fromEdh pgs val $ \ !sv -> do
-      unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr -> pokeElemOff vPtr posIdx sv
-      toEdh pgs sv $ \ !val' -> exit val'
   growVector _ !vec !cap !exit = if cap <= MV.length vec
     then exit $ MV.unsafeSlice 0 cap vec
     else do
@@ -78,6 +77,18 @@ dataType = DataType createVector readVectorCell writeVectorCell growVector
         MV.unsafeWith vec $ \ !p -> copyArray p' p $ MV.length vec
         return $ MV.unsafeFromForeignPtr0 fp' cap
       exit vec'
+  readVectorCell !pgs !idx !vec !exit = reguIdx pgs vec idx $ \ !posIdx ->
+    edhPerformIO pgs (MV.unsafeWith vec $ \ !vPtr -> peekElemOff vPtr posIdx)
+      $ \ !sv -> contEdhSTM $ toEdh pgs sv $ \ !val -> exit val
+  writeVectorCell !pgs !val !idx !vec !exit =
+    reguIdx pgs vec idx $ \ !posIdx -> fromEdh pgs val $ \ !sv -> do
+      unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr -> pokeElemOff vPtr posIdx sv
+      toEdh pgs sv $ \ !val' -> exit val'
+  updateVector _ [] _ !exit = exit
+  updateVector !pgs ((!idx, !sv) : rest'upds) !vec !exit =
+    reguIdx pgs vec idx $ \ !posIdx -> do
+      unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr -> pokeElemOff vPtr posIdx sv
+      updateVector pgs rest'upds vec exit
 
 
 data ConcreteDataType where

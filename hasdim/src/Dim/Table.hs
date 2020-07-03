@@ -75,6 +75,16 @@ writeColumnCell
 writeColumnCell !pgs !val !idx (Column !dt _ !csv) !exit =
   readTVar csv >>= \ !cs -> write'data'vector'cell dt pgs val idx cs exit
 
+fillColumn
+  :: EdhProgState -> EdhValue -> Int -> Int -> Column -> STM () -> STM ()
+fillColumn !pgs !val !idxBegin !idxEnd (Column !dt _ !csv) !exit =
+  fromEdh pgs val $ \ !sv -> readTVar csv >>= \ !cs -> update'data'vector
+    dt
+    pgs
+    [ (i, sv) | i <- [idxBegin .. idxEnd - 1] ]
+    cs
+    exit
+
 growColumn :: EdhProgState -> Column -> Int -> STM () -> STM ()
 growColumn !pgs (Column !dt !clv !csv) !cap !exit = readTVar csv >>= \ !cs ->
   grow'data'vector dt pgs cs cap $ \ !cs' -> do
@@ -114,13 +124,17 @@ colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
     Right (Nothing, _, _) -> throwEdhSTM pgsCtor UsageError "Missing capacity"
     Right (Just !cap, !len, !dto) -> do
       let
-
         !scope = contextScope $ edh'context pgsCtor
         doIt !cdt = do
           methods <- sequence
             [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
             | (nm, vc, hp, mthArgs) <-
-              [ ( "[]"
+              [ ( "grow"
+                , EdhMethod
+                , colGrowProc
+                , PackReceiver [mandatoryArg "newCapacity"]
+                )
+              , ( "[]"
                 , EdhMethod
                 , colIdxReadProc
                 , PackReceiver [mandatoryArg "idx"]
@@ -130,17 +144,17 @@ colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
                 , colIdxWriteProc
                 , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
                 )
+              , ( "fill"
+                , EdhMethod
+                , colFillProc
+                , PackReceiver [mandatoryArg "val"]
+                )
               , ("capacity", EdhMethod, colCapProc, PackReceiver [])
               , ("length"  , EdhMethod, colLenProc, PackReceiver [])
               , ( "markLength"
                 , EdhMethod
                 , colMarkLenProc
                 , PackReceiver [mandatoryArg "newLength"]
-                )
-              , ( "grow"
-                , EdhMethod
-                , colGrowProc
-                , PackReceiver [mandatoryArg "newCapacity"]
                 )
               , ("__repr__", EdhMethod, colReprProc, PackReceiver [])
               ]
@@ -189,6 +203,27 @@ colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
               _               -> Left "Invalid dtype"
             )
           ]
+
+  colGrowProc :: EdhProcedure
+  colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit
+    | Map.null kwargs = case D.decimalToInteger newCapNum of
+      Just !newCap | newCap >= 0 -> do
+        pgs <- ask
+        let this = thisObject $ contextScope $ edh'context pgs
+            es   = entity'store $ objEntity this
+        contEdhSTM $ do
+          esd <- readTVar es
+          case fromDynamic esd of
+            Just col@Column{} ->
+              growColumn pgs col (fromInteger newCap)
+                $ exitEdhSTM pgs exit
+                $ EdhObject this
+            _ ->
+              throwEdhSTM pgs UsageError
+                $  "bug: this is not a Column: "
+                <> T.pack (show esd)
+      _ -> throwEdh UsageError "Column capacity must be a positive integer"
+  colGrowProc _ _ = throwEdh UsageError "Invalid args to Column.grow()"
 
   colIdxReadProc :: EdhProcedure
   colIdxReadProc (ArgsPack !args _) !exit = do
@@ -243,6 +278,27 @@ colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
           throwEdhSTM pgs UsageError $ "bug: this is not a Column: " <> T.pack
             (show esd)
 
+  colFillProc :: EdhProcedure
+  colFillProc (ArgsPack !args _) !exit = do
+    pgs <- ask
+    let this = thisObject $ contextScope $ edh'context pgs
+        es   = entity'store $ objEntity this
+    contEdhSTM $ do
+      esd <- readTVar es
+      case fromDynamic esd of
+        Just col@(Column _ !clv _) -> case args of
+          -- TODO support slicing assign, of coz need to tell a slicing index
+          --      from an element index first
+          [val] -> readTVar clv
+            >>= \ !cl -> fillColumn pgs val 0 cl col $ exitEdhSTM pgs exit nil
+          _ ->
+            throwEdhSTM pgs UsageError
+              $  "Invalid args for a Column fill: "
+              <> T.pack (show args)
+        _ ->
+          throwEdhSTM pgs UsageError $ "bug: this is not a Column: " <> T.pack
+            (show esd)
+
   colCapProc :: EdhProcedure
   colCapProc _ !exit = do
     pgs <- ask
@@ -291,27 +347,6 @@ colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
       _ -> throwEdh UsageError "Column length must be a positive integer"
   colMarkLenProc _ _ =
     throwEdh UsageError "Invalid args to Column.markLength()"
-
-  colGrowProc :: EdhProcedure
-  colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit
-    | Map.null kwargs = case D.decimalToInteger newCapNum of
-      Just !newCap | newCap >= 0 -> do
-        pgs <- ask
-        let this = thisObject $ contextScope $ edh'context pgs
-            es   = entity'store $ objEntity this
-        contEdhSTM $ do
-          esd <- readTVar es
-          case fromDynamic esd of
-            Just col@Column{} ->
-              growColumn pgs col (fromInteger newCap)
-                $ exitEdhSTM pgs exit
-                $ EdhObject this
-            _ ->
-              throwEdhSTM pgs UsageError
-                $  "bug: this is not a Column: "
-                <> T.pack (show esd)
-      _ -> throwEdh UsageError "Column capacity must be a positive integer"
-  colGrowProc _ _ = throwEdh UsageError "Invalid args to Column.grow()"
 
   colReprProc :: EdhProcedure
   colReprProc _ !exit = do
