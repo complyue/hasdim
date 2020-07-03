@@ -99,7 +99,7 @@ library hasdim-poc
 library hasdim-internal
     exposed-modules:
         Dim.XCHG
-        Dim.Dim
+        Dim.DataType
         Dim.Table
         Dim.Array
     hs-source-dirs: src
