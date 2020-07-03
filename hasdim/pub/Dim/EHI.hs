@@ -2,7 +2,8 @@
 module Dim.EHI
   ( installDimBatteries
   , module Dim.XCHG
-  , module Dim.Array
+  , module Dim.DataType
+  , module Dim.Table
   )
 where
 
@@ -23,7 +24,6 @@ import           Language.Edh.EHI
 import           Dim.XCHG
 import           Dim.DataType
 import           Dim.Table
-import           Dim.Array
 
 
 installDimBatteries :: EdhWorld -> IO ()
@@ -42,6 +42,7 @@ installDimBatteries !world = do
           _             -> error "bug: mkHostClass returned non-class"
         !f8   = dataType :: DataType Double
         !f4   = dataType :: DataType Float
+        !intp = dataType :: DataType Int
         !i8   = dataType :: DataType Int64
         !i4   = dataType :: DataType Int32
         !i1   = dataType :: DataType Int8
@@ -50,9 +51,10 @@ installDimBatteries !world = do
         !dtypes =
           [ (ConcreteDataType "float64" f8, ["f8"])
           , (ConcreteDataType "float32" f4, ["f4"])
+          , (ConcreteDataType "intp" intp , [])
           , (ConcreteDataType "int64" i8  , ["i8"])
           , (ConcreteDataType "int32" i4  , ["i4"])
-          , (ConcreteDataType "int8" i1   , ["i1"])
+          , (ConcreteDataType "int8" i1   , ["bool"])
           , (ConcreteDataType "byte" w1   , ["w1"])
           , (ConcreteDataType "char" char , [])
           ]
@@ -81,25 +83,6 @@ installDimBatteries !world = do
     !moduArts       <- sequence
       [ (nm, ) <$> mkHostClass moduScope nm True hc
       | (nm, hc) <- [("Column", colCtor defaultDataType)]
-      ]
-
-    artsDict <- createEdhDict
-      $ Map.fromList [ (EdhString k, v) | (k, v) <- moduArts ]
-    updateEntityAttrs pgs (objEntity modu)
-      $  [ (AttrByName k, v) | (k, v) <- moduArts ]
-      ++ [(AttrByName "__exports__", artsDict)]
-
-    exit
-
-
-  void $ installEdhModule world "dim/Array" $ \pgs exit -> do
-
-    let moduScope = contextScope $ edh'context pgs
-        modu      = thisObject moduScope
-
-    !moduArts <- sequence
-      [ (nm, ) <$> mkHostClass moduScope nm True hc
-      | (nm, hc) <- [("DimArray", aryHostCtor)]
       ]
 
     artsDict <- createEdhDict
