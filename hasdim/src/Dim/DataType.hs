@@ -8,16 +8,18 @@ import           GHC.Conc                       ( unsafeIOToSTM )
 
 import           Foreign
 
+import           Control.Monad.Reader
+
 import           Control.Concurrent.STM
 
 
--- import           Data.Text                      ( Text )
+import           Data.Text                      ( Text )
 -- import qualified Data.Text                     as T
--- import qualified Data.HashMap.Strict           as Map
--- import           Data.Dynamic
+import qualified Data.HashMap.Strict           as Map
+import           Data.Dynamic
 -- import           Data.Hashable
 
-import           Data.Typeable
+-- import           Data.Typeable
 
 import           Data.Vector.Storable          as V
 import           Data.Vector.Storable.Mutable  as MV
@@ -32,7 +34,7 @@ import           Dim.XCHG
 -- programs
 data DataType a where
   DataType ::(Storable a, EdhXchg a) => {
-      create'data'vector ::  EdhProgState
+      create'data'vector :: EdhProgState
         -> EdhValue -> Int -> (IOVector a -> STM ()) -> STM ()
     , read'data'vector'cell :: EdhProgState
         -> Int -> IOVector a -> (EdhValue -> STM ()) -> STM ()
@@ -66,3 +68,56 @@ dataType = DataType createVector readVectorCell writeVectorCell growVector
   doThraw :: Vector a -> IOVector a
   doThraw !vec = case V.unsafeToForeignPtr0 vec of
     (!p, !n) -> MV.unsafeFromForeignPtr0 p n
+
+
+data ConcreteDataType where
+  ConcreteDataType ::(Storable a, EdhXchg a) => {
+      canonical'data'type'name :: !Text
+    , concrete'data'type :: !(DataType a)
+    } -> ConcreteDataType
+ deriving Typeable
+
+-- | host Class dtype()
+dtypeCtor
+  :: EdhProgState
+  -> ArgsPack  -- ctor args, if __init__() is provided, will go there too
+  -> TVar (Map.HashMap AttrKey EdhValue)  -- out-of-band attr store
+  -> (Dynamic -> STM ())  -- in-band data to be written to entity store
+  -> STM ()
+dtypeCtor !pgsCtor _ !obs !ctorExit = do
+  let !scope = contextScope $ edh'context pgsCtor
+  methods <- sequence
+    [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
+    | (nm, vc, hp, args) <-
+      [("__repr__", EdhMethod, dtypeReprProc, PackReceiver [])]
+    ]
+  modifyTVar' obs $ Map.union $ Map.fromList methods
+  ctorExit $ toDyn nil
+ where
+  dtypeReprProc :: EdhProcedure
+  dtypeReprProc _ !exit = do
+    pgs <- ask
+    let ctx  = edh'context pgs
+        this = thisObject $ contextScope ctx
+        es   = entity'store $ objEntity this
+    contEdhSTM $ do
+      esd <- readTVar es
+      case fromDynamic esd :: Maybe ConcreteDataType of
+        Just (ConcreteDataType !repr _) -> exitEdhSTM pgs exit $ EdhString repr
+        _ -> exitEdhSTM pgs exit $ EdhString "<Not-a-DataType>"
+
+wrapDataType
+  :: EdhProgState
+  -> ProcDefi
+  -> (ConcreteDataType, [Text])
+  -> (([Text], EdhValue) -> STM ())
+  -> STM ()
+wrapDataType !pgs !dtypeClass (dt@(ConcreteDataType !repr _), !alias) !exit' =
+  runEdhProc pgs
+    $ createEdhObject dtypeClass (ArgsPack [] mempty)
+    $ \(OriginalValue !dtypeVal _ _) -> case dtypeVal of
+        EdhObject !dtObj -> contEdhSTM $ do
+          -- actually fill in the in-band entity storage here
+          writeTVar (entity'store $ objEntity dtObj) $ toDyn dt
+          exit' (repr : alias, dtypeVal)
+        _ -> error "bug: dtypeCtor returned non-object"

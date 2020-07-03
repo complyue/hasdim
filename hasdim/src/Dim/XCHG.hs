@@ -23,6 +23,15 @@ instance {-# OVERLAPPABLE #-} EdhXchg Text where
   fromEdh _pgs (EdhString !s) !exit = exit s
   fromEdh !pgs !v             !exit = edhValueReprSTM pgs v exit
 
+instance {-# OVERLAPPABLE #-} EdhXchg Char where
+  toEdh _pgs !s !exit = exit $ EdhString $ T.singleton s
+  fromEdh _pgs (EdhString !s) !exit = case T.uncons s of
+    Just (!c, _) -> exit c
+    Nothing      -> exit '\0'
+  fromEdh !pgs !v !exit = edhValueReprSTM pgs v $ \ !s -> case T.uncons s of
+    Just (!c, _) -> exit c
+    Nothing      -> exit '\0'
+
 instance {-# OVERLAPPABLE #-} EdhXchg Double where
   toEdh _pgs !n !exit = exit $ EdhDecimal $ fromRational $ toRational n
   fromEdh _pgs (EdhDecimal !n) !exit = exit $ fromRational $ toRational n

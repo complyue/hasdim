@@ -11,7 +11,7 @@ import qualified Data.Text                     as T
 import           Language.Edh.EHI
 import           Language.Edh.Net
 
-import           Dim.Batteries
+import           Dim.EHI
 
 -- the Edh module name to be run as the console
 consoleModule :: String
