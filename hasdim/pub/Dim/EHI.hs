@@ -40,19 +40,21 @@ installDimBatteries !world = do
     let !dtypeClass = case dtypeClassVal of
           EdhClass !cls -> cls
           _             -> error "bug: mkHostClass returned non-class"
-        !f8 = dataType :: DataType Double
-        !f4 = dataType :: DataType Float
-        !i8 = dataType :: DataType Int64
-        !i4 = dataType :: DataType Int32
-        !w1 = dataType :: DataType Word8
-        !u  = dataType :: DataType Char
+        !f8   = dataType :: DataType Double
+        !f4   = dataType :: DataType Float
+        !i8   = dataType :: DataType Int64
+        !i4   = dataType :: DataType Int32
+        !i1   = dataType :: DataType Int8
+        !w1   = dataType :: DataType Word8
+        !char = dataType :: DataType Char
         !dtypes =
           [ (ConcreteDataType "float64" f8, ["f8"])
           , (ConcreteDataType "float32" f4, ["f4"])
           , (ConcreteDataType "int64" i8  , ["i8"])
           , (ConcreteDataType "int32" i4  , ["i4"])
-          , (ConcreteDataType "int8" w1   , ["byte", "w1"])
-          , (ConcreteDataType "char" u    , ["w4"])
+          , (ConcreteDataType "int8" i1   , ["i1"])
+          , (ConcreteDataType "byte" w1   , ["w1"])
+          , (ConcreteDataType "char" char , [])
           ]
 
     seqcontSTM (wrapDataType pgs dtypeClass <$> dtypes) $ \ !dts -> do
