@@ -21,6 +21,7 @@ import qualified Data.HashMap.Strict           as Map
 
 import           Language.Edh.EHI
 
+import           Dim.Vector
 import           Dim.XCHG
 import           Dim.DataType
 import           Dim.Table
@@ -73,7 +74,7 @@ installDimBatteries !world = do
       exit
 
 
-  void $ installEdhModule world "dim/Table" $ \pgs exit -> do
+  void $ installEdhModule world "dim/RT" $ \pgs exit -> do
 
     let moduScope = contextScope $ edh'context pgs
         modu      = thisObject moduScope
@@ -82,7 +83,11 @@ installDimBatteries !world = do
 
     !moduArts       <- sequence
       [ (nm, ) <$> mkHostClass moduScope nm True hc
-      | (nm, hc) <- [("Column", colCtor defaultDataType)]
+      | (nm, hc) <-
+        [ ("Vector" , vecHostCtor)
+        , ("MVector", mvecHostCtor)
+        , ("Column" , colCtor defaultDataType)
+        ]
       ]
 
     artsDict <- createEdhDict

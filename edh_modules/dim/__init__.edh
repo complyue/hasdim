@@ -2,7 +2,6 @@
 export {
 
   import * 'dim/dtypes'
-
-  import * 'dim/Table'
+  import * 'dim/RT'
 
 }

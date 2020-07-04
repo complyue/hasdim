@@ -98,6 +98,7 @@ library hasdim-poc
 
 library hasdim-internal
     exposed-modules:
+        Dim.Vector
         Dim.XCHG
         Dim.DataType
         Dim.Table
