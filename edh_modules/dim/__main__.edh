@@ -2,7 +2,7 @@
 # much like you `import numpy as np` as in Python
 case import (** _ ) 'dim' of { hd } -> { pass }
 # bring useful classes to top level
-import ( Column, **_ ) hd
+import ( Vector, MVector, Column, **_ ) hd
 
 
 while true { # this is the *Loop* in so-called REPL
