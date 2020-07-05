@@ -146,6 +146,7 @@ colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
                 )
               , ( "fill"
                 , EdhMethod
+                -- TODO slicing idx assign should do this
                 , colFillProc
                 , PackReceiver [mandatoryArg "val"]
                 )

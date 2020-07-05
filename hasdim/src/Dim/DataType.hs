@@ -14,7 +14,7 @@ import           Control.Concurrent.STM
 
 
 import           Data.Text                      ( Text )
-import qualified Data.Text                     as T
+-- import qualified Data.Text                     as T
 import qualified Data.HashMap.Strict           as Map
 import           Data.Dynamic
 
@@ -50,18 +50,6 @@ dataType = DataType createVector
                     writeVectorCell
                     updateVector
  where
-  reguIdx !pgs !vec !idx !exit =
-    let !posIdx = if idx < 0  -- Python style negative index
-          then idx + MV.length vec
-          else idx
-    in  if posIdx < 0 || posIdx >= MV.length vec
-          then
-            throwEdhSTM pgs EvalError
-            $  "Index out of bounds: "
-            <> T.pack (show idx)
-            <> " vs "
-            <> T.pack (show $ MV.length vec)
-          else exit posIdx
   createVector !_ !cap !exit = do
     vec <- unsafeIOToSTM $ do
       !p  <- callocArray cap
@@ -77,16 +65,19 @@ dataType = DataType createVector
         MV.unsafeWith vec $ \ !p -> copyArray p' p $ MV.length vec
         return $ MV.unsafeFromForeignPtr0 fp' cap
       exit vec'
-  readVectorCell !pgs !idx !vec !exit = reguIdx pgs vec idx $ \ !posIdx ->
-    edhPerformIO pgs (MV.unsafeWith vec $ \ !vPtr -> peekElemOff vPtr posIdx)
-      $ \ !sv -> contEdhSTM $ toEdh pgs sv $ \ !val -> exit val
+  readVectorCell !pgs !idx !vec !exit =
+    edhRegulateIndex pgs (MV.length vec) idx $ \ !posIdx ->
+      edhPerformIO pgs (MV.unsafeWith vec $ \ !vPtr -> peekElemOff vPtr posIdx)
+        $ \ !sv -> contEdhSTM $ toEdh pgs sv $ \ !val -> exit val
   writeVectorCell !pgs !val !idx !vec !exit =
-    reguIdx pgs vec idx $ \ !posIdx -> fromEdh pgs val $ \ !sv -> do
-      unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr -> pokeElemOff vPtr posIdx sv
-      toEdh pgs sv $ \ !val' -> exit val'
+    edhRegulateIndex pgs (MV.length vec) idx $ \ !posIdx ->
+      fromEdh pgs val $ \ !sv -> do
+        unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr ->
+          pokeElemOff vPtr posIdx sv
+        toEdh pgs sv $ \ !val' -> exit val'
   updateVector _ [] _ !exit = exit
   updateVector !pgs ((!idx, !sv) : rest'upds) !vec !exit =
-    reguIdx pgs vec idx $ \ !posIdx -> do
+    edhRegulateIndex pgs (MV.length vec) idx $ \ !posIdx -> do
       unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr -> pokeElemOff vPtr posIdx sv
       updateVector pgs rest'upds vec exit
 

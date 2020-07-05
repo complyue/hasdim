@@ -4,6 +4,8 @@ module Dim.Vector where
 import           Prelude
 -- import           Debug.Trace
 
+import           GHC.Conc                       ( unsafeIOToSTM )
+
 import           Control.Monad.Reader
 import           Control.Concurrent.STM
 
@@ -12,16 +14,17 @@ import qualified Data.Text                     as T
 import qualified Data.HashMap.Strict           as Map
 import           Data.Dynamic
 
-import           Data.Vector                    ( Vector )
+import           Data.Vector.Mutable            ( IOVector )
 import qualified Data.Vector                   as V
+import qualified Data.Vector.Mutable           as MV
 
 import qualified Data.Lossless.Decimal         as D
 
 import           Language.Edh.EHI
 
 
--- Boxed Vector for Edh values
-type EdhVector = Vector EdhValue
+-- Boxed Vector for Edh values, mutable anytime
+type EdhVector = IOVector EdhValue
 
 -- | host constructor Vector(*elements,length=None)
 vecHostCtor
@@ -31,282 +34,124 @@ vecHostCtor
   -> (Dynamic -> STM ())  -- in-band data to be written to entity store
   -> STM ()
 vecHostCtor !pgsCtor (ArgsPack !ctorArgs !ctorKwargs) !obs !ctorExit = do
-  let !scope = contextScope $ edh'context pgsCtor
-      doIt :: Int -> [EdhValue] -> STM ()
-      doIt !len !vs = do
-        let vec = case len of
-              _ | len < 0 -> V.fromList vs
-              _           -> V.fromListN len vs
-        methods <- sequence
-          [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
-          | (nm, vc, hp, mthArgs) <-
-            [ ( "[]"
-              , EdhMethod
-              , vecIdxReadProc
-              , PackReceiver [mandatoryArg "idx"]
-              )
-            , ("__repr__", EdhMethod, vecReprProc, PackReceiver [])
-            , ("all"     , EdhMethod, vecAllProc , PackReceiver [])
-            ]
+  let
+    !scope = contextScope $ edh'context pgsCtor
+    doIt :: Int -> [EdhValue] -> STM ()
+    -- note @vs@ got to be lazy
+    doIt !len vs = do
+      let !vec = case len of
+            _ | len < 0 -> V.fromList vs
+            _           -> V.fromListN len vs
+      methods <- sequence
+        [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
+        | (nm, vc, hp, mthArgs) <-
+          [ ( "append"
+            , EdhMethod
+            , vecAppendProc
+            , PackReceiver [mandatoryArg "values"]
+            )
+          , ("==", EdhMethod, vecEqProc     , PackReceiver [])
+          , ("[]", EdhMethod, vecIdxReadProc, PackReceiver [mandatoryArg "idx"])
+          , ( "[=]"
+            , EdhMethod
+            , vecIdxWriteProc
+            , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
+            )
+          , ("__null__", EdhMethod, vecNullProc, PackReceiver [])
+          , ("length"  , EdhMethod, vecLenProc , PackReceiver [])
+          , ("__repr__", EdhMethod, vecReprProc, PackReceiver [])
           ]
-        modifyTVar' obs
-          $  Map.union
-          $  Map.fromList
-          $  methods
-          ++ [ (AttrByName "__null__", EdhBool $ V.length vec <= 0)
-             , (AttrByName "length"  , EdhDecimal $ fromIntegral $ V.length vec)
-             ]
-        ctorExit $ toDyn vec
+        ]
+      modifyTVar' obs $ Map.union $ Map.fromList methods
+      !mvec <- unsafeIOToSTM $ V.thaw vec
+      ctorExit $ toDyn mvec
   case Map.lookup (AttrByName "length") ctorKwargs of
     Nothing              -> doIt (-1) ctorArgs
     Just (EdhDecimal !d) -> case D.decimalToInteger d of
-      Just len | len >= 0 -> doIt (fromInteger len) $ ctorArgs ++ repeat nil
+      Just !len | len >= 0 -> doIt (fromInteger len) $ ctorArgs ++ repeat nil
       _ ->
-        throwEdhSTM pgsCtor UsageError $ "Length not an integer: " <> T.pack
-          (show d)
+        throwEdhSTM pgsCtor UsageError
+          $  "Length not an positive integer: "
+          <> T.pack (show d)
     Just !badLenVal ->
       throwEdhSTM pgsCtor UsageError $ "Invalid length: " <> T.pack
         (show badLenVal)
 
  where
 
-  vecIdxReadProc :: EdhProcedure
-  vecIdxReadProc (ArgsPack !args !_kwargs) !exit = do
+  vecAppendProc :: EdhProcedure
+  vecAppendProc (ArgsPack !args !kwargs) !exit | Map.null kwargs = do
     pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Nothing ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a vec : " <> T.pack
-            (show esd)
-        Just (vec :: EdhVector) -> case args of
-          [EdhDecimal !idx] -> case fromInteger <$> D.decimalToInteger idx of
-            Just n ->
-              let i = if n < 0
-                    then -- python style negative indexing
-                         V.length vec + n
-                    else n
-              in  if i < 0 || i >= V.length vec
-                    then
-                      throwEdhSTM pgs EvalError
-                      $  "Vector index out of bounds: "
-                      <> T.pack (show idx)
-                      <> " against length "
-                      <> T.pack (show $ V.length vec)
-                    else exitEdhSTM pgs exit $ V.unsafeIndex vec i
-            _ ->
-              throwEdhSTM pgs UsageError
-                $  "Not an integer for index: "
-                <> T.pack (show idx)
-          -- TODO support slicing
-          _ -> throwEdhSTM pgs UsageError "Invalid index for a Vector"
+    let
+      !this = thisObject $ contextScope $ edh'context pgs
+      esClone :: Dynamic -> (Dynamic -> STM ()) -> STM ()
+      esClone !esd !exit' = case fromDynamic esd of
+        Nothing                  -> exit' $ toDyn nil
+        Just (mvec :: EdhVector) -> do
+          mvec' <-
+            unsafeIOToSTM $ V.thaw =<< (V.++ V.fromList args) <$> V.freeze mvec
+          exit' $ toDyn mvec'
+    contEdhSTM $ cloneEdhObject this esClone $ exitEdhSTM pgs exit . EdhObject
+
+  vecAppendProc _ _ = throwEdh UsageError "Invalid args to Vector.append()"
+
+  vecEqProc :: EdhProcedure
+  vecEqProc (ArgsPack [EdhObject (Object !entOther _ _)] !kwargs) !exit
+    | Map.null kwargs = withThisEntityStore $ \ !pgs !mvec ->
+      fromDynamic <$> readTVar (entity'store entOther) >>= \case
+        Nothing                       -> exitEdhSTM pgs exit $ EdhBool False
+        Just (mvecOther :: EdhVector) -> do
+          !conclusion <- unsafeIOToSTM $ do
+            -- TODO we're sacrificing thread safety for performance here
+            --      justify this decision
+            vec      <- V.unsafeFreeze mvec
+            vecOther <- V.unsafeFreeze mvecOther
+            return $ vec == vecOther
+          exitEdhSTM pgs exit $ EdhBool conclusion
+  vecEqProc _ !exit = exitEdhProc exit $ EdhBool False
+
+  vecIdxReadProc :: EdhProcedure
+  vecIdxReadProc (ArgsPack !args !_kwargs) !exit =
+    withThisEntityStore $ \ !pgs !mvec -> case args of
+      [EdhDecimal !idx] -> case fromInteger <$> D.decimalToInteger idx of
+        Just !n -> edhRegulateIndex pgs (MV.length mvec) n
+          $ \ !i -> (unsafeIOToSTM $ MV.read mvec i) >>= exitEdhSTM pgs exit
+        _ ->
+          throwEdhSTM pgs UsageError $ "Not an integer for index: " <> T.pack
+            (show idx)
+      -- TODO support slicing
+      _ -> throwEdhSTM pgs UsageError "Invalid index for a Vector"
+
+  vecIdxWriteProc :: EdhProcedure
+  vecIdxWriteProc (ArgsPack !args !_kwargs) !exit =
+    withThisEntityStore $ \ !pgs !mvec -> case args of
+      [EdhDecimal !idx, !val] -> case fromInteger <$> D.decimalToInteger idx of
+        Just !n -> edhRegulateIndex pgs (MV.length mvec) n $ \ !i ->
+          unsafeIOToSTM (MV.write mvec i val) >> exitEdhSTM pgs exit val
+        _ ->
+          throwEdhSTM pgs UsageError $ "Not an integer for index: " <> T.pack
+            (show idx)
+      -- TODO support slicing
+      _ -> throwEdhSTM pgs UsageError "Invalid index for a Vector"
+
+  vecNullProc :: EdhProcedure
+  vecNullProc _ !exit = withThisEntityStore $ \ !pgs (mvec :: EdhVector) ->
+    exitEdhSTM pgs exit $ EdhBool $ MV.length mvec <= 0
+
+  vecLenProc :: EdhProcedure
+  vecLenProc _ !exit = withThisEntityStore $ \ !pgs (mvec :: EdhVector) ->
+    exitEdhSTM pgs exit $ EdhDecimal $ fromIntegral $ MV.length mvec
 
   vecReprProc :: EdhProcedure
-  vecReprProc _ !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-        go :: [EdhValue] -> [Text] -> STM ()
+  vecReprProc _ !exit = withThisEntityStore $ \ !pgs !mvec -> do
+    let go :: [EdhValue] -> [Text] -> STM ()
         go [] !rs =
           exitEdhSTM pgs exit
             $  EdhString
             $  "Vector("
             <> T.intercalate "," (reverse rs)
             <> ")"
-        go (v : rest) rs =
-          runEdhProc pgs $ edhValueRepr v $ \(OriginalValue !rv _ _) ->
-            case rv of
-              EdhString !r -> contEdhSTM $ go rest (r : rs)
-              _            -> error "bug: edhValueRepr returned non-string"
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Nothing ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a vec : " <> T.pack
-            (show esd)
-        Just (vec :: EdhVector) -> go (V.toList vec) []
-
-  vecAllProc :: EdhProcedure
-  vecAllProc _ !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Nothing ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a vec : " <> T.pack
-            (show esd)
-        Just (vec :: EdhVector) ->
-          exitEdhSTM pgs exit $ EdhArgsPack $ ArgsPack (V.toList vec) mempty
-
-
--- Boxed MVector for Edh values
-type EdhMVector = Vector (TVar EdhValue)
-
--- | host constructor MVector(*elements,length=None)
-mvecHostCtor
-  :: EdhProgState
-  -> ArgsPack  -- ctor args, if __init__() is provided, will go there too
-  -> TVar (Map.HashMap AttrKey EdhValue)  -- out-of-band attr store 
-  -> (Dynamic -> STM ())  -- in-band data to be written to entity store
-  -> STM ()
-mvecHostCtor !pgsCtor (ArgsPack !ctorArgs !ctorKwargs) !obs !ctorExit = do
-  let
-    !scope = contextScope $ edh'context pgsCtor
-    doIt :: Int -> [EdhValue] -> STM ()
-    doIt !len !vs = do
-      mvec <- case len of
-        _ | len < 0 -> V.fromList <$> sequence (newTVar <$> vs)
-        _           -> V.fromList <$> sequence (newTVar <$> take len vs)
-      methods <- sequence
-        [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
-        | (nm, vc, hp, mthArgs) <-
-          [ ( "[]"
-            , EdhMethod
-            , mvecIdxReadProc
-            , PackReceiver [mandatoryArg "idx"]
-            )
-          , ( "[=]"
-            , EdhMethod
-            , mvecIdxWriteProc
-            , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
-            )
-          , ("__repr__", EdhMethod, mvecReprProc, PackReceiver [])
-          , ("all"     , EdhMethod, mvecAllProc , PackReceiver [])
-          ]
-        ]
-      modifyTVar' obs
-        $  Map.union
-        $  Map.fromList
-        $  methods
-        ++ [ (AttrByName "__null__", EdhBool $ V.length mvec <= 0)
-           , (AttrByName "length"  , EdhDecimal $ fromIntegral $ V.length mvec)
-           ]
-      ctorExit $ toDyn mvec
-  case Map.lookup (AttrByName "length") ctorKwargs of
-    Nothing              -> doIt (-1) ctorArgs
-    Just (EdhDecimal !d) -> case D.decimalToInteger d of
-      Just len | len >= 0 -> doIt (fromInteger len) $ ctorArgs ++ repeat nil
-      _ ->
-        throwEdhSTM pgsCtor UsageError $ "Length not an integer: " <> T.pack
-          (show d)
-    Just !badLenVal ->
-      throwEdhSTM pgsCtor UsageError $ "Invalid length: " <> T.pack
-        (show badLenVal)
-
- where
-
-  mvecIdxReadProc :: EdhProcedure
-  mvecIdxReadProc (ArgsPack !args !_kwargs) !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Nothing ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a mvec : " <> T.pack
-            (show esd)
-        Just (mvec :: EdhMVector) -> case args of
-          [EdhDecimal !idx] -> case fromInteger <$> D.decimalToInteger idx of
-            Just n ->
-              let i = if n < 0
-                    then -- python style negative indexing
-                         V.length mvec + n
-                    else n
-              in  if i < 0 || i >= V.length mvec
-                    then
-                      throwEdhSTM pgs EvalError
-                      $  "MVector index out of bounds: "
-                      <> T.pack (show idx)
-                      <> " against length "
-                      <> T.pack (show $ V.length mvec)
-                    else do
-                      val <- readTVar $ V.unsafeIndex mvec i
-                      exitEdhSTM pgs exit val
-            _ ->
-              throwEdhSTM pgs UsageError
-                $  "Not an integer for index: "
-                <> T.pack (show idx)
-          -- TODO support slicing
-          _ -> throwEdhSTM pgs UsageError "Invalid index for a MVector"
-
-  mvecIdxWriteProc :: EdhProcedure
-  mvecIdxWriteProc (ArgsPack !args !_kwargs) !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Nothing ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a mvec : " <> T.pack
-            (show esd)
-        Just (mvec :: EdhMVector) -> case args of
-          [EdhDecimal !idx, !val] ->
-            case fromInteger <$> D.decimalToInteger idx of
-              Just n ->
-                let i = if n < 0
-                      then -- python style negative indexing
-                           V.length mvec + n
-                      else n
-                in  if i < 0 || i >= V.length mvec
-                      then
-                        throwEdhSTM pgs EvalError
-                        $  "MVector index out of bounds: "
-                        <> T.pack (show idx)
-                        <> " against length "
-                        <> T.pack (show $ V.length mvec)
-                      else do
-                        writeTVar (V.unsafeIndex mvec i) val
-                        exitEdhSTM pgs exit val
-              _ ->
-                throwEdhSTM pgs UsageError
-                  $  "Not an integer for index: "
-                  <> T.pack (show idx)
-          -- TODO support slicing
-          _ -> throwEdhSTM pgs UsageError "Invalid index for a MVector"
-
-  mvecReprProc :: EdhProcedure
-  mvecReprProc _ !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-        go :: [TVar EdhValue] -> [Text] -> STM ()
-        go [] !rs =
-          exitEdhSTM pgs exit
-            $  EdhString
-            $  "MVector("
-            <> T.intercalate "," (reverse rs)
-            <> ")"
-        go (vv : rest) rs = readTVar vv >>= \v ->
-          runEdhProc pgs $ edhValueRepr v $ \(OriginalValue !rv _ _) ->
-            case rv of
-              EdhString !r -> contEdhSTM $ go rest (r : rs)
-              _            -> error "bug: edhValueRepr returned non-string"
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Nothing ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a mvec : " <> T.pack
-            (show esd)
-        Just (mvec :: EdhMVector) -> go (V.toList mvec) []
-
-  mvecAllProc :: EdhProcedure
-  mvecAllProc _ !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Nothing ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a mvec : " <> T.pack
-            (show esd)
-        Just (mvec :: EdhMVector) -> do
-          vs <- sequence $ readTVar <$> V.toList mvec
-          exitEdhSTM pgs exit $ EdhArgsPack $ ArgsPack vs mempty
+        go (v : rest) rs = edhValueReprSTM pgs v $ \ !r -> go rest (r : rs)
+    !vec <- unsafeIOToSTM $ V.freeze mvec
+    go (V.toList vec) []
 

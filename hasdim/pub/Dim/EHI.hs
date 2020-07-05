@@ -84,10 +84,7 @@ installDimBatteries !world = do
     !moduArts       <- sequence
       [ (nm, ) <$> mkHostClass moduScope nm True hc
       | (nm, hc) <-
-        [ ("Vector" , vecHostCtor)
-        , ("MVector", mvecHostCtor)
-        , ("Column" , colCtor defaultDataType)
-        ]
+        [("Vector", vecHostCtor), ("Column", colCtor defaultDataType)]
       ]
 
     artsDict <- createEdhDict
