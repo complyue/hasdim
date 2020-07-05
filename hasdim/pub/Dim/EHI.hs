@@ -37,7 +37,10 @@ installDimBatteries !world = do
     let moduScope = contextScope $ edh'context pgs
         modu      = thisObject moduScope
 
-    dtypeClassVal <- mkHostClass moduScope "dtype" True dtypeCtor
+    dtypeClassVal <-
+      mkHostClass moduScope "dtype" dtypeCtor
+      =<< createSideEntityManipulater True
+      =<< dtypeMethods pgs
     let !dtypeClass = case dtypeClassVal of
           EdhClass !cls -> cls
           _             -> error "bug: mkHostClass returned non-class"
@@ -65,10 +68,14 @@ installDimBatteries !world = do
       -- use the first defined dt as default
       writeTVar defaultDataTypeVar $ snd $ head dts
 
-      artsDict <- createEdhDict
-        $ Map.fromList [ (EdhString k, v) | (names, v) <- dts, k <- names ]
+      artsDict <-
+        createEdhDict
+        $  Map.fromList
+        $  [ (EdhString k, v) | (names, v) <- dts, k <- names ]
+        ++ [(EdhString "dtype", dtypeClassVal)]
       updateEntityAttrs pgs (objEntity modu)
         $  [ (AttrByName k, v) | (names, v) <- dts, k <- names ]
+        ++ [(AttrByName "dtype", dtypeClassVal)]
         ++ [(AttrByName "__exports__", artsDict)]
 
       exit
@@ -82,9 +89,14 @@ installDimBatteries !world = do
     defaultDataType <- readTVar defaultDataTypeVar
 
     !moduArts       <- sequence
-      [ (nm, ) <$> mkHostClass moduScope nm True hc
-      | (nm, hc) <-
-        [("Vector", vecHostCtor), ("Column", colCtor defaultDataType)]
+      [ ((nm, ) <$>)
+        $   mkHostClass moduScope nm hc
+        =<< createSideEntityManipulater True
+        =<< mths pgs
+      | (nm, hc, mths) <-
+        [ ("Vector", vecHostCtor            , vecMethods)
+        , ("Column", colCtor defaultDataType, colMethods)
+        ]
       ]
 
     artsDict <- createEdhDict

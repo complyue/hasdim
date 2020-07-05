@@ -90,33 +90,44 @@ data ConcreteDataType where
  deriving Typeable
 
 -- | host Class dtype()
-dtypeCtor
-  :: EdhProgState
-  -> ArgsPack  -- ctor args, if __init__() is provided, will go there too
-  -> TVar (Map.HashMap AttrKey EdhValue)  -- out-of-band attr store
-  -> (Dynamic -> STM ())  -- in-band data to be written to entity store
-  -> STM ()
-dtypeCtor !pgsCtor _ !obs !ctorExit = do
-  let !scope = contextScope $ edh'context pgsCtor
-  methods <- sequence
-    [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
-    | (nm, vc, hp, args) <-
-      [("__repr__", EdhMethod, dtypeReprProc, PackReceiver [])]
+dtypeCtor :: EdhHostCtor
+-- not really constructable from Edh code, relies on host code to fill
+-- the in-band storage
+dtypeCtor _ _ !ctorExit = ctorExit $ toDyn nil
+
+dtypeMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
+dtypeMethods !pgsModule = sequence
+  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
+  | (nm, vc, hp, args) <-
+    [ ("__init__", EdhMethod, dtypeInitProc, PackReceiver [mandatoryArg "name"])
+    , ("__repr__", EdhMethod, dtypeReprProc, PackReceiver [])
     ]
-  modifyTVar' obs $ Map.union $ Map.fromList methods
-  ctorExit $ toDyn nil
+  ]
  where
+  !scope = contextScope $ edh'context pgsModule
+
+  dtypeInitProc :: EdhProcedure
+  dtypeInitProc (ArgsPack !args _) !exit = case args of
+    [EdhString !name] -> ask >>= \ !pgs -> do
+      let !dtCls = objClass $ thisObject $ contextScope $ edh'context pgs
+      case procedure'lexi dtCls of
+        Nothing -> exitEdhProc exit nil
+        Just !clsLexi ->
+          contEdhSTM $ lookupEdhCtxAttr pgs clsLexi (AttrByName name) >>= \case
+            EdhNil -> throwEdhSTM pgs EvalError $ "No such dtype: " <> name
+            dtv@(EdhObject !dto) ->
+              fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
+                Nothing                 -> exitEdhSTM pgs exit nil
+                Just ConcreteDataType{} -> exitEdhSTM pgs exit dtv
+            _ -> exitEdhSTM pgs exit nil
+    _ -> throwEdh UsageError "Invalid args to dtype()"
+
   dtypeReprProc :: EdhProcedure
-  dtypeReprProc _ !exit = do
-    pgs <- ask
-    let ctx  = edh'context pgs
-        this = thisObject $ contextScope ctx
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd :: Maybe ConcreteDataType of
-        Just (ConcreteDataType !repr _) -> exitEdhSTM pgs exit $ EdhString repr
-        _ -> exitEdhSTM pgs exit $ EdhString "<Not-a-DataType>"
+  dtypeReprProc _ !exit =
+    withThatEntityStore'
+        (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bad-dtype>")
+      $ \ !pgs (ConcreteDataType !repr _) ->
+          exitEdhSTM pgs exit $ EdhString repr
 
 wrapDataType
   :: EdhProgState

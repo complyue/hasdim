@@ -7,7 +7,7 @@ import           Prelude
 import           Foreign
 
 import           Control.Monad
-import           Control.Monad.Reader
+
 import           Control.Concurrent.STM
 
 
@@ -36,6 +36,8 @@ data Column where
       -- convey type safe manipulation operations by an instance, making
       -- each column suitable to be wrapped within an untyped Edh object
       column'data'type :: !(DataType a)
+      -- dtype object, a bit redundant but necessary to be obtained back later
+    , column'dto :: !Object
       -- column length is number of valid elements, always smaller or equals
       -- to storage vector's length
     , column'length :: !(TVar Int)
@@ -46,38 +48,36 @@ data Column where
  deriving Typeable
 
 createColumn
-  :: EdhProgState
-  -> ConcreteDataType
-  -> Int
-  -> TVar Int
-  -> (Column -> STM ())
-  -> STM ()
-createColumn !pgs (ConcreteDataType _ !dt) !cap !clv !exit =
-  create'data'vector dt pgs cap
-    $ \ !cs -> join $ exit . Column dt clv <$> newTVar cs
+  :: EdhProgState -> Object -> Int -> TVar Int -> (Column -> STM ()) -> STM ()
+createColumn !pgs !dto !cap !clv !exit =
+  fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
+    Nothing ->
+      throwEdhSTM pgs UsageError "Invalid dtype object to create a Column"
+    Just (ConcreteDataType _ !dt) -> create'data'vector dt pgs cap
+      $ \ !cs -> join $ exit . Column dt dto clv <$> newTVar cs
 
 columnCapacity :: Column -> STM Int
-columnCapacity (Column _ _ !csv) = MV.length <$> readTVar csv
+columnCapacity (Column _ _ _ !csv) = MV.length <$> readTVar csv
 
 columnLength :: Column -> STM Int
-columnLength (Column _ !clv _) = readTVar clv
+columnLength (Column _ _ !clv _) = readTVar clv
 
 markColumnLength :: Column -> Int -> STM ()
-markColumnLength (Column _ !clv _) !newLen = writeTVar clv newLen
+markColumnLength (Column _ _ !clv _) !newLen = writeTVar clv newLen
 
 readColumnCell
   :: EdhProgState -> Int -> Column -> (EdhValue -> STM ()) -> STM ()
-readColumnCell !pgs !idx (Column !dt _ !csv) !exit =
+readColumnCell !pgs !idx (Column !dt _ _ !csv) !exit =
   readTVar csv >>= \ !cs -> read'data'vector'cell dt pgs idx cs exit
 
 writeColumnCell
   :: EdhProgState -> EdhValue -> Int -> Column -> (EdhValue -> STM ()) -> STM ()
-writeColumnCell !pgs !val !idx (Column !dt _ !csv) !exit =
+writeColumnCell !pgs !val !idx (Column !dt _ _ !csv) !exit =
   readTVar csv >>= \ !cs -> write'data'vector'cell dt pgs val idx cs exit
 
 fillColumn
   :: EdhProgState -> EdhValue -> Int -> Int -> Column -> STM () -> STM ()
-fillColumn !pgs !val !idxBegin !idxEnd (Column !dt _ !csv) !exit =
+fillColumn !pgs !val !idxBegin !idxEnd (Column !dt _ _ !csv) !exit =
   fromEdh pgs val $ \ !sv -> readTVar csv >>= \ !cs -> update'data'vector
     dt
     pgs
@@ -86,8 +86,8 @@ fillColumn !pgs !val !idxBegin !idxEnd (Column !dt _ !csv) !exit =
     exit
 
 growColumn :: EdhProgState -> Column -> Int -> STM () -> STM ()
-growColumn !pgs (Column !dt !clv !csv) !cap !exit = readTVar csv >>= \ !cs ->
-  grow'data'vector dt pgs cs cap $ \ !cs' -> do
+growColumn !pgs (Column !dt _ !clv !csv) !cap !exit =
+  readTVar csv >>= \ !cs -> grow'data'vector dt pgs cs cap $ \ !cs' -> do
     writeTVar csv cs'
     !cl <- readTVar clv
     when (cl > cap) $ writeTVar clv cap
@@ -103,7 +103,7 @@ growColumn !pgs (Column !dt !clv !csv) !cap !exit = readTVar csv >>= \ !cs ->
 -- this avoids going through the IO Monad as to convert IOVector to Vector
 -- by Data.Vector.Storable.Mutable api
 columnData :: forall a . (Storable a, EdhXchg a) => Column -> STM (Vector a)
-columnData (Column _ !clv !csv) = do
+columnData (Column _ _ !clv !csv) = do
   !cl <- readTVar clv
   !cs <- readTVar csv
   case MV.unsafeToForeignPtr0 cs of
@@ -111,68 +111,16 @@ columnData (Column _ !clv !csv) = do
 
 
 -- | host constructor Column(capacity, length=None, dtype=f8)
-colCtor
-  :: EdhValue
-  -> EdhProgState
-  -> ArgsPack  -- ctor args, if __init__() is provided, will go there too
-  -> TVar (Map.HashMap AttrKey EdhValue)  -- out-of-band attr store
-  -> (Dynamic -> STM ())  -- in-band data to be written to entity store
-  -> STM ()
-colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
+colCtor :: EdhValue -> EdhHostCtor
+colCtor !defaultDataType !pgsCtor !apk !ctorExit =
   case parseArgsPack (Nothing, -1 :: Int, defaultDataType) ctorArgsParser apk of
     Left err -> throwEdhSTM pgsCtor UsageError err
     Right (Nothing, _, _) -> throwEdhSTM pgsCtor UsageError "Missing capacity"
-    Right (Just !cap, !len, !dto) -> do
-      let
-        !scope = contextScope $ edh'context pgsCtor
-        doIt !cdt = do
-          methods <- sequence
-            [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
-            | (nm, vc, hp, mthArgs) <-
-              [ ( "grow"
-                , EdhMethod
-                , colGrowProc
-                , PackReceiver [mandatoryArg "newCapacity"]
-                )
-              , ( "[]"
-                , EdhMethod
-                , colIdxReadProc
-                , PackReceiver [mandatoryArg "idx"]
-                )
-              , ( "[=]"
-                , EdhMethod
-                , colIdxWriteProc
-                , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
-                )
-              , ( "fill"
-                , EdhMethod
-                -- TODO slicing idx assign should do this
-                , colFillProc
-                , PackReceiver [mandatoryArg "val"]
-                )
-              , ("capacity", EdhMethod, colCapProc, PackReceiver [])
-              , ("length"  , EdhMethod, colLenProc, PackReceiver [])
-              , ( "markLength"
-                , EdhMethod
-                , colMarkLenProc
-                , PackReceiver [mandatoryArg "newLength"]
-                )
-              , ("__repr__", EdhMethod, colReprProc, PackReceiver [])
-              ]
-            ]
-          modifyTVar' obs
-            $  Map.union
-            $  Map.fromList
-            $  methods
-            ++ [(AttrByName "dtype", dto)]
-          lv <- newTVar $ if len < 0 then cap else len
-          createColumn pgsCtor cdt cap lv $ \ !col -> ctorExit $ toDyn col
-      case dto of
-        EdhObject !o ->
-          fromDynamic <$> readTVar (entity'store $ objEntity o) >>= \case
-            Just cdt@ConcreteDataType{} -> doIt cdt
-            _ -> throwEdhSTM pgsCtor UsageError "Missing dtype"
-        _ -> throwEdhSTM pgsCtor UsageError "Invalid dtype"
+    Right (Just !cap, !len, !dtv) -> case dtv of
+      EdhObject !dto -> do
+        lv <- newTVar $ if len < 0 then cap else len
+        createColumn pgsCtor dto cap lv $ \ !col -> ctorExit $ toDyn col
+      _ -> throwEdhSTM pgsCtor UsageError "Invalid dtype"
  where
   ctorArgsParser =
     ArgsPackParser
@@ -205,175 +153,134 @@ colCtor !defaultDataType !pgsCtor !apk !obs !ctorExit =
             )
           ]
 
+colMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
+colMethods !pgsModule = sequence
+  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
+  | (nm, vc, hp, mthArgs) <-
+    [ ( "grow"
+      , EdhMethod
+      , colGrowProc
+      , PackReceiver [mandatoryArg "newCapacity"]
+      )
+    , ("[]", EdhMethod, colIdxReadProc, PackReceiver [mandatoryArg "idx"])
+    , ( "[=]"
+      , EdhMethod
+      , colIdxWriteProc
+      , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
+      )
+    , ( "fill"
+      , EdhMethod
+-- TODO slicing idx assign should do this
+      , colFillProc
+      , PackReceiver [mandatoryArg "val"]
+      )
+    , ("capacity", EdhMethod, colCapProc, PackReceiver [])
+    , ("length"  , EdhMethod, colLenProc, PackReceiver [])
+    , ( "markLength"
+      , EdhMethod
+      , colMarkLenProc
+      , PackReceiver [mandatoryArg "newLength"]
+      )
+    , ("dtype"   , EdhMethod, colDtypeProc, PackReceiver [])
+    , ("__repr__", EdhMethod, colReprProc , PackReceiver [])
+    ]
+  ]
+ where
+  !scope = contextScope $ edh'context pgsModule
+
   colGrowProc :: EdhProcedure
   colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit
     | Map.null kwargs = case D.decimalToInteger newCapNum of
-      Just !newCap | newCap >= 0 -> do
-        pgs <- ask
-        let this = thisObject $ contextScope $ edh'context pgs
-            es   = entity'store $ objEntity this
-        contEdhSTM $ do
-          esd <- readTVar es
-          case fromDynamic esd of
-            Just col@Column{} ->
-              growColumn pgs col (fromInteger newCap)
-                $ exitEdhSTM pgs exit
-                $ EdhObject this
-            _ ->
-              throwEdhSTM pgs UsageError
-                $  "bug: this is not a Column: "
-                <> T.pack (show esd)
+      Just !newCap | newCap >= 0 -> withThatEntityStore $ \ !pgs !col ->
+        growColumn pgs col (fromInteger newCap)
+          $ exitEdhSTM pgs exit
+          $ EdhObject
+          $ thatObject
+          $ contextScope
+          $ edh'context pgs
       _ -> throwEdh UsageError "Column capacity must be a positive integer"
   colGrowProc _ _ = throwEdh UsageError "Invalid args to Column.grow()"
 
   colIdxReadProc :: EdhProcedure
-  colIdxReadProc (ArgsPack !args _) !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Just !col -> case args of
-          -- TODO support slicing, of coz need to tell a slicing index from
-          --      an element index first
-          [EdhDecimal !idxNum] -> case D.decimalToInteger idxNum of
-            Just !idx ->
-              readColumnCell pgs (fromInteger idx) col $ exitEdhSTM pgs exit
-            _ ->
-              throwEdhSTM pgs UsageError
-                $  "Expect an integer to index a Column but you give: "
-                <> T.pack (show idxNum)
-          _ ->
-            throwEdhSTM pgs UsageError
-              $  "Invalid index for a Column: "
-              <> T.pack (show args)
+  colIdxReadProc (ArgsPack !args _) !exit =
+    withThatEntityStore $ \ !pgs !col -> case args of
+      -- TODO support slicing, of coz need to tell a slicing index from
+      --      an element index first
+      [EdhDecimal !idxNum] -> case D.decimalToInteger idxNum of
+        Just !idx ->
+          readColumnCell pgs (fromInteger idx) col $ exitEdhSTM pgs exit
         _ ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a Column: " <> T.pack
-            (show esd)
+          throwEdhSTM pgs UsageError
+            $  "Expect an integer to index a Column but you give: "
+            <> T.pack (show idxNum)
+      _ ->
+        throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
+          (show args)
 
   colIdxWriteProc :: EdhProcedure
-  colIdxWriteProc (ArgsPack !args _) !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Just !col -> case args of
-          -- TODO support slicing assign, of coz need to tell a slicing index
-          --      from an element index first
-          [EdhDecimal !idxNum, val] -> case D.decimalToInteger idxNum of
-            Just !idx ->
-              writeColumnCell pgs val (fromInteger idx) col
-                $ exitEdhSTM pgs exit
-            _ ->
-              throwEdhSTM pgs UsageError
-                $  "Expect an integer to index a Column but you give: "
-                <> T.pack (show idxNum)
-          _ ->
-            throwEdhSTM pgs UsageError
-              $  "Invalid index for a Column: "
-              <> T.pack (show args)
+  colIdxWriteProc (ArgsPack !args _) !exit =
+    withThatEntityStore $ \ !pgs !col -> case args of
+      -- TODO support slicing assign, of coz need to tell a slicing index
+      --      from an element index first
+      [EdhDecimal !idxNum, val] -> case D.decimalToInteger idxNum of
+        Just !idx ->
+          writeColumnCell pgs val (fromInteger idx) col $ exitEdhSTM pgs exit
         _ ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a Column: " <> T.pack
-            (show esd)
+          throwEdhSTM pgs UsageError
+            $  "Expect an integer to index a Column but you give: "
+            <> T.pack (show idxNum)
+      _ ->
+        throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
+          (show args)
 
   colFillProc :: EdhProcedure
-  colFillProc (ArgsPack !args _) !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Just col@(Column _ !clv _) -> case args of
-          -- TODO support slicing assign, of coz need to tell a slicing index
-          --      from an element index first
-          [val] -> readTVar clv
-            >>= \ !cl -> fillColumn pgs val 0 cl col $ exitEdhSTM pgs exit nil
-          _ ->
-            throwEdhSTM pgs UsageError
-              $  "Invalid args for a Column fill: "
-              <> T.pack (show args)
-        _ ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a Column: " <> T.pack
-            (show esd)
+  colFillProc (ArgsPack !args _) !exit =
+    withThatEntityStore $ \ !pgs col@(Column _ _ !clv _) -> case args of
+      -- TODO support slicing assign, of coz need to tell a slicing index
+      --      from an element index first
+      [val] -> readTVar clv
+        >>= \ !cl -> fillColumn pgs val 0 cl col $ exitEdhSTM pgs exit nil
+      _ ->
+        throwEdhSTM pgs UsageError
+          $  "Invalid args for a Column fill: "
+          <> T.pack (show args)
 
   colCapProc :: EdhProcedure
-  colCapProc _ !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Just col@Column{} -> columnCapacity col
-          >>= \ !cap -> exitEdhSTM pgs exit $ EdhDecimal $ fromIntegral cap
-        _ ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a Column: " <> T.pack
-            (show esd)
+  colCapProc _ !exit = withThatEntityStore $ \ !pgs !col -> columnCapacity col
+    >>= \ !cap -> exitEdhSTM pgs exit $ EdhDecimal $ fromIntegral cap
 
   colLenProc :: EdhProcedure
-  colLenProc _ !exit = do
-    pgs <- ask
-    let this = thisObject $ contextScope $ edh'context pgs
-        es   = entity'store $ objEntity this
-    contEdhSTM $ do
-      esd <- readTVar es
-      case fromDynamic esd of
-        Just col@Column{} -> columnLength col
-          >>= \ !len -> exitEdhSTM pgs exit $ EdhDecimal $ fromIntegral len
-        _ ->
-          throwEdhSTM pgs UsageError $ "bug: this is not a Column: " <> T.pack
-            (show esd)
+  colLenProc _ !exit = withThatEntityStore $ \ !pgs !col -> columnLength col
+    >>= \ !len -> exitEdhSTM pgs exit $ EdhDecimal $ fromIntegral len
 
   colMarkLenProc :: EdhProcedure
   colMarkLenProc (ArgsPack [EdhDecimal !newLenNum] !kwargs) !exit
     | Map.null kwargs = case D.decimalToInteger newLenNum of
-      Just !newLen | newLen >= 0 -> do
-        pgs <- ask
-        let this = thisObject $ contextScope $ edh'context pgs
-            es   = entity'store $ objEntity this
-        contEdhSTM $ do
-          esd <- readTVar es
-          case fromDynamic esd of
-            Just col@Column{} ->
-              markColumnLength col (fromInteger newLen)
-                >> exitEdhSTM pgs exit nil
-            _ ->
-              throwEdhSTM pgs UsageError
-                $  "bug: this is not a Column: "
-                <> T.pack (show esd)
+      Just !newLen | newLen >= 0 -> withThatEntityStore $ \ !pgs !col ->
+        markColumnLength col (fromInteger newLen) >> exitEdhSTM pgs exit nil
       _ -> throwEdh UsageError "Column length must be a positive integer"
   colMarkLenProc _ _ =
     throwEdh UsageError "Invalid args to Column.markLength()"
 
+  colDtypeProc :: EdhProcedure
+  colDtypeProc _ !exit = withThatEntityStore
+    $ \ !pgs (Column _ !dto _ _) -> exitEdhSTM pgs exit $ EdhObject dto
+
   colReprProc :: EdhProcedure
-  colReprProc _ !exit = do
-    pgs <- ask
-    let
-      !this = thisObject $ contextScope $ edh'context pgs
-      !es   = entity'store $ objEntity this
-      withDtRepr !dtr = do
-        esd <- readTVar es
-        case fromDynamic esd of
-          Just (Column _ !clv !csv) -> do
-            !cl <- readTVar clv
-            !cs <- readTVar csv
-            exitEdhSTM pgs exit
-              $  EdhString
-              $  "Column("
-              <> T.pack (show $ MV.length cs)
-              <> ", "
-              <> T.pack (show cl)
-              <> ", dtype="
-              <> dtr
-              <> ")"
-          _ ->
-            throwEdhSTM pgs UsageError $ "bug: this is not a Column: " <> T.pack
-              (show esd)
-    contEdhSTM $ lookupEdhObjAttr pgs this (AttrByName "dtype") >>= \case
-      EdhNil -> withDtRepr "f8" -- this is impossible but just in case
-      !dto   -> edhValueReprSTM pgs dto $ \dtr -> withDtRepr dtr
+  colReprProc _ !exit =
+    withThatEntityStore $ \ !pgs (Column _ !dto !clv !csv) ->
+      fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
+        Nothing                        -> undefined
+        Just (ConcreteDataType !dtr _) -> do
+          !cl <- readTVar clv
+          !cs <- readTVar csv
+          exitEdhSTM pgs exit
+            $  EdhString
+            $  "Column("
+            <> T.pack (show $ MV.length cs)
+            <> ", "
+            <> T.pack (show cl)
+            <> ", dtype="
+            <> dtr
+            <> ")"
 
