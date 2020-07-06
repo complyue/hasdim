@@ -1,12 +1,7 @@
 
-# much like you `import numpy as np` as in Python
-case import (** _ ) 'dim' of { hd } -> { pass }
-# bring useful classes to top level
-import (
-  Vector,
-  Column,
-  dtype,
-  **_ ) hd
+# TODO selectively import artifacts into top level, leaving others
+#      to be addressed via the `hd` module reference
+case import * 'dim' of { hd } -> { pass }
 
 
 while true { # this is the *Loop* in so-called REPL

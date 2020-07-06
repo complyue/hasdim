@@ -21,7 +21,6 @@ import qualified Data.HashMap.Strict           as Map
 
 import           Language.Edh.EHI
 
-import           Dim.Vector
 import           Dim.XCHG
 import           Dim.DataType
 import           Dim.Table
@@ -93,10 +92,7 @@ installDimBatteries !world = do
         $   mkHostClass moduScope nm hc
         =<< createSideEntityManipulater True
         =<< mths pgs
-      | (nm, hc, mths) <-
-        [ ("Vector", vecHostCtor            , vecMethods)
-        , ("Column", colCtor defaultDataType, colMethods)
-        ]
+      | (nm, hc, mths) <- [("Column", colCtor defaultDataType, colMethods)]
       ]
 
     artsDict <- createEdhDict
