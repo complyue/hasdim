@@ -33,16 +33,30 @@ import           Dim.DataType
 -- safely typed for data manipulation.
 data Column where
   Column ::(Storable a, EdhXchg a) => {
-      -- convey type safe manipulation operations by an instance, making
-      -- each column suitable to be wrapped within an untyped Edh object
+      -- | convey type safe manipulation operations by an instance, making each
+      -- column suitable to be wrapped within an untyped Edh object
+      --
+      -- this field of type `DataType a` without wrapped in a
+      -- `ConcreteDataType`, coincides with `column'storage` sharing the
+      -- identical type parameter `a` as for the ops to be type safe
       column'data'type :: !(DataType a)
-      -- dtype object, a bit redundant but necessary to be obtained back later
+
+      -- | dtype object, a bit redundant to above, but here to be directly
+      -- obtained by Edh code from a Column object
     , column'dto :: !Object
-      -- column length is number of valid elements, always smaller or equals
-      -- to storage vector's length
+
+      -- | column length is number of valid elements, can never be greater than
+      -- storage vector's length
     , column'length :: !(TVar Int)
-      -- mark it obvious that the underlying storage is mutable anytime
-      -- length of the Vector should be considered capacity of the column
+
+      -- | physical storage of the column data, length of the Vector should be
+      -- considered capacity of the column
+      --
+      -- it's obvious as being an `IOVector`, that the underlying storage is
+      -- mutable anytime, thread safety has to be guaranteed by proper 
+      -- mediation otherwise, e.g. content to set a changer attribute to a
+      -- thread's identity before modifiying a column, and check such a
+      -- attribute to be `frozen` valued before allowing the STM tx to commit
     , column'storage :: !(TVar (IOVector a))
     } -> Column
  deriving Typeable

@@ -45,20 +45,22 @@ installDimBatteries !world = do
           _             -> error "bug: mkHostClass returned non-class"
         !f8   = dataType :: DataType Double
         !f4   = dataType :: DataType Float
-        !intp = dataType :: DataType Int
         !i8   = dataType :: DataType Int64
         !i4   = dataType :: DataType Int32
-        !i1   = dataType :: DataType Int8
-        !w1   = dataType :: DataType Word8
+        !int8 = dataType :: DataType Int8
+        !byte = dataType :: DataType Word8
+        !intp = dataType :: DataType Int
+        !bool = dataType :: DataType Int8
         !char = dataType :: DataType Char
         !dtypes =
           [ (ConcreteDataType "float64" f8, ["f8"])
           , (ConcreteDataType "float32" f4, ["f4"])
-          , (ConcreteDataType "intp" intp , [])
           , (ConcreteDataType "int64" i8  , ["i8"])
           , (ConcreteDataType "int32" i4  , ["i4"])
-          , (ConcreteDataType "int8" i1   , ["bool"])
-          , (ConcreteDataType "byte" w1   , ["w1"])
+          , (ConcreteDataType "int8" int8 , [])
+          , (ConcreteDataType "byte" byte , [])
+          , (ConcreteDataType "intp" intp , [])
+          , (ConcreteDataType "bool" bool , [])
           , (ConcreteDataType "char" char , [])
           ]
 

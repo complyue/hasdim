@@ -14,12 +14,8 @@ import           Control.Concurrent.STM
 
 
 import           Data.Text                      ( Text )
--- import qualified Data.Text                     as T
-import qualified Data.HashMap.Strict           as Map
 import           Data.Dynamic
 
-
--- import           Data.Vector.Storable          as V
 import           Data.Vector.Storable.Mutable  as MV
 
 import           Language.Edh.EHI
@@ -100,6 +96,7 @@ dtypeMethods !pgsModule = sequence
   [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
   | (nm, vc, hp, args) <-
     [ ("__init__", EdhMethod, dtypeInitProc, PackReceiver [mandatoryArg "name"])
+    , ("=="      , EdhMethod, dtypeEqProc  , PackReceiver [])
     , ("__repr__", EdhMethod, dtypeReprProc, PackReceiver [])
     ]
   ]
@@ -121,6 +118,15 @@ dtypeMethods !pgsModule = sequence
                 Just ConcreteDataType{} -> exitEdhSTM pgs exit dtv
             _ -> exitEdhSTM pgs exit nil
     _ -> throwEdh UsageError "Invalid args to dtype()"
+
+  dtypeEqProc :: EdhProcedure
+  dtypeEqProc (ArgsPack [EdhObject !dtoOther] _) !exit =
+    withThatEntityStore $ \ !pgs (ConcreteDataType !repr _) ->
+      fromDynamic <$> readTVar (entity'store $ objEntity dtoOther) >>= \case
+        Nothing -> exitEdhSTM pgs exit $ EdhBool False
+        Just (ConcreteDataType !reprOther _) ->
+          exitEdhSTM pgs exit $ EdhBool $ reprOther == repr
+  dtypeEqProc _ !exit = exitEdhProc exit $ EdhBool False
 
   dtypeReprProc :: EdhProcedure
   dtypeReprProc _ !exit =
