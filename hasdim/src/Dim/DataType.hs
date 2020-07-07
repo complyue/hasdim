@@ -59,7 +59,8 @@ unsafeFlatArrayFromMVector !mvec = case MV.unsafeToForeignPtr0 mvec of
 -- programs
 data DataType a where
   DataType ::(Storable a, EdhXchg a) => {
-      data'element'size :: Int
+      data'type'identifier :: Text
+    , data'element'size :: Int
     , data'element'align :: Int
     , create'flat'array :: EdhProgState
         ->  Int -> (FlatArray a -> STM ()) -> STM ()
@@ -73,14 +74,15 @@ data DataType a where
         -> [(Int,a)]  -> FlatArray a  -> STM () -> STM ()
   }-> DataType a
  deriving Typeable
-dataType :: forall a . (Storable a, EdhXchg a) => DataType a
-dataType = DataType (sizeOf (undefined :: a))
-                    (alignment (undefined :: a))
-                    createArray
-                    growArray
-                    readArrayCell
-                    writeArrayCell
-                    updateArray
+dataType :: forall a . (Storable a, EdhXchg a) => Text -> DataType a
+dataType !ident = DataType ident
+                           (sizeOf (undefined :: a))
+                           (alignment (undefined :: a))
+                           createArray
+                           growArray
+                           readArrayCell
+                           writeArrayCell
+                           updateArray
  where
   createArray !_ !cap !exit = do
     ary <- unsafeIOToSTM $ do
@@ -115,10 +117,13 @@ dataType = DataType (sizeOf (undefined :: a))
 
 data ConcreteDataType where
   ConcreteDataType ::(Storable a, EdhXchg a) => {
-      concrete'data'type'repr :: !Text
-    , concrete'data'type :: !(DataType a)
+      concrete'data'type :: !(DataType a)
     } -> ConcreteDataType
  deriving Typeable
+instance Eq ConcreteDataType where
+  ConcreteDataType x == ConcreteDataType y =
+    data'type'identifier x == data'type'identifier y
+
 
 -- | host Class dtype()
 dtypeCtor :: EdhHostCtor
@@ -156,18 +161,18 @@ dtypeMethods !pgsModule = sequence
 
   dtypeEqProc :: EdhProcedure
   dtypeEqProc (ArgsPack [EdhObject !dtoOther] _) !exit =
-    withThatEntity $ \ !pgs (ConcreteDataType !repr _) ->
+    withThatEntity $ \ !pgs cdt@(ConcreteDataType _) ->
       fromDynamic <$> readTVar (entity'store $ objEntity dtoOther) >>= \case
         Nothing -> exitEdhSTM pgs exit $ EdhBool False
-        Just (ConcreteDataType !reprOther _) ->
-          exitEdhSTM pgs exit $ EdhBool $ reprOther == repr
+        Just cdtOther@(ConcreteDataType _) ->
+          exitEdhSTM pgs exit $ EdhBool $ cdtOther == cdt
   dtypeEqProc _ !exit = exitEdhProc exit $ EdhBool False
 
   dtypeReprProc :: EdhProcedure
   dtypeReprProc _ !exit =
     withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bad-dtype>")
-      $ \ !pgs (ConcreteDataType !repr _) ->
-          exitEdhSTM pgs exit $ EdhString repr
+      $ \ !pgs (ConcreteDataType !dt) ->
+          exitEdhSTM pgs exit $ EdhString $ data'type'identifier dt
 
 wrapDataType
   :: EdhProgState
@@ -175,12 +180,12 @@ wrapDataType
   -> (ConcreteDataType, [Text])
   -> (([Text], EdhValue) -> STM ())
   -> STM ()
-wrapDataType !pgs !dtypeClass (dt@(ConcreteDataType !repr _), !alias) !exit' =
+wrapDataType !pgs !dtypeClass (cdt@(ConcreteDataType !dt), !alias) !exit' =
   runEdhProc pgs
     $ createEdhObject dtypeClass (ArgsPack [] mempty)
     $ \(OriginalValue !dtypeVal _ _) -> case dtypeVal of
         EdhObject !dtObj -> contEdhSTM $ do
           -- actually fill in the in-band entity storage here
-          writeTVar (entity'store $ objEntity dtObj) $ toDyn dt
-          exit' (repr : alias, dtypeVal)
+          writeTVar (entity'store $ objEntity dtObj) $ toDyn cdt
+          exit' (data'type'identifier dt : alias, dtypeVal)
         _ -> error "bug: dtypeCtor returned non-object"

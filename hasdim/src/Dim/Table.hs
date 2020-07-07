@@ -64,7 +64,7 @@ createColumn !pgs !dto !cap !clv !exit =
   fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
     Nothing ->
       throwEdhSTM pgs UsageError "Invalid dtype object to create a Column"
-    Just (ConcreteDataType _ !dt) -> create'flat'array dt pgs cap
+    Just (ConcreteDataType !dt) -> create'flat'array dt pgs cap
       $ \ !cs -> join $ exit . Column dt dto clv <$> newTVar cs
 
 columnCapacity :: Column -> STM Int
@@ -158,37 +158,37 @@ colCtor !defaultDataType !pgsCtor !apk !ctorExit =
           ]
 
 colMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
-colMethods !pgsModule = sequence
-  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
-  | (nm, vc, hp, mthArgs) <-
-    [ ( "grow"
-      , EdhMethod
-      , colGrowProc
-      , PackReceiver [mandatoryArg "newCapacity"]
-      )
-    , ("[]", EdhMethod, colIdxReadProc, PackReceiver [mandatoryArg "idx"])
-    , ( "[=]"
-      , EdhMethod
-      , colIdxWriteProc
-      , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
-      )
-    , ( "fill"
-      , EdhMethod
+colMethods !pgsModule =
+  sequence
+    $  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
+       | (nm, vc, hp, mthArgs) <-
+         [ ( "grow"
+           , EdhMethod
+           , colGrowProc
+           , PackReceiver [mandatoryArg "newCapacity"]
+           )
+         , ("[]", EdhMethod, colIdxReadProc, PackReceiver [mandatoryArg "idx"])
+         , ( "[=]"
+           , EdhMethod
+           , colIdxWriteProc
+           , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
+           )
+         , ( "fill"
+           , EdhMethod
 -- TODO slicing idx assign should do this
-      , colFillProc
-      , PackReceiver [mandatoryArg "val"]
-      )
-    , ("capacity", EdhMethod, colCapProc, PackReceiver [])
-    , ("length"  , EdhMethod, colLenProc, PackReceiver [])
-    , ( "markLength"
-      , EdhMethod
-      , colMarkLenProc
-      , PackReceiver [mandatoryArg "newLength"]
-      )
-    , ("dtype"   , EdhMethod, colDtypeProc, PackReceiver [])
-    , ("__repr__", EdhMethod, colReprProc , PackReceiver [])
-    ]
-  ]
+           , colFillProc
+           , PackReceiver [mandatoryArg "val"]
+           )
+         , ("__repr__", EdhMethod, colReprProc, PackReceiver [])
+         ]
+       ]
+    ++ [ (AttrByName nm, ) <$> mkHostProperty scope nm getter setter
+       | (nm, getter, setter) <-
+         [ ("capacity", colCapProc  , Nothing)
+         , ("length"  , colLenProc  , Just colMarkLenProc)
+         , ("dtype"   , colDtypeProc, Nothing)
+         ]
+       ]
  where
   !scope = contextScope $ edh'context pgsModule
 
@@ -259,10 +259,12 @@ colMethods !pgsModule = sequence
 
   colMarkLenProc :: EdhProcedure
   colMarkLenProc (ArgsPack [EdhDecimal !newLenNum] !kwargs) !exit
-    | Map.null kwargs = case D.decimalToInteger newLenNum of
-      Just !newLen | newLen >= 0 -> withThatEntity $ \ !pgs !col ->
-        markColumnLength col (fromInteger newLen) >> exitEdhSTM pgs exit nil
-      _ -> throwEdh UsageError "Column length must be a positive integer"
+    | Map.null kwargs = withThatEntity $ \ !pgs !col -> do
+      !cap <- columnCapacity col
+      case D.decimalToInteger newLenNum of
+        Just !newLen | newLen >= 0 && newLen <= fromIntegral cap ->
+          markColumnLength col (fromInteger newLen) >> exitEdhSTM pgs exit nil
+        _ -> throwEdhSTM pgs UsageError "Column length out of range"
   colMarkLenProc _ _ =
     throwEdh UsageError "Invalid args to Column.markLength()"
 
@@ -273,8 +275,8 @@ colMethods !pgsModule = sequence
   colReprProc :: EdhProcedure
   colReprProc _ !exit = withThatEntity $ \ !pgs (Column _ !dto !clv !csv) ->
     fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
-      Nothing                        -> error "bug: bad dto"
-      Just (ConcreteDataType !dtr _) -> do
+      Nothing                     -> error "bug: bad dto"
+      Just (ConcreteDataType !dt) -> do
         !cl <- readTVar clv
         !cs <- readTVar csv
         exitEdhSTM pgs exit
@@ -284,6 +286,6 @@ colMethods !pgsModule = sequence
           <> ", "
           <> T.pack (show cl)
           <> ", dtype="
-          <> dtr
+          <> data'type'identifier dt
           <> ")"
 
