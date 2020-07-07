@@ -273,7 +273,7 @@ colMethods !pgsModule = sequence
   colReprProc :: EdhProcedure
   colReprProc _ !exit = withThatEntity $ \ !pgs (Column _ !dto !clv !csv) ->
     fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
-      Nothing                        -> undefined
+      Nothing                        -> error "bug: bad dto"
       Just (ConcreteDataType !dtr _) -> do
         !cl <- readTVar clv
         !cs <- readTVar csv

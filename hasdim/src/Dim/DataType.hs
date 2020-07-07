@@ -59,7 +59,9 @@ unsafeFlatArrayFromMVector !mvec = case MV.unsafeToForeignPtr0 mvec of
 -- programs
 data DataType a where
   DataType ::(Storable a, EdhXchg a) => {
-      create'flat'array :: EdhProgState
+      data'element'size :: Int
+    , data'element'align :: Int
+    , create'flat'array :: EdhProgState
         ->  Int -> (FlatArray a -> STM ()) -> STM ()
     , grow'flat'array :: EdhProgState
         -> FlatArray a -> Int -> (FlatArray a -> STM ()) -> STM ()
@@ -72,7 +74,9 @@ data DataType a where
   }-> DataType a
  deriving Typeable
 dataType :: forall a . (Storable a, EdhXchg a) => DataType a
-dataType = DataType createArray
+dataType = DataType (sizeOf (undefined :: a))
+                    (alignment (undefined :: a))
+                    createArray
                     growArray
                     readArrayCell
                     writeArrayCell
