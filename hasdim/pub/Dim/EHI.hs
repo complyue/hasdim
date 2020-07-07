@@ -10,8 +10,6 @@ where
 import           Prelude
 -- import           Debug.Trace
 
-import           Control.Concurrent.STM
-
 import           Control.Monad.Reader
 
 import           Data.Int
