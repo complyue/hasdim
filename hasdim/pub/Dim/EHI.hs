@@ -29,9 +29,7 @@ import           Dim.Table
 installDimBatteries :: EdhWorld -> IO ()
 installDimBatteries !world = do
 
-  defaultDataTypeVar <- atomically $ newTVar EdhNil
-
-  void $ installEdhModule world "dim/dtypes" $ \pgs exit -> do
+  moduDtypes <- installEdhModule world "dim/dtypes" $ \pgs exit -> do
 
     let moduScope = contextScope $ edh'context pgs
         modu      = thisObject moduScope
@@ -66,9 +64,6 @@ installDimBatteries !world = do
 
     seqcontSTM (wrapDataType pgs dtypeClass <$> dtypes) $ \ !dts -> do
 
-      -- use the first defined dt as default
-      writeTVar defaultDataTypeVar $ snd $ head dts
-
       artsDict <-
         createEdhDict
         $  Map.fromList
@@ -81,15 +76,16 @@ installDimBatteries !world = do
 
       exit
 
-
   void $ installEdhModule world "dim/RT" $ \pgs exit -> do
+
+    defaultDataType <- lookupEntityAttr pgs
+                                        (objEntity moduDtypes)
+                                        (AttrByName "f8")
 
     let moduScope = contextScope $ edh'context pgs
         modu      = thisObject moduScope
 
-    defaultDataType <- readTVar defaultDataTypeVar
-
-    !moduArts       <- sequence
+    !moduArts <- sequence
       [ ((nm, ) <$>)
         $   mkHostClass moduScope nm hc
         =<< createSideEntityManipulater True

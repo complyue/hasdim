@@ -16,66 +16,97 @@ import           Control.Concurrent.STM
 import           Data.Text                      ( Text )
 import           Data.Dynamic
 
-import           Data.Vector.Storable.Mutable  as MV
+import           Data.Vector.Storable           ( Vector )
+import qualified Data.Vector.Storable          as V
+import           Data.Vector.Storable.Mutable   ( IOVector )
+import qualified Data.Vector.Storable.Mutable  as MV
 
 import           Language.Edh.EHI
 
 import           Dim.XCHG
 
 
+data FlatArray a = FlatArray
+    {-# UNPACK #-} !Int            -- ^ capacity
+    {-# UNPACK #-} !(ForeignPtr a) -- ^ mem ref
+  deriving ( Typeable )
+
+flatArrayCapacity :: FlatArray a -> Int
+flatArrayCapacity (FlatArray !cap _) = cap
+
+unsafeFlatArrayToVector
+  :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => FlatArray a -> Vector b
+unsafeFlatArrayToVector (FlatArray !cap !fp) =
+  V.unsafeFromForeignPtr0 (castForeignPtr fp) cap
+
+unsafeFlatArrayFromVector
+  :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => Vector a -> FlatArray b
+unsafeFlatArrayFromVector !vec = case V.unsafeToForeignPtr0 vec of
+  (!fp, !cap) -> FlatArray cap (castForeignPtr fp)
+
+unsafeFlatArrayToMVector
+  :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => FlatArray a -> IOVector b
+unsafeFlatArrayToMVector (FlatArray !cap !fp) =
+  MV.unsafeFromForeignPtr0 (castForeignPtr fp) cap
+
+unsafeFlatArrayFromMVector
+  :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => IOVector a -> FlatArray b
+unsafeFlatArrayFromMVector !mvec = case MV.unsafeToForeignPtr0 mvec of
+  (!fp, !cap) -> FlatArray cap (castForeignPtr fp)
+
+
 -- type safe data manipulation operations wrt to exchanging data with Edh
 -- programs
 data DataType a where
   DataType ::(Storable a, EdhXchg a) => {
-      create'data'vector :: EdhProgState
-        ->  Int -> (IOVector a -> STM ()) -> STM ()
-    , grow'data'vector :: EdhProgState
-        -> IOVector a -> Int -> (IOVector a -> STM ()) -> STM ()
-    , read'data'vector'cell :: EdhProgState
-        -> Int -> IOVector a -> (EdhValue -> STM ()) -> STM ()
-    , write'data'vector'cell :: EdhProgState
-        -> EdhValue -> Int -> IOVector a -> (EdhValue -> STM ()) -> STM ()
-    , update'data'vector :: EdhProgState
-        -> [(Int,a)]  -> IOVector a  -> STM () -> STM ()
+      create'flat'array :: EdhProgState
+        ->  Int -> (FlatArray a -> STM ()) -> STM ()
+    , grow'flat'array :: EdhProgState
+        -> FlatArray a -> Int -> (FlatArray a -> STM ()) -> STM ()
+    , read'flat'array'cell :: EdhProgState
+        -> Int -> FlatArray a -> (EdhValue -> STM ()) -> STM ()
+    , write'flat'array'cell :: EdhProgState
+        -> EdhValue -> Int -> FlatArray a -> (EdhValue -> STM ()) -> STM ()
+    , update'flat'array :: EdhProgState
+        -> [(Int,a)]  -> FlatArray a  -> STM () -> STM ()
   }-> DataType a
  deriving Typeable
 dataType :: forall a . (Storable a, EdhXchg a) => DataType a
-dataType = DataType createVector
-                    growVector
-                    readVectorCell
-                    writeVectorCell
-                    updateVector
+dataType = DataType createArray
+                    growArray
+                    readArrayCell
+                    writeArrayCell
+                    updateArray
  where
-  createVector !_ !cap !exit = do
-    vec <- unsafeIOToSTM $ do
+  createArray !_ !cap !exit = do
+    ary <- unsafeIOToSTM $ do
       !p  <- callocArray cap
       !fp <- newForeignPtr finalizerFree p
-      return $ MV.unsafeFromForeignPtr0 fp cap
-    exit vec
-  growVector _ !vec !cap !exit = if cap <= MV.length vec
-    then exit $ MV.unsafeSlice 0 cap vec
+      return $ FlatArray cap fp
+    exit ary
+  growArray _ (FlatArray !cap !fp) !newCap !exit = if newCap <= cap
+    then exit $ FlatArray newCap fp
     else do
-      vec' <- unsafeIOToSTM $ do
-        !p'  <- callocArray cap
+      ary' <- unsafeIOToSTM $ do
+        !p'  <- callocArray newCap
         !fp' <- newForeignPtr finalizerFree p'
-        MV.unsafeWith vec $ \ !p -> copyArray p' p $ MV.length vec
-        return $ MV.unsafeFromForeignPtr0 fp' cap
-      exit vec'
-  readVectorCell !pgs !idx !vec !exit =
-    edhRegulateIndex pgs (MV.length vec) idx $ \ !posIdx ->
-      edhPerformIO pgs (MV.unsafeWith vec $ \ !vPtr -> peekElemOff vPtr posIdx)
-        $ \ !sv -> contEdhSTM $ toEdh pgs sv $ \ !val -> exit val
-  writeVectorCell !pgs !val !idx !vec !exit =
-    edhRegulateIndex pgs (MV.length vec) idx $ \ !posIdx ->
-      fromEdh pgs val $ \ !sv -> do
-        unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr ->
-          pokeElemOff vPtr posIdx sv
-        toEdh pgs sv $ \ !val' -> exit val'
-  updateVector _ [] _ !exit = exit
-  updateVector !pgs ((!idx, !sv) : rest'upds) !vec !exit =
-    edhRegulateIndex pgs (MV.length vec) idx $ \ !posIdx -> do
-      unsafeIOToSTM $ MV.unsafeWith vec $ \ !vPtr -> pokeElemOff vPtr posIdx sv
-      updateVector pgs rest'upds vec exit
+        withForeignPtr fp $ \ !p -> copyArray p' p cap
+        return $ FlatArray newCap fp'
+      exit ary'
+  readArrayCell !pgs !idx (FlatArray !cap !fp) !exit =
+    edhRegulateIndex pgs cap idx $ \ !posIdx -> do
+      sv <- unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr ->
+        peekElemOff vPtr posIdx
+      toEdh pgs sv $ \ !val -> exit val
+  writeArrayCell !pgs !val !idx (FlatArray !cap !fp) !exit =
+    edhRegulateIndex pgs cap idx $ \ !posIdx -> fromEdh pgs val $ \ !sv -> do
+      unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
+      toEdh pgs sv $ \ !val' -> exit val'
+  updateArray _ [] _ !exit = exit
+  updateArray !pgs ((!idx, !sv) : rest'upds) ary@(FlatArray !cap !fp) !exit =
+    edhRegulateIndex pgs cap idx $ \ !posIdx -> do
+      unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
+      updateArray pgs rest'upds ary exit
 
 
 data ConcreteDataType where
@@ -121,7 +152,7 @@ dtypeMethods !pgsModule = sequence
 
   dtypeEqProc :: EdhProcedure
   dtypeEqProc (ArgsPack [EdhObject !dtoOther] _) !exit =
-    withThatEntityStore $ \ !pgs (ConcreteDataType !repr _) ->
+    withThatEntity $ \ !pgs (ConcreteDataType !repr _) ->
       fromDynamic <$> readTVar (entity'store $ objEntity dtoOther) >>= \case
         Nothing -> exitEdhSTM pgs exit $ EdhBool False
         Just (ConcreteDataType !reprOther _) ->
@@ -130,8 +161,7 @@ dtypeMethods !pgsModule = sequence
 
   dtypeReprProc :: EdhProcedure
   dtypeReprProc _ !exit =
-    withThatEntityStore'
-        (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bad-dtype>")
+    withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bad-dtype>")
       $ \ !pgs (ConcreteDataType !repr _) ->
           exitEdhSTM pgs exit $ EdhString repr
 
