@@ -132,14 +132,23 @@ dtypeCtor :: EdhHostCtor
 dtypeCtor _ _ !ctorExit = ctorExit $ toDyn nil
 
 dtypeMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
-dtypeMethods !pgsModule = sequence
-  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
-  | (nm, vc, hp, args) <-
-    [ ("__init__", EdhMethod, dtypeInitProc, PackReceiver [mandatoryArg "name"])
-    , ("=="      , EdhMethod, dtypeEqProc  , PackReceiver [])
-    , ("__repr__", EdhMethod, dtypeReprProc, PackReceiver [])
-    ]
-  ]
+dtypeMethods !pgsModule =
+  sequence
+    $  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
+       | (nm, vc, hp, args) <-
+         [ ( "__init__"
+           , EdhMethod
+           , dtypeInitProc
+           , PackReceiver [mandatoryArg "name"]
+           )
+         , ("=="      , EdhMethod, dtypeEqProc  , PackReceiver [])
+         , ("__repr__", EdhMethod, dtypeIdentProc, PackReceiver [])
+         ]
+       ]
+    ++ [ (AttrByName nm, ) <$> mkHostProperty scope nm getter setter
+       | (nm, getter, setter) <- [("id", dtypeIdentProc, Nothing)]
+       ]
+
  where
   !scope = contextScope $ edh'context pgsModule
 
@@ -168,8 +177,8 @@ dtypeMethods !pgsModule = sequence
           exitEdhSTM pgs exit $ EdhBool $ cdtOther == cdt
   dtypeEqProc _ !exit = exitEdhProc exit $ EdhBool False
 
-  dtypeReprProc :: EdhProcedure
-  dtypeReprProc _ !exit =
+  dtypeIdentProc :: EdhProcedure
+  dtypeIdentProc _ !exit =
     withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bad-dtype>")
       $ \ !pgs (ConcreteDataType !dt) ->
           exitEdhSTM pgs exit $ EdhString $ data'type'identifier dt
