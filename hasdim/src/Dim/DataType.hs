@@ -1,4 +1,5 @@
 
+-- | Numpy dtype inspired abstraction for vectorizable types of data
 module Dim.DataType where
 
 import           Prelude
@@ -34,8 +35,12 @@ data FlatArray a = FlatArray
 flatArrayCapacity :: FlatArray a -> Int
 flatArrayCapacity (FlatArray !cap _) = cap
 
-flatArrayNumBytes :: forall a . (Storable a, EdhXchg a) => FlatArray a -> Int
+flatArrayNumBytes :: forall a . Storable a => FlatArray a -> Int
 flatArrayNumBytes (FlatArray !cap _) = cap * sizeOf (undefined :: a)
+
+unsafeSliceFlatArray :: forall a . FlatArray a -> Int -> Int -> FlatArray a
+unsafeSliceFlatArray (FlatArray _ !fp) !offset !len =
+  FlatArray len $ plusForeignPtr fp offset
 
 unsafeFlatArrayToVector
   :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => FlatArray a -> Vector b
@@ -61,12 +66,12 @@ unsafeFlatArrayFromMVector !mvec = case MV.unsafeToForeignPtr0 mvec of
 -- type safe data manipulation operations wrt to exchanging data with Edh
 -- programs
 data DataType a where
-  DataType ::(Storable a, EdhXchg a) => {
+  DataType ::(Ord a, Storable a, EdhXchg a) => {
       data'type'identifier :: Text
     , data'element'size :: Int
     , data'element'align :: Int
     , create'flat'array :: EdhProgState
-        ->  Int -> (FlatArray a -> STM ()) -> STM ()
+        -> Int -> (FlatArray a -> STM ()) -> STM ()
     , grow'flat'array :: EdhProgState
         -> FlatArray a -> Int -> (FlatArray a -> STM ()) -> STM ()
     , read'flat'array'cell :: EdhProgState
@@ -75,9 +80,13 @@ data DataType a where
         -> EdhValue -> Int -> FlatArray a -> (EdhValue -> STM ()) -> STM ()
     , update'flat'array :: EdhProgState
         -> [(Int,a)]  -> FlatArray a  -> STM () -> STM ()
+    , dt'cmp'vectorized :: EdhProgState -> FlatArray a
+        -> (Ordering -> Bool) -> EdhValue -> (FlatArray Int8 -> STM ()) -> STM ()
+    , dt'cmp'element'wise :: EdhProgState -> FlatArray a
+        -> (Ordering -> Bool) -> FlatArray a -> (FlatArray Int8 -> STM ()) -> STM ()
   }-> DataType a
  deriving Typeable
-dataType :: forall a . (Storable a, EdhXchg a) => Text -> DataType a
+dataType :: forall a . (Ord a, Storable a, EdhXchg a) => Text -> DataType a
 dataType !ident = DataType ident
                            (sizeOf (undefined :: a))
                            (alignment (undefined :: a))
@@ -86,6 +95,8 @@ dataType !ident = DataType ident
                            readArrayCell
                            writeArrayCell
                            updateArray
+                           vecCmp
+                           elemCmp
  where
   createArray !_ !cap !exit = do
     ary <- unsafeIOToSTM $ do
@@ -116,10 +127,34 @@ dataType !ident = DataType ident
     edhRegulateIndex pgs cap idx $ \ !posIdx -> do
       unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
       updateArray pgs rest'upds ary exit
+  -- vectorized comparation, yielding a new Int8 array
+  vecCmp !pgs (FlatArray !cap !fp) !cmp !v !exit = fromEdh pgs v $ \ !sv ->
+    (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
+      !rp  <- callocArray cap
+      !rfp <- newForeignPtr finalizerFree rp
+      let go i | i >= cap = return $ FlatArray cap rfp
+          go i            = do
+            ev <- peekElemOff p i
+            pokeElemOff rp i $ if cmp $ compare ev sv then 1 else 0
+            go (i + 1)
+      go 0
+  -- element-wise comparation, yielding a new Int8 array
+  elemCmp _pgs (FlatArray !cap1 !fp1) !cmp (FlatArray _cap2 !fp2) !exit =
+    (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp1 $ \ !p1 ->
+      withForeignPtr fp2 $ \ !p2 -> do
+        !rp  <- callocArray cap1
+        !rfp <- newForeignPtr finalizerFree rp
+        let go i | i >= cap1 = return $ FlatArray cap1 rfp
+            go i             = do
+              ev1 <- peekElemOff p1 i
+              ev2 <- peekElemOff p2 i
+              pokeElemOff rp i $ if cmp $ compare ev1 ev2 then 1 else 0
+              go (i + 1)
+        go 0
 
 
 data ConcreteDataType where
-  ConcreteDataType ::(Storable a, EdhXchg a) => {
+  ConcreteDataType ::(Ord a, Storable a, EdhXchg a) => {
       concrete'data'type :: !(DataType a)
     } -> ConcreteDataType
  deriving Typeable

@@ -10,6 +10,10 @@ where
 import           Prelude
 -- import           Debug.Trace
 
+import           Control.Exception
+
+import           Control.Concurrent.STM
+
 import           Control.Monad.Reader
 
 import           Data.Int
@@ -79,6 +83,14 @@ installDimBatteries !world = do
     defaultDataType <- lookupEntityAttr pgs
                                         (objEntity moduDtypes)
                                         (AttrByName "f8")
+    indexDTO <-
+      lookupEntityAttr pgs (objEntity moduDtypes) (AttrByName "intp") >>= \case
+        EdhObject !dto -> return dto
+        _              -> throwSTM $ TypeError "bug: bad DataType object intp"
+    boolDTO <-
+      lookupEntityAttr pgs (objEntity moduDtypes) (AttrByName "bool") >>= \case
+        EdhObject !dto -> return dto
+        _              -> throwSTM $ TypeError "bug: bad DataType object bool"
 
     let moduScope = contextScope $ edh'context pgs
         modu      = thisObject moduScope
@@ -88,7 +100,8 @@ installDimBatteries !world = do
         $   mkHostClass moduScope nm hc
         =<< createSideEntityManipulater True
         =<< mths pgs
-      | (nm, hc, mths) <- [("Column", colCtor defaultDataType, colMethods)]
+      | (nm, hc, mths) <-
+        [("Column", colCtor defaultDataType, colMethods indexDTO boolDTO)]
       ]
 
     artsDict <- createEdhDict

@@ -4,12 +4,13 @@ module Dim.Table where
 import           Prelude
 -- import           Debug.Trace
 
+import           Unsafe.Coerce
+
 import           Foreign
 
 import           Control.Monad
 
 import           Control.Concurrent.STM
-
 
 -- import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
@@ -86,23 +87,82 @@ writeColumnCell
 writeColumnCell !pgs !val !idx (Column !dt _ _ !csv) !exit =
   readTVar csv >>= \ !cs -> write'flat'array'cell dt pgs val idx cs exit
 
-fillColumn
-  :: EdhProgState -> EdhValue -> Int -> Int -> Column -> STM () -> STM ()
-fillColumn !pgs !val !idxBegin !idxEnd (Column !dt _ _ !csv) !exit =
-  fromEdh pgs val $ \ !sv -> readTVar csv >>= \ !cs -> update'flat'array
-    dt
-    pgs
-    [ (i, sv) | i <- [idxBegin .. idxEnd - 1] ]
-    cs
-    exit
+fillColumn :: EdhProgState -> EdhValue -> [Int] -> Column -> STM () -> STM ()
+fillColumn !pgs !val !idxs (Column !dt _ _ !csv) !exit =
+  fromEdh pgs val $ \ !sv -> readTVar csv
+    >>= \ !cs -> update'flat'array dt pgs [ (i, sv) | i <- idxs ] cs exit
 
 growColumn :: EdhProgState -> Column -> Int -> STM () -> STM ()
-growColumn !pgs (Column !dt _ !clv !csv) !cap !exit =
-  readTVar csv >>= \ !cs -> grow'flat'array dt pgs cs cap $ \ !cs' -> do
+growColumn !pgs (Column !dt _ !clv !csv) !newCap !exit =
+  readTVar csv >>= \ !cs -> grow'flat'array dt pgs cs newCap $ \ !cs' -> do
     writeTVar csv cs'
+    -- shink valid length if new capacity shrunk shorter than that
     !cl <- readTVar clv
-    when (cl > cap) $ writeTVar clv cap
+    when (newCap < cl) $ writeTVar clv newCap
+    -- done
     exit
+
+vecCmpColumn
+  :: EdhProgState
+  -> Object
+  -> (Ordering -> Bool)
+  -> Column
+  -> EdhValue
+  -> (Column -> STM ())
+  -> STM ()
+vecCmpColumn !pgs !boolDTO !cmp (Column !dt _ !clv !csv) !v !exit =
+  fromDynamic <$> readTVar (entity'store $ objEntity boolDTO) >>= \case
+    Nothing ->
+      throwEdhSTM pgs UsageError "Invalid dtype object to create a Column"
+    Just (ConcreteDataType !bdt) -> do
+      !cl <- readTVar clv
+      !cs <- readTVar csv
+      let !fa = unsafeSliceFlatArray cs 0 cl
+      dt'cmp'vectorized dt pgs fa cmp v $ \ !bifa -> do
+        !biclv <- newTVar cl
+        !bicsv <- newTVar bifa
+        exit $ Column (unsafeCoerce bdt) boolDTO biclv bicsv
+
+elemCmpColumn
+  :: EdhProgState
+  -> Object
+  -> (Ordering -> Bool)
+  -> Column
+  -> Column
+  -> (Column -> STM ())
+  -> STM ()
+elemCmpColumn !pgs !boolDTO !cmp (Column !dt1 _ !clv1 !csv1) (Column !dt2 _ !clv2 !csv2) !exit
+  = fromDynamic <$> readTVar (entity'store $ objEntity boolDTO) >>= \case
+    Nothing ->
+      throwEdhSTM pgs UsageError "Invalid dtype object to create a Column"
+    Just (ConcreteDataType !bdt) ->
+      if data'type'identifier dt1 /= data'type'identifier dt2
+        then
+          throwEdhSTM pgs UsageError
+          $  "Column dtype mismatch: "
+          <> data'type'identifier dt1
+          <> " vs "
+          <> data'type'identifier dt2
+        else do
+          !cl1 <- readTVar clv1
+          !cl2 <- readTVar clv2
+          if cl1 /= cl2
+            then
+              throwEdhSTM pgs UsageError
+              $  "Column length mismatch: "
+              <> T.pack (show cl1)
+              <> " vs "
+              <> T.pack (show cl2)
+            else do
+              !cs1 <- readTVar csv1
+              !cs2 <- readTVar csv2
+              let !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                  !fa2 = unsafeSliceFlatArray cs2 0 cl2
+              dt'cmp'element'wise dt1 pgs fa1 cmp (unsafeCoerce fa2)
+                $ \ !bifa -> do
+                    !biclv <- newTVar cl1
+                    !bicsv <- newTVar bifa
+                    exit $ Column (unsafeCoerce bdt) boolDTO biclv bicsv
 
 
 -- obtain valid column data as an immutable Storable Vector
@@ -157,8 +217,11 @@ colCtor !defaultDataType !pgsCtor !apk !ctorExit =
             )
           ]
 
-colMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
-colMethods !pgsModule =
+colMethods :: Object -> Object -> EdhProgState -> STM [(AttrKey, EdhValue)]
+-- CAVEAT: it's not checked but
+--        *) 'indexDTO' must wrap `DataType Int`
+--        *) 'boolDTO' must wrap `DataType Int8`
+colMethods !indexDTO !boolDTO !pgsModule =
   sequence
     $  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
        | (nm, vc, hp, mthArgs) <-
@@ -173,13 +236,81 @@ colMethods !pgsModule =
            , colIdxWriteProc
            , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
            )
-         , ( "fill"
-           , EdhMethod
--- TODO slicing idx assign should do this
-           , colFillProc
-           , PackReceiver [mandatoryArg "val"]
-           )
          , ("__repr__", EdhMethod, colReprProc, PackReceiver [])
+         , ( "=="
+           , EdhMethod
+           , colCmpProc $ \case
+             EQ -> True
+             _  -> False
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "==@"
+           , EdhMethod
+           , colCmpProc $ \case
+             EQ -> True
+             _  -> False
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( ">="
+           , EdhMethod
+           , colCmpProc $ \case
+             GT -> True
+             EQ -> True
+             _  -> False
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "<="
+           , EdhMethod
+           , colCmpProc $ \case
+             LT -> True
+             EQ -> True
+             _  -> False
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "<"
+           , EdhMethod
+           , colCmpProc $ \case
+             LT -> True
+             _  -> False
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( ">"
+           , EdhMethod
+           , colCmpProc $ \case
+             GT -> True
+             _  -> False
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( ">=@"
+           , EdhMethod
+           , colCmpProc $ \case
+             LT -> True
+             EQ -> True
+             _  -> False
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "<=@"
+           , EdhMethod
+           , colCmpProc $ \case
+             GT -> True
+             EQ -> True
+             _  -> False
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "<@"
+           , EdhMethod
+           , colCmpProc $ \case
+             GT -> True
+             _  -> False
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( ">@"
+           , EdhMethod
+           , colCmpProc $ \case
+             LT -> True
+             _  -> False
+           , PackReceiver [mandatoryArg "other"]
+           )
          ]
        ]
     ++ [ (AttrByName nm, ) <$> mkHostProperty scope nm getter setter
@@ -208,8 +339,7 @@ colMethods !pgsModule =
   colIdxReadProc :: EdhProcedure
   colIdxReadProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
     case args of
-      -- TODO support slicing, of coz need to tell a slicing index from
-      --      an element index first
+      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
       [EdhDecimal !idxNum] -> case D.decimalToInteger idxNum of
         Just !idx ->
           readColumnCell pgs (fromInteger idx) col $ exitEdhSTM pgs exit
@@ -224,8 +354,7 @@ colMethods !pgsModule =
   colIdxWriteProc :: EdhProcedure
   colIdxWriteProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
     case args of
-      -- TODO support slicing assign, of coz need to tell a slicing index
-      --      from an element index first
+      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
       [EdhDecimal !idxNum, val] -> case D.decimalToInteger idxNum of
         Just !idx ->
           writeColumnCell pgs val (fromInteger idx) col $ exitEdhSTM pgs exit
@@ -236,18 +365,6 @@ colMethods !pgsModule =
       _ ->
         throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
           (show args)
-
-  colFillProc :: EdhProcedure
-  colFillProc (ArgsPack !args _) !exit =
-    withThatEntity $ \ !pgs col@(Column _ _ !clv _) -> case args of
-      -- TODO support slicing assign, of coz need to tell a slicing index
-      --      from an element index first
-      [val] -> readTVar clv
-        >>= \ !cl -> fillColumn pgs val 0 cl col $ exitEdhSTM pgs exit nil
-      _ ->
-        throwEdhSTM pgs UsageError
-          $  "Invalid args for a Column fill: "
-          <> T.pack (show args)
 
   colCapProc :: EdhProcedure
   colCapProc _ !exit = withThatEntity $ \ !pgs !col -> columnCapacity col
@@ -283,9 +400,32 @@ colMethods !pgsModule =
           $  EdhString
           $  "Column("
           <> T.pack (show $ flatArrayCapacity cs)
-          <> ", "
+          <> ", length="
           <> T.pack (show cl)
           <> ", dtype="
           <> data'type'identifier dt
           <> ")"
+
+  colCmpProc :: (Ordering -> Bool) -> EdhProcedure
+  colCmpProc !cmp (ArgsPack [!other] _) !exit =
+    withThatEntity $ \ !pgs !col -> case edhUltimate other of
+      otherVal@(EdhObject !otherObj) ->
+        fromDynamic <$> objStore otherObj >>= \case
+          Just colOther@Column{} ->
+            elemCmpColumn pgs boolDTO cmp col colOther $ \ !colResult ->
+              cloneEdhObject (thatObject $ contextScope $ edh'context pgs)
+                             (\_ !esdx -> esdx $ toDyn colResult)
+                $ \ !bio -> exitEdhSTM pgs exit $ EdhObject bio
+          Nothing ->
+            vecCmpColumn pgs boolDTO cmp col otherVal $ \ !colResult ->
+              cloneEdhObject (thatObject $ contextScope $ edh'context pgs)
+                             (\_ !esdx -> esdx $ toDyn colResult)
+                $ \ !bio -> exitEdhSTM pgs exit $ EdhObject bio
+      !otherVal -> vecCmpColumn pgs boolDTO cmp col otherVal $ \ !colResult ->
+        cloneEdhObject (thatObject $ contextScope $ edh'context pgs)
+                       (\_ !esdx -> esdx $ toDyn colResult)
+          $ \ !bio -> exitEdhSTM pgs exit $ EdhObject bio
+  colCmpProc _ !apk _ =
+    throwEdh UsageError $ "Invalid args for a Column operator: " <> T.pack
+      (show apk)
 
