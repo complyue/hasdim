@@ -50,7 +50,7 @@ installDimBatteries !world = do
         !int8 = dataType "int8" :: DataType Int8
         !byte = dataType "byte" :: DataType Word8
         !intp = dataType "intp" :: DataType Int
-        !bool = dataType "bool" :: DataType Int8
+        !bool = dataType "bool" :: DataType VecBool
         !char = dataType "char" :: DataType Char
         !dtypes =
           [ (ConcreteDataType f8  , ["f8"])

@@ -220,7 +220,7 @@ colCtor !defaultDataType !pgsCtor !apk !ctorExit =
 colMethods :: Object -> Object -> EdhProgState -> STM [(AttrKey, EdhValue)]
 -- CAVEAT: it's not checked but
 --        *) 'indexDTO' must wrap `DataType Int`
---        *) 'boolDTO' must wrap `DataType Int8`
+--        *) 'boolDTO' must wrap `DataType VecBool`
 colMethods !indexDTO !boolDTO !pgsModule =
   sequence
     $  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs

@@ -1,12 +1,18 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module Dim.XCHG where
 
 import           Prelude
 -- import           Debug.Trace
 
+import           Foreign
+
 import           Control.Concurrent.STM
 
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
+
+import           Data.Dynamic
 
 import           Data.Scientific
 
@@ -20,10 +26,20 @@ class EdhXchg t where
   fromEdh :: EdhProgState  -> EdhValue -> (t -> STM ()) -> STM ()
 
 
+newtype VecBool = VecBool Int8
+  deriving (Eq, Ord, Storable, Typeable)
+
+instance {-# OVERLAPPABLE #-} EdhXchg VecBool where
+  toEdh _pgs (VecBool !b) !exit = exit $ EdhBool $ b /= 0
+  fromEdh !pgs !v !exit =
+    edhValueNull pgs v $ \ !b -> exit $ VecBool $ if b then 0 else 1
+
+
 instance {-# OVERLAPPABLE #-} EdhXchg Text where
   toEdh _pgs !s !exit = exit $ EdhString s
   fromEdh _pgs (EdhString !s) !exit = exit s
   fromEdh !pgs !v             !exit = edhValueReprSTM pgs v exit
+
 
 instance {-# OVERLAPPABLE #-} EdhXchg Char where
   toEdh _pgs !s !exit = exit $ EdhString $ T.singleton s
@@ -34,6 +50,7 @@ instance {-# OVERLAPPABLE #-} EdhXchg Char where
     Just (!c, _) -> exit c
     Nothing      -> exit '\0'
 
+
 instance {-# OVERLAPPABLE #-} EdhXchg Double where
   toEdh _pgs !n !exit =
     exit $ EdhDecimal $ D.decimalFromScientific $ fromFloatDigits n
@@ -43,6 +60,7 @@ instance {-# OVERLAPPABLE #-} EdhXchg Float where
   toEdh _pgs !n !exit =
     exit $ EdhDecimal $ D.decimalFromScientific $ fromFloatDigits n
   fromEdh !pgs !v !exit = coerceEdhToFloat pgs v exit
+
 
 instance {-# OVERLAPPABLE #-} (Integral a) => EdhXchg a where
   toEdh _pgs !n !exit = exit $ EdhDecimal $ fromIntegral n
