@@ -34,6 +34,9 @@ data FlatArray a = FlatArray
 flatArrayCapacity :: FlatArray a -> Int
 flatArrayCapacity (FlatArray !cap _) = cap
 
+flatArrayNumBytes :: forall a . (Storable a, EdhXchg a) => FlatArray a -> Int
+flatArrayNumBytes (FlatArray !cap _) = cap * sizeOf (undefined :: a)
+
 unsafeFlatArrayToVector
   :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => FlatArray a -> Vector b
 unsafeFlatArrayToVector (FlatArray !cap !fp) =
@@ -141,7 +144,7 @@ dtypeMethods !pgsModule =
            , dtypeInitProc
            , PackReceiver [mandatoryArg "name"]
            )
-         , ("=="      , EdhMethod, dtypeEqProc  , PackReceiver [])
+         , ("=="      , EdhMethod, dtypeEqProc   , PackReceiver [])
          , ("__repr__", EdhMethod, dtypeIdentProc, PackReceiver [])
          ]
        ]

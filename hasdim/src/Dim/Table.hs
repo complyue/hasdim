@@ -65,7 +65,7 @@ createColumn !pgs !dto !cap !clv !exit =
     Nothing ->
       throwEdhSTM pgs UsageError "Invalid dtype object to create a Column"
     Just (ConcreteDataType !dt) -> create'flat'array dt pgs cap
-      $ \ !cs -> join $ exit . Column dt dto clv <$> newTVar cs
+      $ \ !cs -> exit =<< Column dt dto clv <$> newTVar cs
 
 columnCapacity :: Column -> STM Int
 columnCapacity (Column _ _ _ !csv) = flatArrayCapacity <$> readTVar csv
