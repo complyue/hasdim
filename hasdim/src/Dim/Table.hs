@@ -476,6 +476,8 @@ colMethods !indexDTO !boolDTO !pgsModule =
                   (elemRepr <> ", ")
                 else showData pgs dt len fa (i + 1) cumLines lineIdx tentLine
 
+  -- TODO impl. this following:
+  --      https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Series.describe.html
   colDescProc :: EdhProcedure
   colDescProc _ !exit =
     exitEdhProc exit
@@ -565,4 +567,9 @@ arangeProc !indexDTO !emColumn !clsColumn (ArgsPack [rngSpec] _) !exit =
             void $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> fillRng p start 0
             exitWithNewColObj pgs col
 arangeProc _ _ _ _ _ = throwEdh UsageError "Invalid args to arange()"
+
+
+-- TODO impl. `linspace` following:
+--      https://numpy.org/doc/stable/reference/generated/numpy.linspace.html
+-- Note it can be more exact by stepping with LosslessDecimal
 

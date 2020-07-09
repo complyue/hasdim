@@ -4,4 +4,6 @@ export {
   import * 'dim/dtypes'
   import * 'dim/RT'
 
+  import * './consts'
+
 }
