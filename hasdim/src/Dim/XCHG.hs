@@ -11,7 +11,7 @@ import           Control.Concurrent.STM
 
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
-
+import           Data.Bits
 import           Data.Dynamic
 
 import           Data.Scientific
@@ -27,7 +27,7 @@ class EdhXchg t where
 
 
 newtype VecBool = VecBool Int8
-  deriving (Eq, Ord, Storable, Num, Typeable)
+  deriving (Eq, Ord, Storable, Num, Bits, Typeable)
 
 instance {-# OVERLAPPABLE #-} EdhXchg VecBool where
   toEdh _pgs (VecBool !b) !exit = exit $ EdhBool $ b /= 0

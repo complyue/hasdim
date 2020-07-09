@@ -541,6 +541,36 @@ colMethods !indexDTO !boolDTO !pgsModule =
              _  -> False
            , PackReceiver [mandatoryArg "other"]
            )
+         , ( "&&"
+           , EdhMethod
+           , colOpProc bitAndOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "&&@"
+           , EdhMethod
+           , colOpProc bitAndOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "||"
+           , EdhMethod
+           , colOpProc bitOrOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "||@"
+           , EdhMethod
+           , colOpProc bitOrOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "&&="
+           , EdhMethod
+           , colInpProc bitAndOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "||="
+           , EdhMethod
+           , colInpProc bitOrOp
+           , PackReceiver [mandatoryArg "other"]
+           )
          , ("+", EdhMethod, colOpProc addOp, PackReceiver [mandatoryArg "other"])
          , ( "+@"
            , EdhMethod
@@ -956,6 +986,29 @@ colMethods !indexDTO !boolDTO !pgsModule =
     "intp"    -> toDyn ((\_x !y -> y) :: Int -> Int -> Int)
     "bool"    -> toDyn ((\_x !y -> y) :: VecBool -> VecBool -> VecBool)
     _         -> toDyn nil -- means not applicable here
+
+  bitAndOp :: Text -> Dynamic
+  bitAndOp = \case
+    -- "float64" -> toDyn ((.&.) :: Double -> Double -> Double)
+    -- "float32" -> toDyn ((.&.) :: Float -> Float -> Float)
+    "int64" -> toDyn ((.&.) :: Int64 -> Int64 -> Int64)
+    "int32" -> toDyn ((.&.) :: Int32 -> Int32 -> Int32)
+    "int8"  -> toDyn ((.&.) :: Int8 -> Int8 -> Int8)
+    "byte"  -> toDyn ((.&.) :: Word8 -> Word8 -> Word8)
+    "intp"  -> toDyn ((.&.) :: Int -> Int -> Int)
+    "bool"  -> toDyn ((.&.) :: VecBool -> VecBool -> VecBool)
+    _       -> toDyn nil -- means not applicable here
+  bitOrOp :: Text -> Dynamic
+  bitOrOp = \case
+    -- "float64" -> toDyn ((.|.) :: Double -> Double -> Double)
+    -- "float32" -> toDyn ((.|.) :: Float -> Float -> Float)
+    "int64" -> toDyn ((.|.) :: Int64 -> Int64 -> Int64)
+    "int32" -> toDyn ((.|.) :: Int32 -> Int32 -> Int32)
+    "int8"  -> toDyn ((.|.) :: Int8 -> Int8 -> Int8)
+    "byte"  -> toDyn ((.|.) :: Word8 -> Word8 -> Word8)
+    "intp"  -> toDyn ((.|.) :: Int -> Int -> Int)
+    "bool"  -> toDyn ((.|.) :: VecBool -> VecBool -> VecBool)
+    _       -> toDyn nil -- means not applicable here
 
   addOp :: Text -> Dynamic
   addOp = \case
