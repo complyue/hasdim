@@ -88,10 +88,10 @@ data DataType a where
         -> (Ordering -> Bool) -> FlatArray a -> (FlatArray Int8 -> STM ()) -> STM ()
     , dt'op'vectorized :: EdhProgState -> FlatArray a
         -> Dynamic -> EdhValue -> (FlatArray a -> STM ()) -> STM ()
-    , dt'inp'vectorized :: EdhProgState -> FlatArray a
-        -> Dynamic -> EdhValue -> STM () -> STM ()
     , dt'op'element'wise :: EdhProgState -> FlatArray a
         -> Dynamic -> FlatArray a -> (FlatArray a -> STM ()) -> STM ()
+    , dt'inp'vectorized :: EdhProgState -> FlatArray a
+        -> Dynamic -> EdhValue -> STM () -> STM ()
     , dt'inp'element'wise :: EdhProgState -> FlatArray a
         -> Dynamic -> FlatArray a -> STM () -> STM ()
   }-> DataType a
@@ -113,8 +113,8 @@ dataType !ident = DataType ident
                            vecCmp
                            elemCmp
                            vecOp
-                           vecInp
                            elemOp
+                           vecInp
                            elemInp
  where
   createArray !_ !cap !exit = (exit =<<) $ unsafeIOToSTM $ do
@@ -197,17 +197,6 @@ dataType !ident = DataType ident
               pokeElemOff rp i $ op ev sv
               go (i + 1)
         go 0
-  -- vectorized operation, inplace modifying the array
-  vecInp !pgs (FlatArray !cap !fp) !dop !v !exit = case fromDynamic dop of
-    Nothing                  -> error "bug: dtype op type mismatch"
-    Just (op :: a -> a -> a) -> fromEdh pgs v $ \ !sv ->
-      (>> exit) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
-        let go i | i >= cap = return ()
-            go i            = do
-              ev <- peekElemOff p i
-              pokeElemOff p i $ op ev sv
-              go (i + 1)
-        go 0
   -- element-wise operation, yielding a new array
   elemOp _pgs (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit =
     case fromDynamic dop of
@@ -224,6 +213,17 @@ dataType !ident = DataType ident
                   pokeElemOff rp i $ op ev1 ev2
                   go (i + 1)
             go 0
+  -- vectorized operation, inplace modifying the array
+  vecInp !pgs (FlatArray !cap !fp) !dop !v !exit = case fromDynamic dop of
+    Nothing                  -> error "bug: dtype op type mismatch"
+    Just (op :: a -> a -> a) -> fromEdh pgs v $ \ !sv ->
+      (>> exit) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
+        let go i | i >= cap = return ()
+            go i            = do
+              ev <- peekElemOff p i
+              pokeElemOff p i $ op ev sv
+              go (i + 1)
+        go 0
   -- element-wise operation, inplace modifying array
   elemInp _pgs (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit =
     case fromDynamic dop of

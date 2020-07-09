@@ -529,92 +529,6 @@ colMethods !indexDTO !boolDTO !pgsModule =
        ]
  where
   !scope = contextScope $ edh'context pgsModule
-  addOp :: Text -> Dynamic
-  addOp = \case
-    "float64" -> toDyn ((+) :: Double -> Double -> Double)
-    "float32" -> toDyn ((+) :: Float -> Float -> Float)
-    "int64"   -> toDyn ((+) :: Int64 -> Int64 -> Int64)
-    "int32"   -> toDyn ((+) :: Int32 -> Int32 -> Int32)
-    "int8"    -> toDyn ((+) :: Int8 -> Int8 -> Int8)
-    "byte"    -> toDyn ((+) :: Word8 -> Word8 -> Word8)
-    "intp"    -> toDyn ((+) :: Int -> Int -> Int)
-    _         -> toDyn nil -- means not applicable here
-  subtractOp :: Text -> Dynamic
-  subtractOp = \case
-    "float64" -> toDyn ((-) :: Double -> Double -> Double)
-    "float32" -> toDyn ((-) :: Float -> Float -> Float)
-    "int64"   -> toDyn ((-) :: Int64 -> Int64 -> Int64)
-    "int32"   -> toDyn ((-) :: Int32 -> Int32 -> Int32)
-    "int8"    -> toDyn ((-) :: Int8 -> Int8 -> Int8)
-    "byte"    -> toDyn ((-) :: Word8 -> Word8 -> Word8)
-    "intp"    -> toDyn ((-) :: Int -> Int -> Int)
-    _         -> toDyn nil -- means not applicable here
-  subtFromOp :: Text -> Dynamic
-  subtFromOp = \case
-    "float64" -> toDyn ((\ !x !y -> y - x) :: Double -> Double -> Double)
-    "float32" -> toDyn ((\ !x !y -> y - x) :: Float -> Float -> Float)
-    "int64"   -> toDyn ((\ !x !y -> y - x) :: Int64 -> Int64 -> Int64)
-    "int32"   -> toDyn ((\ !x !y -> y - x) :: Int32 -> Int32 -> Int32)
-    "int8"    -> toDyn ((\ !x !y -> y - x) :: Int8 -> Int8 -> Int8)
-    "byte"    -> toDyn ((\ !x !y -> y - x) :: Word8 -> Word8 -> Word8)
-    "intp"    -> toDyn ((\ !x !y -> y - x) :: Int -> Int -> Int)
-    _         -> toDyn nil -- means not applicable here
-  mulOp :: Text -> Dynamic
-  mulOp = \case
-    "float64" -> toDyn ((*) :: Double -> Double -> Double)
-    "float32" -> toDyn ((*) :: Float -> Float -> Float)
-    "int64"   -> toDyn ((*) :: Int64 -> Int64 -> Int64)
-    "int32"   -> toDyn ((*) :: Int32 -> Int32 -> Int32)
-    "int8"    -> toDyn ((*) :: Int8 -> Int8 -> Int8)
-    "byte"    -> toDyn ((*) :: Word8 -> Word8 -> Word8)
-    "intp"    -> toDyn ((*) :: Int -> Int -> Int)
-    _         -> toDyn nil -- means not applicable here
-  divOp :: Text -> Dynamic
-  divOp = \case
-    "float64" -> toDyn ((/) :: Double -> Double -> Double)
-    "float32" -> toDyn ((/) :: Float -> Float -> Float)
-    "int64"   -> toDyn (div :: Int64 -> Int64 -> Int64)
-    "int32"   -> toDyn (div :: Int32 -> Int32 -> Int32)
-    "int8"    -> toDyn (div :: Int8 -> Int8 -> Int8)
-    "byte"    -> toDyn (div :: Word8 -> Word8 -> Word8)
-    "intp"    -> toDyn (div :: Int -> Int -> Int)
-    _         -> toDyn nil -- means not applicable here
-  divByOp :: Text -> Dynamic
-  divByOp = \case
-    "float64" -> toDyn ((\ !x !y -> y / x) :: Double -> Double -> Double)
-    "float32" -> toDyn ((\ !x !y -> y / x) :: Float -> Float -> Float)
-    "int64"   -> toDyn ((\ !x !y -> div y x) :: Int64 -> Int64 -> Int64)
-    "int32"   -> toDyn ((\ !x !y -> div y x) :: Int32 -> Int32 -> Int32)
-    "int8"    -> toDyn ((\ !x !y -> div y x) :: Int8 -> Int8 -> Int8)
-    "byte"    -> toDyn ((\ !x !y -> div y x) :: Word8 -> Word8 -> Word8)
-    "intp"    -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
-    _         -> toDyn nil -- means not applicable here
-  divIntOp :: Text -> Dynamic
-  divIntOp = \case
-    -- TODO reason about this:
-    -- https://stackoverflow.com/questions/38588815/rounding-errors-in-python-floor-division
-    "float64" -> toDyn
-      ((\ !x !y -> fromInteger $ floor $ x / y) :: Double -> Double -> Double)
-    "float32" -> toDyn
-      ((\ !x !y -> fromInteger $ floor $ x / y) :: Float -> Float -> Float)
-    "int64" -> toDyn (div :: Int64 -> Int64 -> Int64)
-    "int32" -> toDyn (div :: Int32 -> Int32 -> Int32)
-    "int8"  -> toDyn (div :: Int8 -> Int8 -> Int8)
-    "byte"  -> toDyn (div :: Word8 -> Word8 -> Word8)
-    "intp"  -> toDyn (div :: Int -> Int -> Int)
-    _       -> toDyn nil -- means not applicable here
-  divIntByOp :: Text -> Dynamic
-  divIntByOp = \case
-    "float64" -> toDyn
-      ((\ !x !y -> fromInteger $ floor $ y / x) :: Double -> Double -> Double)
-    "float32" -> toDyn
-      ((\ !x !y -> fromInteger $ floor $ y / x) :: Float -> Float -> Float)
-    "int64" -> toDyn ((\ !x !y -> div y x) :: Int64 -> Int64 -> Int64)
-    "int32" -> toDyn ((\ !x !y -> div y x) :: Int32 -> Int32 -> Int32)
-    "int8"  -> toDyn ((\ !x !y -> div y x) :: Int8 -> Int8 -> Int8)
-    "byte"  -> toDyn ((\ !x !y -> div y x) :: Word8 -> Word8 -> Word8)
-    "intp"  -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
-    _       -> toDyn nil -- means not applicable here
 
   colGrowProc :: EdhProcedure
   colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit
@@ -628,36 +542,6 @@ colMethods !indexDTO !boolDTO !pgsModule =
           $ edh'context pgs
       _ -> throwEdh UsageError "Column capacity must be a positive integer"
   colGrowProc _ _ = throwEdh UsageError "Invalid args to Column.grow()"
-
-  colIdxReadProc :: EdhProcedure
-  colIdxReadProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
-    case args of
-      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
-      [EdhDecimal !idxNum] -> case D.decimalToInteger idxNum of
-        Just !idx ->
-          readColumnCell pgs (fromInteger idx) col $ exitEdhSTM pgs exit
-        _ ->
-          throwEdhSTM pgs UsageError
-            $  "Expect an integer to index a Column but you give: "
-            <> T.pack (show idxNum)
-      _ ->
-        throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
-          (show args)
-
-  colIdxWriteProc :: EdhProcedure
-  colIdxWriteProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
-    case args of
-      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
-      [EdhDecimal !idxNum, val] -> case D.decimalToInteger idxNum of
-        Just !idx ->
-          writeColumnCell pgs val (fromInteger idx) col $ exitEdhSTM pgs exit
-        _ ->
-          throwEdhSTM pgs UsageError
-            $  "Expect an integer to index a Column but you give: "
-            <> T.pack (show idxNum)
-      _ ->
-        throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
-          (show args)
 
   colCapProc :: EdhProcedure
   colCapProc _ !exit = withThatEntity $ \ !pgs !col -> columnCapacity col
@@ -775,6 +659,37 @@ colMethods !indexDTO !boolDTO !pgsModule =
       <> "   like pandas describe(), is yet to be implemented."
 
 
+  colIdxReadProc :: EdhProcedure
+  colIdxReadProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
+    case args of
+      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
+      [EdhDecimal !idxNum] -> case D.decimalToInteger idxNum of
+        Just !idx ->
+          readColumnCell pgs (fromInteger idx) col $ exitEdhSTM pgs exit
+        _ ->
+          throwEdhSTM pgs UsageError
+            $  "Expect an integer to index a Column but you give: "
+            <> T.pack (show idxNum)
+      _ ->
+        throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
+          (show args)
+
+  colIdxWriteProc :: EdhProcedure
+  colIdxWriteProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
+    case args of
+      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
+      [EdhDecimal !idxNum, val] -> case D.decimalToInteger idxNum of
+        Just !idx ->
+          writeColumnCell pgs val (fromInteger idx) col $ exitEdhSTM pgs exit
+        _ ->
+          throwEdhSTM pgs UsageError
+            $  "Expect an integer to index a Column but you give: "
+            <> T.pack (show idxNum)
+      _ ->
+        throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
+          (show args)
+
+
   colCmpProc :: (Ordering -> Bool) -> EdhProcedure
   colCmpProc !cmp (ArgsPack [!other] _) !exit =
     withThatEntity $ \ !pgs !col -> case edhUltimate other of
@@ -864,6 +779,93 @@ colMethods !indexDTO !boolDTO !pgsModule =
   colInpProc _ !apk _ =
     throwEdh UsageError $ "Invalid args for a Column operator: " <> T.pack
       (show apk)
+
+  addOp :: Text -> Dynamic
+  addOp = \case
+    "float64" -> toDyn ((+) :: Double -> Double -> Double)
+    "float32" -> toDyn ((+) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((+) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((+) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((+) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((+) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((+) :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  subtractOp :: Text -> Dynamic
+  subtractOp = \case
+    "float64" -> toDyn ((-) :: Double -> Double -> Double)
+    "float32" -> toDyn ((-) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((-) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((-) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((-) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((-) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((-) :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  subtFromOp :: Text -> Dynamic
+  subtFromOp = \case
+    "float64" -> toDyn ((\ !x !y -> y - x) :: Double -> Double -> Double)
+    "float32" -> toDyn ((\ !x !y -> y - x) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((\ !x !y -> y - x) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((\ !x !y -> y - x) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((\ !x !y -> y - x) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((\ !x !y -> y - x) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((\ !x !y -> y - x) :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  mulOp :: Text -> Dynamic
+  mulOp = \case
+    "float64" -> toDyn ((*) :: Double -> Double -> Double)
+    "float32" -> toDyn ((*) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((*) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((*) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((*) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((*) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((*) :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  divOp :: Text -> Dynamic
+  divOp = \case
+    "float64" -> toDyn ((/) :: Double -> Double -> Double)
+    "float32" -> toDyn ((/) :: Float -> Float -> Float)
+    "int64"   -> toDyn (div :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn (div :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn (div :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn (div :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn (div :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  divByOp :: Text -> Dynamic
+  divByOp = \case
+    "float64" -> toDyn ((\ !x !y -> y / x) :: Double -> Double -> Double)
+    "float32" -> toDyn ((\ !x !y -> y / x) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((\ !x !y -> div y x) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((\ !x !y -> div y x) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((\ !x !y -> div y x) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((\ !x !y -> div y x) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  divIntOp :: Text -> Dynamic
+  divIntOp = \case
+    -- TODO reason about this:
+    -- https://stackoverflow.com/questions/38588815/rounding-errors-in-python-floor-division
+    "float64" -> toDyn
+      ((\ !x !y -> fromInteger $ floor $ x / y) :: Double -> Double -> Double)
+    "float32" -> toDyn
+      ((\ !x !y -> fromInteger $ floor $ x / y) :: Float -> Float -> Float)
+    "int64" -> toDyn (div :: Int64 -> Int64 -> Int64)
+    "int32" -> toDyn (div :: Int32 -> Int32 -> Int32)
+    "int8"  -> toDyn (div :: Int8 -> Int8 -> Int8)
+    "byte"  -> toDyn (div :: Word8 -> Word8 -> Word8)
+    "intp"  -> toDyn (div :: Int -> Int -> Int)
+    _       -> toDyn nil -- means not applicable here
+  divIntByOp :: Text -> Dynamic
+  divIntByOp = \case
+    "float64" -> toDyn
+      ((\ !x !y -> fromInteger $ floor $ y / x) :: Double -> Double -> Double)
+    "float32" -> toDyn
+      ((\ !x !y -> fromInteger $ floor $ y / x) :: Float -> Float -> Float)
+    "int64" -> toDyn ((\ !x !y -> div y x) :: Int64 -> Int64 -> Int64)
+    "int32" -> toDyn ((\ !x !y -> div y x) :: Int32 -> Int32 -> Int32)
+    "int8"  -> toDyn ((\ !x !y -> div y x) :: Int8 -> Int8 -> Int8)
+    "byte"  -> toDyn ((\ !x !y -> div y x) :: Word8 -> Word8 -> Word8)
+    "intp"  -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
+    _       -> toDyn nil -- means not applicable here
 
 
 arangeProc :: Object -> EntityManipulater -> Class -> EdhProcedure
