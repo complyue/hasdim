@@ -51,7 +51,6 @@ installDimBatteries !world = do
         !byte = dataType "byte" :: DataType Word8
         !intp = dataType "intp" :: DataType Int
         !bool = dataType "bool" :: DataType VecBool
-        !char = dataType "char" :: DataType Char
         !dtypes =
           [ (ConcreteDataType f8  , ["f8"])
           , (ConcreteDataType f4  , ["f4"])
@@ -61,7 +60,6 @@ installDimBatteries !world = do
           , (ConcreteDataType byte, [])
           , (ConcreteDataType intp, [])
           , (ConcreteDataType bool, [])
-          , (ConcreteDataType char, [])
           ]
 
     seqcontSTM (wrapDataType pgs dtypeClass <$> dtypes) $ \ !dts -> do

@@ -66,7 +66,7 @@ unsafeFlatArrayFromMVector !mvec = case MV.unsafeToForeignPtr0 mvec of
 -- type safe data manipulation operations wrt to exchanging data with Edh
 -- programs
 data DataType a where
-  DataType ::(Ord a, Storable a, EdhXchg a) => {
+  DataType ::(Num a, Ord a, Storable a, EdhXchg a) => {
       data'type'identifier :: Text
     , data'element'size :: Int
     , data'element'align :: Int
@@ -74,6 +74,8 @@ data DataType a where
         -> Int -> (FlatArray a -> STM ()) -> STM ()
     , grow'flat'array :: EdhProgState
         -> FlatArray a -> Int -> (FlatArray a -> STM ()) -> STM ()
+    , create'range'array :: EdhProgState
+        -> Int -> Int -> Int -> (FlatArray a -> STM ()) -> STM ()
     , read'flat'array'cell :: EdhProgState
         -> Int -> FlatArray a -> (EdhValue -> STM ()) -> STM ()
     , write'flat'array'cell :: EdhProgState
@@ -86,33 +88,49 @@ data DataType a where
         -> (Ordering -> Bool) -> FlatArray a -> (FlatArray Int8 -> STM ()) -> STM ()
   }-> DataType a
  deriving Typeable
-dataType :: forall a . (Ord a, Storable a, EdhXchg a) => Text -> DataType a
+dataType
+  :: forall a . (Num a, Ord a, Storable a, EdhXchg a) => Text -> DataType a
 dataType !ident = DataType ident
                            (sizeOf (undefined :: a))
                            (alignment (undefined :: a))
                            createArray
                            growArray
+                           createRange
                            readArrayCell
                            writeArrayCell
                            updateArray
                            vecCmp
                            elemCmp
  where
-  createArray !_ !cap !exit = do
-    ary <- unsafeIOToSTM $ do
-      !p  <- callocArray cap
-      !fp <- newForeignPtr finalizerFree p
-      return $ FlatArray cap fp
-    exit ary
+  createArray !_ !cap !exit = (exit =<<) $ unsafeIOToSTM $ do
+    !p  <- callocArray cap
+    !fp <- newForeignPtr finalizerFree p
+    return $ FlatArray cap fp
   growArray _ (FlatArray !cap !fp) !newCap !exit = if newCap <= cap
     then exit $ FlatArray newCap fp
-    else do
-      ary' <- unsafeIOToSTM $ do
-        !p'  <- callocArray newCap
-        !fp' <- newForeignPtr finalizerFree p'
-        withForeignPtr fp $ \ !p -> copyArray p' p cap
-        return $ FlatArray newCap fp'
-      exit ary'
+    else (exit =<<) $ unsafeIOToSTM $ do
+      !p'  <- callocArray newCap
+      !fp' <- newForeignPtr finalizerFree p'
+      withForeignPtr fp $ \ !p -> copyArray p' p cap
+      return $ FlatArray newCap fp'
+  createRange !pgs !start !stop _step !exit | stop == start =
+    createArray pgs 0 exit
+  createRange !pgs !start !stop !step !exit =
+    if (stop > start && step <= 0) || (stop < start && step >= 0)
+      then throwEdhSTM pgs UsageError "Range is not converging"
+      else (exit =<<) $ unsafeIOToSTM $ do
+        let (q, r) = quotRem (stop - start) step
+            !len   = if r == 0 then abs q else 1 + abs q
+            fillRng :: Ptr a -> Int -> Int -> IO ()
+            fillRng !p !n !i = if i >= len
+              then return ()
+              else do
+                pokeElemOff p i $ fromIntegral n
+                fillRng p (n + step) (i + 1)
+        !p  <- callocArray len
+        !fp <- newForeignPtr finalizerFree p
+        fillRng p start 0
+        return $ FlatArray len fp
   readArrayCell !pgs !idx (FlatArray !cap !fp) !exit =
     edhRegulateIndex pgs cap idx $ \ !posIdx -> do
       sv <- unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr ->

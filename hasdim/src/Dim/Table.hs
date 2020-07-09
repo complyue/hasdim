@@ -5,7 +5,7 @@ import           Prelude
 -- import           Debug.Trace
 
 import           Unsafe.Coerce
-import           GHC.Conc                       ( unsafeIOToSTM )
+-- import           GHC.Conc                       ( unsafeIOToSTM )
 
 import           Foreign                 hiding ( void )
 
@@ -511,9 +511,7 @@ colMethods !indexDTO !boolDTO !pgsModule =
 
 
 arangeProc :: Object -> EntityManipulater -> Class -> EdhProcedure
--- CAVEAT: it's not checked but
---        *) 'indexDTO' must wrap `DataType Int`
-arangeProc !indexDTO !emColumn !clsColumn (ArgsPack [rngSpec] _) !exit =
+arangeProc !indexDTO !emColumn !clsColumn (ArgsPack [!rngSpec] !kwargs) !exit =
   case rngSpec of
     EdhPair (EdhPair (EdhDecimal !startN) (EdhDecimal !stopN)) (EdhDecimal stepN)
       -> case D.decimalToInteger startN of
@@ -540,32 +538,23 @@ arangeProc !indexDTO !emColumn !clsColumn (ArgsPack [rngSpec] _) !exit =
     _ -> throwEdh UsageError $ "Invalid range of " <> T.pack
       (edhTypeNameOf rngSpec)
  where
-  exitWithNewColObj !pgs !col = do
-    !ent    <- createSideEntity emColumn $ toDyn col
-    !colObj <- viewAsEdhObject ent clsColumn []
-    exitEdhSTM pgs exit $ EdhObject colObj
   createRangeCol :: Int -> Int -> Int -> EdhProc
   createRangeCol !start !stop !step = ask >>= \ !pgs ->
-    contEdhSTM $ if stop == start
-      then do
-        !clv <- newTVar 0
-        createColumn pgs indexDTO 0 clv $ \ !col -> exitWithNewColObj pgs col
-      else if (stop > start && step <= 0) || (stop < start && step >= 0)
-        then throwEdhSTM pgs UsageError "Range is not converging"
-        else do
-          let (q, r) = quotRem (stop - start) step
-              !len   = if r == 0 then abs q else 1 + abs q
-              fillRng :: Ptr Int -> Int -> Int -> IO ()
-              fillRng !p !n !i = if i >= len
-                then return ()
-                else do
-                  pokeElemOff p i n
-                  fillRng p (n + step) (i + 1)
-          !clv <- newTVar len
-          createColumn pgs indexDTO len clv $ \col@(Column _ _ _ !csv) -> do
-            (FlatArray _ !fp) <- unsafeCoerce <$> readTVar csv
-            void $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> fillRng p start 0
-            exitWithNewColObj pgs col
+    contEdhSTM
+      $ case
+          Map.lookupDefault (EdhObject indexDTO) (AttrByName "dtype") kwargs
+        of
+          EdhObject !dto ->
+            fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
+              Nothing -> throwEdhSTM pgs UsageError "Invalid dtype object"
+              Just (ConcreteDataType !dt) ->
+                create'range'array dt pgs start stop step $ \ !cs -> do
+                  !clv    <- newTVar $ flatArrayCapacity cs
+                  !col    <- Column dt dto clv <$> newTVar cs
+                  !ent    <- createSideEntity emColumn $ toDyn col
+                  !colObj <- viewAsEdhObject ent clsColumn []
+                  exitEdhSTM pgs exit $ EdhObject colObj
+          _ -> throwEdhSTM pgs UsageError "Invalid dtype value"
 arangeProc _ _ _ _ _ = throwEdh UsageError "Invalid args to arange()"
 
 

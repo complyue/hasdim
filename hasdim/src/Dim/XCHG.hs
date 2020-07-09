@@ -27,7 +27,7 @@ class EdhXchg t where
 
 
 newtype VecBool = VecBool Int8
-  deriving (Eq, Ord, Storable, Typeable)
+  deriving (Eq, Ord, Storable, Num, Typeable)
 
 instance {-# OVERLAPPABLE #-} EdhXchg VecBool where
   toEdh _pgs (VecBool !b) !exit = exit $ EdhBool $ b /= 0
