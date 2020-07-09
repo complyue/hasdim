@@ -381,6 +381,20 @@ colMethods !indexDTO !boolDTO !pgsModule =
              _  -> False
            , PackReceiver [mandatoryArg "other"]
            )
+         , ( "!="
+           , EdhMethod
+           , colCmpProc $ \case
+             EQ -> False
+             _  -> True
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "!=@"
+           , EdhMethod
+           , colCmpProc $ \case
+             EQ -> False
+             _  -> True
+           , PackReceiver [mandatoryArg "other"]
+           )
          , ( ">="
            , EdhMethod
            , colCmpProc $ \case
