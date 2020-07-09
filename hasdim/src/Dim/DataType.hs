@@ -66,7 +66,7 @@ unsafeFlatArrayFromMVector !mvec = case MV.unsafeToForeignPtr0 mvec of
 -- type safe data manipulation operations wrt to exchanging data with Edh
 -- programs
 data DataType a where
-  DataType ::(Num a, Ord a, Storable a, EdhXchg a) => {
+  DataType ::(Num a, Ord a, Storable a, Typeable a, EdhXchg a) => {
       data'type'identifier :: Text
     , data'element'size :: Int
     , data'element'align :: Int
@@ -86,10 +86,21 @@ data DataType a where
         -> (Ordering -> Bool) -> EdhValue -> (FlatArray Int8 -> STM ()) -> STM ()
     , dt'cmp'element'wise :: EdhProgState -> FlatArray a
         -> (Ordering -> Bool) -> FlatArray a -> (FlatArray Int8 -> STM ()) -> STM ()
+    , dt'op'vectorized :: EdhProgState -> FlatArray a
+        -> Dynamic -> EdhValue -> (FlatArray a -> STM ()) -> STM ()
+    , dt'inp'vectorized :: EdhProgState -> FlatArray a
+        -> Dynamic -> EdhValue -> STM () -> STM ()
+    , dt'op'element'wise :: EdhProgState -> FlatArray a
+        -> Dynamic -> FlatArray a -> (FlatArray a -> STM ()) -> STM ()
+    , dt'inp'element'wise :: EdhProgState -> FlatArray a
+        -> Dynamic -> FlatArray a -> STM () -> STM ()
   }-> DataType a
  deriving Typeable
 dataType
-  :: forall a . (Num a, Ord a, Storable a, EdhXchg a) => Text -> DataType a
+  :: forall a
+   . (Num a, Ord a, Storable a, Typeable a, EdhXchg a)
+  => Text
+  -> DataType a
 dataType !ident = DataType ident
                            (sizeOf (undefined :: a))
                            (alignment (undefined :: a))
@@ -101,6 +112,10 @@ dataType !ident = DataType ident
                            updateArray
                            vecCmp
                            elemCmp
+                           vecOp
+                           vecInp
+                           elemOp
+                           elemInp
  where
   createArray !_ !cap !exit = (exit =<<) $ unsafeIOToSTM $ do
     !p  <- callocArray cap
@@ -169,6 +184,60 @@ dataType !ident = DataType ident
               pokeElemOff rp i $ if cmp $ compare ev1 ev2 then 1 else 0
               go (i + 1)
         go 0
+  -- vectorized operation, yielding a new array
+  vecOp !pgs (FlatArray !cap !fp) !dop !v !exit = case fromDynamic dop of
+    Nothing                  -> error "bug: dtype op type mismatch"
+    Just (op :: a -> a -> a) -> fromEdh pgs v $ \ !sv ->
+      (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
+        !rp  <- callocArray cap
+        !rfp <- newForeignPtr finalizerFree rp
+        let go i | i >= cap = return $ FlatArray cap rfp
+            go i            = do
+              ev <- peekElemOff p i
+              pokeElemOff rp i $ op ev sv
+              go (i + 1)
+        go 0
+  -- vectorized operation, inplace modifying the array
+  vecInp !pgs (FlatArray !cap !fp) !dop !v !exit = case fromDynamic dop of
+    Nothing                  -> error "bug: dtype op type mismatch"
+    Just (op :: a -> a -> a) -> fromEdh pgs v $ \ !sv ->
+      (>> exit) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
+        let go i | i >= cap = return ()
+            go i            = do
+              ev <- peekElemOff p i
+              pokeElemOff p i $ op ev sv
+              go (i + 1)
+        go 0
+  -- element-wise operation, yielding a new array
+  elemOp _pgs (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit =
+    case fromDynamic dop of
+      Nothing -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) ->
+        (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp1 $ \ !p1 ->
+          withForeignPtr fp2 $ \ !p2 -> do
+            !rp  <- callocArray cap1
+            !rfp <- newForeignPtr finalizerFree rp
+            let go i | i >= cap1 = return $ FlatArray cap1 rfp
+                go i             = do
+                  ev1 <- peekElemOff p1 i
+                  ev2 <- peekElemOff p2 i
+                  pokeElemOff rp i $ op ev1 ev2
+                  go (i + 1)
+            go 0
+  -- element-wise operation, inplace modifying array
+  elemInp _pgs (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit =
+    case fromDynamic dop of
+      Nothing -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) ->
+        (>> exit) $ unsafeIOToSTM $ withForeignPtr fp1 $ \ !p1 ->
+          withForeignPtr fp2 $ \ !p2 -> do
+            let go i | i >= cap1 = return ()
+                go i             = do
+                  ev1 <- peekElemOff p1 i
+                  ev2 <- peekElemOff p2 i
+                  pokeElemOff p1 i $ op ev1 ev2
+                  go (i + 1)
+            go 0
 
 
 data ConcreteDataType where

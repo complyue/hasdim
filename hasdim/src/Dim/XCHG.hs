@@ -52,13 +52,19 @@ instance {-# OVERLAPPABLE #-} EdhXchg Char where
 
 
 instance {-# OVERLAPPABLE #-} EdhXchg Double where
-  toEdh _pgs !n !exit =
-    exit $ EdhDecimal $ D.decimalFromScientific $ fromFloatDigits n
+  toEdh _pgs !n !exit = exit $ EdhDecimal $ if isNaN n
+    then D.nan
+    else if isInfinite n
+      then D.Decimal 0 0 $ if n < 0 then -1 else 1
+      else D.decimalFromScientific $ fromFloatDigits n
   fromEdh !pgs !v !exit = coerceEdhToFloat pgs v exit
 
 instance {-# OVERLAPPABLE #-} EdhXchg Float where
-  toEdh _pgs !n !exit =
-    exit $ EdhDecimal $ D.decimalFromScientific $ fromFloatDigits n
+  toEdh _pgs !n !exit = exit $ EdhDecimal $ if isNaN n
+    then D.nan
+    else if isInfinite n
+      then D.Decimal 0 0 $ if n < 0 then -1 else 1
+      else D.decimalFromScientific $ fromFloatDigits n
   fromEdh !pgs !v !exit = coerceEdhToFloat pgs v exit
 
 
@@ -70,10 +76,12 @@ instance {-# OVERLAPPABLE #-} (Integral a) => EdhXchg a where
 coerceEdhToFloat
   :: (RealFloat a) => EdhProgState -> EdhValue -> (a -> STM ()) -> STM ()
 coerceEdhToFloat !pgs !v =
-  coerceEdhToFloat' pgs v
-    $  throwEdhSTM pgs UsageError
-    $  "Float expected but given a "
-    <> T.pack (edhTypeNameOf v)
+  coerceEdhToFloat' pgs v $ edhValueReprSTM pgs v $ \ !r ->
+    throwEdhSTM pgs UsageError
+      $  "Float expected but given a "
+      <> T.pack (edhTypeNameOf v)
+      <> ": "
+      <> r
 coerceEdhToFloat'
   :: (RealFloat a)
   => EdhProgState
@@ -82,14 +90,14 @@ coerceEdhToFloat'
   -> (a -> STM ())
   -> STM ()
 coerceEdhToFloat' !pgs !v !naExit !exit = case edhUltimate v of
-  EdhDecimal !n -> exit $ fromRational $ toRational n
+  EdhDecimal !n -> exitWith n
   EdhObject  !o -> lookupEdhObjAttr pgs o (AttrByName "__float__") >>= \case
     EdhNil -> naExit
     EdhMethod !mth ->
       runEdhProc pgs
         $ callEdhMethod o mth (ArgsPack [] mempty) id
         $ \(OriginalValue !rtn _ _) -> case edhUltimate rtn of
-            EdhDecimal !n -> contEdhSTM $ exit $ fromRational $ toRational n
+            EdhDecimal !n -> contEdhSTM $ exitWith n
             !badVal ->
               throwEdh UsageError
                 $  "bug: bad value returned from __float__ magic: "
@@ -98,14 +106,22 @@ coerceEdhToFloat' !pgs !v !naExit !exit = case edhUltimate v of
       throwEdhSTM pgs UsageError $ "Malformed __float__ magic: " <> T.pack
         (edhTypeNameOf badMagic)
   _ -> naExit
+ where
+  exitWith :: Decimal -> STM ()
+  exitWith !d | D.decimalIsNaN d = exit (0 / 0)
+  exitWith !d | D.decimalIsInf d = exit (if d < 0 then -1 else 1 / 0)
+  exitWith !d                    = exit $ fromRational $ toRational d
+
 
 coerceEdhToIntegral
   :: (Integral a) => EdhProgState -> EdhValue -> (a -> STM ()) -> STM ()
 coerceEdhToIntegral !pgs !v =
-  coerceEdhToIntegral' pgs v
-    $  throwEdhSTM pgs UsageError
-    $  "Integer expected but given a "
-    <> T.pack (edhTypeNameOf v)
+  coerceEdhToIntegral' pgs v $ edhValueReprSTM pgs v $ \ !r ->
+    throwEdhSTM pgs UsageError
+      $  "Integer expected but given a "
+      <> T.pack (edhTypeNameOf v)
+      <> ": "
+      <> r
 coerceEdhToIntegral'
   :: (Integral a)
   => EdhProgState

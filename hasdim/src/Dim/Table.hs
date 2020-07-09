@@ -166,6 +166,132 @@ elemCmpColumn !pgs !boolDTO !cmp (Column !dt1 _ !clv1 !csv1) (Column !dt2 _ !clv
                     !bicsv <- newTVar bifa
                     exit $ Column (unsafeCoerce bdt) boolDTO biclv bicsv
 
+vecOpColumn
+  :: EdhProgState
+  -> (Text -> Dynamic)
+  -> Column
+  -> EdhValue
+  -> STM ()
+  -> (Column -> STM ())
+  -> STM ()
+vecOpColumn !pgs !getOp (Column !dt !dto !clv !csv) !v !naExit !exit = do
+  let !dop = getOp $ data'type'identifier dt
+  case fromDynamic dop of
+    Just EdhNil -> naExit
+    _           -> do
+      !cl <- readTVar clv
+      !cs <- readTVar csv
+      let !fa = unsafeSliceFlatArray cs 0 cl
+      dt'op'vectorized dt pgs fa dop v $ \ !bifa -> do
+        !biclv <- newTVar cl
+        !bicsv <- newTVar bifa
+        exit $ Column dt dto biclv bicsv
+
+elemOpColumn
+  :: EdhProgState
+  -> (Text -> Dynamic)
+  -> Column
+  -> Column
+  -> STM ()
+  -> (Column -> STM ())
+  -> STM ()
+elemOpColumn !pgs !getOp (Column !dt1 !dto1 !clv1 !csv1) (Column !dt2 _dto2 !clv2 !csv2) !naExit !exit
+  = let !dop = getOp $ data'type'identifier dt1
+    in
+      case fromDynamic dop of
+        Just EdhNil -> naExit
+        _           -> if data'type'identifier dt1 /= data'type'identifier dt2
+          then
+            throwEdhSTM pgs UsageError
+            $  "Column dtype mismatch: "
+            <> data'type'identifier dt1
+            <> " vs "
+            <> data'type'identifier dt2
+          else do
+            !cl1 <- readTVar clv1
+            !cl2 <- readTVar clv2
+            if cl1 /= cl2
+              then
+                throwEdhSTM pgs UsageError
+                $  "Column length mismatch: "
+                <> T.pack (show cl1)
+                <> " vs "
+                <> T.pack (show cl2)
+              else do
+                !cs1 <- readTVar csv1
+                !cs2 <- readTVar csv2
+                let !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                    !fa2 = unsafeSliceFlatArray cs2 0 cl2
+                dt'op'element'wise dt1
+                                   pgs
+                                   fa1
+                                   (getOp $ data'type'identifier dt1)
+                                   (unsafeCoerce fa2)
+                  $ \ !bifa -> do
+                      !biclv <- newTVar cl1
+                      !bicsv <- newTVar bifa
+                      exit $ Column dt1 dto1 biclv bicsv
+
+vecInpColumn
+  :: EdhProgState
+  -> (Text -> Dynamic)
+  -> Column
+  -> EdhValue
+  -> STM ()
+  -> STM ()
+  -> STM ()
+vecInpColumn !pgs !getOp (Column !dt _ !clv !csv) !v !naExit !exit = do
+  let !dop = getOp $ data'type'identifier dt
+  case fromDynamic dop of
+    Just EdhNil -> naExit
+    _           -> do
+      !cl <- readTVar clv
+      !cs <- readTVar csv
+      let !fa = unsafeSliceFlatArray cs 0 cl
+      dt'inp'vectorized dt pgs fa dop v exit
+
+elemInpColumn
+  :: EdhProgState
+  -> (Text -> Dynamic)
+  -> Column
+  -> Column
+  -> STM ()
+  -> STM ()
+  -> STM ()
+elemInpColumn !pgs !getOp (Column !dt1 _dto1 !clv1 !csv1) (Column !dt2 _dto2 !clv2 !csv2) !naExit !exit
+  = let !dop = getOp $ data'type'identifier dt1
+    in
+      case fromDynamic dop of
+        Just EdhNil -> naExit
+        _           -> if data'type'identifier dt1 /= data'type'identifier dt2
+          then
+            throwEdhSTM pgs UsageError
+            $  "Column dtype mismatch: "
+            <> data'type'identifier dt1
+            <> " vs "
+            <> data'type'identifier dt2
+          else do
+            !cl1 <- readTVar clv1
+            !cl2 <- readTVar clv2
+            if cl1 /= cl2
+              then
+                throwEdhSTM pgs UsageError
+                $  "Column length mismatch: "
+                <> T.pack (show cl1)
+                <> " vs "
+                <> T.pack (show cl2)
+              else do
+                !cs1 <- readTVar csv1
+                !cs2 <- readTVar csv2
+                let !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                    !fa2 = unsafeSliceFlatArray cs2 0 cl2
+                dt'inp'element'wise dt1
+                                    pgs
+                                    fa1
+                                    (getOp $ data'type'identifier dt1)
+                                    (unsafeCoerce fa2)
+                                    exit
+
 
 -- obtain valid column data as an immutable Storable Vector
 -- this is unsafe in both memory/type regards and thread regard
@@ -315,6 +441,69 @@ colMethods !indexDTO !boolDTO !pgsModule =
              _  -> False
            , PackReceiver [mandatoryArg "other"]
            )
+         , ("+", EdhMethod, colOpProc addOp, PackReceiver [mandatoryArg "other"])
+         , ( "+@"
+           , EdhMethod
+           , colOpProc addOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "+="
+           , EdhMethod
+           , colInpProc addOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "-"
+           , EdhMethod
+           , colOpProc subtractOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "-@"
+           , EdhMethod
+           , colOpProc subtFromOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "-="
+           , EdhMethod
+           , colInpProc subtractOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ("*", EdhMethod, colOpProc mulOp, PackReceiver [mandatoryArg "other"])
+         , ( "*@"
+           , EdhMethod
+           , colOpProc mulOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "*="
+           , EdhMethod
+           , colInpProc mulOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ("/", EdhMethod, colOpProc divOp, PackReceiver [mandatoryArg "other"])
+         , ( "/@"
+           , EdhMethod
+           , colOpProc divByOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "/="
+           , EdhMethod
+           , colInpProc divOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "//"
+           , EdhMethod
+           , colOpProc divIntOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "//@"
+           , EdhMethod
+           , colOpProc divIntByOp
+           , PackReceiver [mandatoryArg "other"]
+           )
+         , ( "//="
+           , EdhMethod
+           , colInpProc divIntOp
+           , PackReceiver [mandatoryArg "other"]
+           )
          ]
        ]
     ++ [ (AttrByName nm, ) <$> mkHostProperty scope nm getter setter
@@ -326,6 +515,92 @@ colMethods !indexDTO !boolDTO !pgsModule =
        ]
  where
   !scope = contextScope $ edh'context pgsModule
+  addOp :: Text -> Dynamic
+  addOp = \case
+    "float64" -> toDyn ((+) :: Double -> Double -> Double)
+    "float32" -> toDyn ((+) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((+) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((+) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((+) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((+) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((+) :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  subtractOp :: Text -> Dynamic
+  subtractOp = \case
+    "float64" -> toDyn ((-) :: Double -> Double -> Double)
+    "float32" -> toDyn ((-) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((-) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((-) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((-) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((-) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((-) :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  subtFromOp :: Text -> Dynamic
+  subtFromOp = \case
+    "float64" -> toDyn ((\ !x !y -> y - x) :: Double -> Double -> Double)
+    "float32" -> toDyn ((\ !x !y -> y - x) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((\ !x !y -> y - x) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((\ !x !y -> y - x) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((\ !x !y -> y - x) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((\ !x !y -> y - x) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((\ !x !y -> y - x) :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  mulOp :: Text -> Dynamic
+  mulOp = \case
+    "float64" -> toDyn ((*) :: Double -> Double -> Double)
+    "float32" -> toDyn ((*) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((*) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((*) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((*) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((*) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((*) :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  divOp :: Text -> Dynamic
+  divOp = \case
+    "float64" -> toDyn ((/) :: Double -> Double -> Double)
+    "float32" -> toDyn ((/) :: Float -> Float -> Float)
+    "int64"   -> toDyn (div :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn (div :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn (div :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn (div :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn (div :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  divByOp :: Text -> Dynamic
+  divByOp = \case
+    "float64" -> toDyn ((\ !x !y -> y / x) :: Double -> Double -> Double)
+    "float32" -> toDyn ((\ !x !y -> y / x) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((\ !x !y -> div y x) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((\ !x !y -> div y x) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((\ !x !y -> div y x) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((\ !x !y -> div y x) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
+    _         -> toDyn nil -- means not applicable here
+  divIntOp :: Text -> Dynamic
+  divIntOp = \case
+    -- TODO reason about this:
+    -- https://stackoverflow.com/questions/38588815/rounding-errors-in-python-floor-division
+    "float64" -> toDyn
+      ((\ !x !y -> fromInteger $ floor $ x / y) :: Double -> Double -> Double)
+    "float32" -> toDyn
+      ((\ !x !y -> fromInteger $ floor $ x / y) :: Float -> Float -> Float)
+    "int64" -> toDyn (div :: Int64 -> Int64 -> Int64)
+    "int32" -> toDyn (div :: Int32 -> Int32 -> Int32)
+    "int8"  -> toDyn (div :: Int8 -> Int8 -> Int8)
+    "byte"  -> toDyn (div :: Word8 -> Word8 -> Word8)
+    "intp"  -> toDyn (div :: Int -> Int -> Int)
+    _       -> toDyn nil -- means not applicable here
+  divIntByOp :: Text -> Dynamic
+  divIntByOp = \case
+    "float64" -> toDyn
+      ((\ !x !y -> fromInteger $ floor $ y / x) :: Double -> Double -> Double)
+    "float32" -> toDyn
+      ((\ !x !y -> fromInteger $ floor $ y / x) :: Float -> Float -> Float)
+    "int64" -> toDyn ((\ !x !y -> div y x) :: Int64 -> Int64 -> Int64)
+    "int32" -> toDyn ((\ !x !y -> div y x) :: Int32 -> Int32 -> Int32)
+    "int8"  -> toDyn ((\ !x !y -> div y x) :: Int8 -> Int8 -> Int8)
+    "byte"  -> toDyn ((\ !x !y -> div y x) :: Word8 -> Word8 -> Word8)
+    "intp"  -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
+    _       -> toDyn nil -- means not applicable here
 
   colGrowProc :: EdhProcedure
   colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit
@@ -506,6 +781,73 @@ colMethods !indexDTO !boolDTO !pgsModule =
                        (\_ !esdx -> esdx $ toDyn colResult)
           $ \ !bio -> exitEdhSTM pgs exit $ EdhObject bio
   colCmpProc _ !apk _ =
+    throwEdh UsageError $ "Invalid args for a Column operator: " <> T.pack
+      (show apk)
+
+  colOpProc :: (Text -> Dynamic) -> EdhProcedure
+  colOpProc !getOp (ArgsPack [!other] _) !exit =
+    withThatEntity $ \ !pgs !col -> case edhUltimate other of
+      otherVal@(EdhObject !otherObj) ->
+        fromDynamic <$> objStore otherObj >>= \case
+          Just colOther@Column{} ->
+            elemOpColumn pgs
+                         getOp
+                         col
+                         colOther
+                         (exitEdhSTM pgs exit EdhContinue)
+              $ \ !colResult ->
+                  cloneEdhObject (thatObject $ contextScope $ edh'context pgs)
+                                 (\_ !esdx -> esdx $ toDyn colResult)
+                    $ \ !bio -> exitEdhSTM pgs exit $ EdhObject bio
+          Nothing ->
+            vecOpColumn pgs getOp col otherVal (exitEdhSTM pgs exit EdhContinue)
+              $ \ !colResult ->
+                  cloneEdhObject (thatObject $ contextScope $ edh'context pgs)
+                                 (\_ !esdx -> esdx $ toDyn colResult)
+                    $ \ !bio -> exitEdhSTM pgs exit $ EdhObject bio
+      !otherVal ->
+        vecOpColumn pgs getOp col otherVal (exitEdhSTM pgs exit EdhContinue)
+          $ \ !colResult ->
+              cloneEdhObject (thatObject $ contextScope $ edh'context pgs)
+                             (\_ !esdx -> esdx $ toDyn colResult)
+                $ \ !bio -> exitEdhSTM pgs exit $ EdhObject bio
+  colOpProc _ !apk _ =
+    throwEdh UsageError $ "Invalid args for a Column operator: " <> T.pack
+      (show apk)
+
+  colInpProc :: (Text -> Dynamic) -> EdhProcedure
+  colInpProc !getOp (ArgsPack [!other] _) !exit =
+    withThatEntity $ \ !pgs !col ->
+      let that = thatObject $ contextScope $ edh'context pgs
+      in
+        case edhUltimate other of
+          otherVal@(EdhObject !otherObj) ->
+            fromDynamic <$> objStore otherObj >>= \case
+              Just colOther@Column{} ->
+                elemInpColumn pgs
+                              getOp
+                              col
+                              colOther
+                              (exitEdhSTM pgs exit EdhContinue)
+                  $ exitEdhSTM pgs exit
+                  $ EdhObject that
+              Nothing ->
+                vecInpColumn pgs
+                             getOp
+                             col
+                             otherVal
+                             (exitEdhSTM pgs exit EdhContinue)
+                  $ exitEdhSTM pgs exit
+                  $ EdhObject that
+          !otherVal ->
+            vecInpColumn pgs
+                         getOp
+                         col
+                         otherVal
+                         (exitEdhSTM pgs exit EdhContinue)
+              $ exitEdhSTM pgs exit
+              $ EdhObject that
+  colInpProc _ !apk _ =
     throwEdh UsageError $ "Invalid args for a Column operator: " <> T.pack
       (show apk)
 
