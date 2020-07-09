@@ -80,31 +80,52 @@ installDimBatteries !world = do
 
   void $ installEdhModule world "dim/RT" $ \pgs exit -> do
 
-    defaultDataType <- lookupEntityAttr pgs
-                                        (objEntity moduDtypes)
-                                        (AttrByName "f8")
-    indexDTO <-
+    let !moduScope = contextScope $ edh'context pgs
+        !modu      = thisObject moduScope
+
+    !defaultDataType <- lookupEntityAttr pgs
+                                         (objEntity moduDtypes)
+                                         (AttrByName "f8")
+    !indexDTO <-
       lookupEntityAttr pgs (objEntity moduDtypes) (AttrByName "intp") >>= \case
         EdhObject !dto -> return dto
         _              -> throwSTM $ TypeError "bug: bad DataType object intp"
-    boolDTO <-
+    !boolDTO <-
       lookupEntityAttr pgs (objEntity moduDtypes) (AttrByName "bool") >>= \case
         EdhObject !dto -> return dto
         _              -> throwSTM $ TypeError "bug: bad DataType object bool"
 
-    let moduScope = contextScope $ edh'context pgs
-        modu      = thisObject moduScope
+    !emColumn <-
+      createSideEntityManipulater True =<< colMethods indexDTO boolDTO pgs
+    !clsColumnVal <- mkHostClass moduScope
+                                 "Column"
+                                 (colCtor defaultDataType)
+                                 emColumn
+    !clsColumn <- case clsColumnVal of
+      EdhClass !clsColumn -> return clsColumn
+      _                   -> error "bug: mkHostClass returned non-class"
 
-    !moduArts <- sequence
-      [ ((nm, ) <$>)
-        $   mkHostClass moduScope nm hc
-        =<< createSideEntityManipulater True
-        =<< mths pgs
-      | (nm, hc, mths) <-
-        [("Column", colCtor defaultDataType, colMethods indexDTO boolDTO)]
-      ]
+    !moduArts0 <-
+      sequence
+      $  [ ((nm, ) <$>)
+           $   mkHostClass moduScope nm hc
+           =<< createSideEntityManipulater True
+           =<< mths pgs
+        --("Column", colCtor defaultDataType, colMethods indexDTO boolDTO)
+         | (nm, hc, mths) <- []
+         ]
+      ++ [ (nm, ) <$> mkHostProc moduScope mc nm hp args
+         | (mc, nm, hp, args) <-
+           [ ( EdhMethod
+             , "arange"
+             , arangeProc indexDTO emColumn clsColumn
+             , PackReceiver [mandatoryArg "rangeSpec"]
+             )
+           ]
+         ]
 
-    artsDict <- createEdhDict
+    let !moduArts = moduArts0 ++ [("Column", clsColumnVal)]
+    !artsDict <- createEdhDict
       $ Map.fromList [ (EdhString k, v) | (k, v) <- moduArts ]
     updateEntityAttrs pgs (objEntity modu)
       $  [ (AttrByName k, v) | (k, v) <- moduArts ]

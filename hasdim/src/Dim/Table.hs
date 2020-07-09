@@ -5,10 +5,12 @@ import           Prelude
 -- import           Debug.Trace
 
 import           Unsafe.Coerce
+import           GHC.Conc                       ( unsafeIOToSTM )
 
-import           Foreign
+import           Foreign                 hiding ( void )
 
 import           Control.Monad
+import           Control.Monad.Reader
 
 import           Control.Concurrent.STM
 
@@ -428,4 +430,61 @@ colMethods !indexDTO !boolDTO !pgsModule =
   colCmpProc _ !apk _ =
     throwEdh UsageError $ "Invalid args for a Column operator: " <> T.pack
       (show apk)
+
+
+arangeProc :: Object -> EntityManipulater -> Class -> EdhProcedure
+arangeProc !indexDTO !emColumn !clsColumn (ArgsPack [rngSpec] _) !exit =
+  case rngSpec of
+    EdhPair (EdhPair (EdhDecimal !startN) (EdhDecimal !stopN)) (EdhDecimal stepN)
+      -> case D.decimalToInteger startN of
+        Just !start -> case D.decimalToInteger stopN of
+          Just !stop -> case D.decimalToInteger stepN of
+            Just !step -> createRangeCol (fromInteger start)
+                                         (fromInteger stop)
+                                         (fromInteger step)
+            _ -> throwEdh UsageError "step is not an integer"
+          _ -> throwEdh UsageError "stop is not an integer"
+        _ -> throwEdh UsageError "start is not an integer"
+    EdhPair (EdhDecimal !startN) (EdhDecimal !stopN) ->
+      case D.decimalToInteger startN of
+        Just !start -> case D.decimalToInteger stopN of
+          Just !stop ->
+            createRangeCol (fromInteger start) (fromInteger stop)
+              $ if stop >= start then 1 else -1
+          _ -> throwEdh UsageError "stop is not an integer"
+        _ -> throwEdh UsageError "start is not an integer"
+    EdhDecimal !stopN -> case D.decimalToInteger stopN of
+      Just !stop ->
+        createRangeCol 0 (fromInteger stop) $ if stop >= 0 then 1 else -1
+      _ -> throwEdh UsageError "stop is not an integer"
+    _ -> throwEdh UsageError $ "Invalid range of " <> T.pack
+      (edhTypeNameOf rngSpec)
+ where
+  exitWithNewColObj !pgs !col = do
+    !ent    <- createSideEntity emColumn $ toDyn col
+    !colObj <- viewAsEdhObject ent clsColumn []
+    exitEdhSTM pgs exit $ EdhObject colObj
+  createRangeCol :: Int -> Int -> Int -> EdhProc
+  createRangeCol !start !stop !step = ask >>= \ !pgs ->
+    contEdhSTM $ if stop == start
+      then do
+        !clv <- newTVar 0
+        createColumn pgs indexDTO 0 clv $ \ !col -> exitWithNewColObj pgs col
+      else if (stop > start && step <= 0) || (stop < start && step >= 0)
+        then throwEdhSTM pgs UsageError "Range is not converging"
+        else do
+          let (q, r) = quotRem (stop - start) step
+              !len   = if r == 0 then abs q else 1 + abs q
+              fillRng :: Ptr Int -> Int -> Int -> IO ()
+              fillRng !p !n !i = if i >= len
+                then return ()
+                else do
+                  pokeElemOff p i n
+                  fillRng p (n + step) (i + 1)
+          !clv <- newTVar len
+          createColumn pgs indexDTO len clv $ \col@(Column _ _ _ !csv) -> do
+            (FlatArray _ !fp) <- unsafeCoerce <$> readTVar csv
+            void $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> fillRng p start 0
+            exitWithNewColObj pgs col
+arangeProc _ _ _ _ _ = throwEdh UsageError "Invalid args to arange()"
 

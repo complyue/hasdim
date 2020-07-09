@@ -223,7 +223,7 @@ dtypeMethods !pgsModule =
 
 wrapDataType
   :: EdhProgState
-  -> ProcDefi
+  -> Class
   -> (ConcreteDataType, [Text])
   -> (([Text], EdhValue) -> STM ())
   -> STM ()
@@ -235,4 +235,5 @@ wrapDataType !pgs !dtypeClass (cdt@(ConcreteDataType !dt), !alias) !exit' =
           -- actually fill in the in-band entity storage here
           writeTVar (entity'store $ objEntity dtObj) $ toDyn cdt
           exit' (data'type'identifier dt : alias, dtypeVal)
-        _ -> error "bug: dtypeCtor returned non-object"
+        _ -> error "bug: createEdhObject returned non-object"
+
