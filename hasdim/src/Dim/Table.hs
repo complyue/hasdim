@@ -14,7 +14,7 @@ import           Control.Monad.Reader
 
 import           Control.Concurrent.STM
 
--- import           Data.Text                      ( Text )
+import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 import qualified Data.HashMap.Strict           as Map
 import           Data.Dynamic
@@ -239,6 +239,8 @@ colMethods !indexDTO !boolDTO !pgsModule =
            , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
            )
          , ("__repr__", EdhMethod, colReprProc, PackReceiver [])
+         , ("__show__", EdhMethod, colShowProc, PackReceiver [])
+         , ("__desc__", EdhMethod, colDescProc, PackReceiver [])
          , ( "=="
            , EdhMethod
            , colCmpProc $ \case
@@ -408,6 +410,80 @@ colMethods !indexDTO !boolDTO !pgsModule =
           <> data'type'identifier dt
           <> ")"
 
+  colShowProc :: EdhProcedure
+  colShowProc _ !exit = withThatEntity $ \ !pgs (Column _ !dto !clv !csv) ->
+    fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
+      Nothing                     -> error "bug: bad dto"
+      Just (ConcreteDataType !dt) -> do
+        !cl <- readTVar clv
+        !cs <- readTVar csv
+        showData pgs dt cl (unsafeCoerce cs) 0 [] 0 ""
+   where
+    showData
+      :: forall a
+       . EdhProgState
+      -> DataType a
+      -> Int
+      -> FlatArray a
+      -> Int
+      -> [Text]
+      -> Int
+      -> Text
+      -> STM ()
+    showData !pgs !dt !len !fa !i !cumLines !lineIdx !line = if i >= len
+      then exitEdhSTM pgs exit $ EdhString
+        (if T.null line && null cumLines
+          then "Zero-Length Column"
+          else if null cumLines
+            then line
+            else
+              let !fullLines =
+                    line
+                      :  " # " -- todo make this tunable ?
+                      <> T.pack (show lineIdx)
+                      <> " ~ "
+                      <> T.pack (show $ i - 1)
+                      :  cumLines
+                  !lineCnt = length fullLines
+              in  if lineCnt > 20
+                    then
+                      T.unlines
+                      $  reverse
+                      $  take 10 fullLines
+                      ++ ["# ... "] -- todo make this tunable
+                      ++ drop (lineCnt - 10) fullLines
+                    else T.unlines $ reverse fullLines
+        )
+      else read'flat'array'cell dt pgs i fa $ \ !elemVal ->
+        edhValueReprSTM pgs elemVal $ \ !elemRepr ->
+          let !tentLine = line <> elemRepr <> ", "
+          in  if T.length tentLine > 79 -- todo make this tunable ?
+                then showData
+                  pgs
+                  dt
+                  len
+                  fa
+                  (i + 1)
+                  ( line
+                  : (  " # " -- todo make this tunable ?
+                    <> T.pack (show lineIdx)
+                    <> " ~ "
+                    <> T.pack (show $ i - 1)
+                    )
+                  : cumLines
+                  )
+                  i
+                  (elemRepr <> ", ")
+                else showData pgs dt len fa (i + 1) cumLines lineIdx tentLine
+
+  colDescProc :: EdhProcedure
+  colDescProc _ !exit =
+    exitEdhProc exit
+      $  EdhString
+      $  " * Statistical Description of Column data,\n"
+      <> "   like pandas describe(), is yet to be implemented."
+
+
   colCmpProc :: (Ordering -> Bool) -> EdhProcedure
   colCmpProc !cmp (ArgsPack [!other] _) !exit =
     withThatEntity $ \ !pgs !col -> case edhUltimate other of
@@ -433,6 +509,8 @@ colMethods !indexDTO !boolDTO !pgsModule =
 
 
 arangeProc :: Object -> EntityManipulater -> Class -> EdhProcedure
+-- CAVEAT: it's not checked but
+--        *) 'indexDTO' must wrap `DataType Int`
 arangeProc !indexDTO !emColumn !clsColumn (ArgsPack [rngSpec] _) !exit =
   case rngSpec of
     EdhPair (EdhPair (EdhDecimal !startN) (EdhDecimal !stopN)) (EdhDecimal stepN)
