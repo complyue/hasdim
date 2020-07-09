@@ -92,7 +92,11 @@ data DataType a where
         -> Dynamic -> FlatArray a -> (FlatArray a -> STM ()) -> STM ()
     , dt'inp'vectorized :: EdhProgState -> FlatArray a
         -> Dynamic -> EdhValue -> STM () -> STM ()
+    , dt'inp'vectorized'masked :: EdhProgState -> FlatArray Int8 -> FlatArray a
+        -> Dynamic -> EdhValue -> STM () -> STM ()
     , dt'inp'element'wise :: EdhProgState -> FlatArray a
+        -> Dynamic -> FlatArray a -> STM () -> STM ()
+    , dt'inp'element'wise'masked :: EdhProgState ->  FlatArray Int8 -> FlatArray a
         -> Dynamic -> FlatArray a -> STM () -> STM ()
   }-> DataType a
  deriving Typeable
@@ -115,7 +119,9 @@ dataType !ident = DataType ident
                            vecOp
                            elemOp
                            vecInp
+                           vecInpMasked
                            elemInp
+                           elemInpMasked
  where
   createArray !_ !cap !exit = (exit =<<) $ unsafeIOToSTM $ do
     !p  <- callocArray cap
@@ -224,6 +230,21 @@ dataType !ident = DataType ident
               pokeElemOff p i $ op ev sv
               go (i + 1)
         go 0
+  -- vectorized operation, inplace modifying the array, with a bool mask
+  vecInpMasked !pgs (FlatArray _cap !mfp) (FlatArray !cap !fp) !dop !v !exit =
+    case fromDynamic dop of
+      Nothing                  -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) -> fromEdh pgs v $ \ !sv ->
+        (>> exit) $ unsafeIOToSTM $ withForeignPtr mfp $ \ !mp ->
+          withForeignPtr fp $ \ !p -> do
+            let go i | i >= cap = return ()
+                go i            = do
+                  mv <- peekElemOff mp i
+                  when (mv /= 0) $ do
+                    ev <- peekElemOff p i
+                    pokeElemOff p i $ op ev sv
+                  go (i + 1)
+            go 0
   -- element-wise operation, inplace modifying array
   elemInp _pgs (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit =
     case fromDynamic dop of
@@ -238,6 +259,25 @@ dataType !ident = DataType ident
                   pokeElemOff p1 i $ op ev1 ev2
                   go (i + 1)
             go 0
+  -- element-wise operation, inplace modifying array, with a bool mask
+  elemInpMasked _pgs (FlatArray _cap !mfp) (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit
+    = case fromDynamic dop of
+      Nothing -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) ->
+        (>> exit)
+          $ unsafeIOToSTM
+          $ withForeignPtr mfp
+          $ \ !mp -> withForeignPtr fp1 $ \ !p1 ->
+              withForeignPtr fp2 $ \ !p2 -> do
+                let go i | i >= cap1 = return ()
+                    go i             = do
+                      mv <- peekElemOff mp i
+                      when (mv /= 0) $ do
+                        ev1 <- peekElemOff p1 i
+                        ev2 <- peekElemOff p2 i
+                        pokeElemOff p1 i $ op ev1 ev2
+                      go (i + 1)
+                go 0
 
 
 data ConcreteDataType where

@@ -250,6 +250,37 @@ vecInpColumn !pgs !getOp (Column !dt _ !clv !csv) !v !naExit !exit = do
       let !fa = unsafeSliceFlatArray cs 0 cl
       dt'inp'vectorized dt pgs fa dop v exit
 
+vecInpMaskedColumn
+  :: EdhProgState
+  -> Column
+  -> (Text -> Dynamic)
+  -> Column
+  -> EdhValue
+  -> STM ()
+  -> STM ()
+  -> STM ()
+vecInpMaskedColumn !pgs (Column _ _ !mclv !mcsv) !getOp (Column !dt _ !clv !csv) !v !naExit !exit
+  = do
+    let !dop = getOp $ data'type'identifier dt
+    case fromDynamic dop of
+      Just EdhNil -> naExit
+      _           -> do
+        !mcl <- readTVar mclv
+        !cl  <- readTVar clv
+        if mcl /= cl
+          then
+            throwEdhSTM pgs UsageError
+            $  "Index length mismatch: "
+            <> T.pack (show mcl)
+            <> " vs "
+            <> T.pack (show cl)
+          else do
+            !mcs <- readTVar mcsv
+            !cs  <- readTVar csv
+            let !ma = unsafeSliceFlatArray mcs 0 mcl
+                !fa = unsafeSliceFlatArray cs 0 cl
+            dt'inp'vectorized'masked dt pgs (unsafeCoerce ma) fa dop v exit
+
 elemInpColumn
   :: EdhProgState
   -> (Text -> Dynamic)
@@ -291,6 +322,61 @@ elemInpColumn !pgs !getOp (Column !dt1 _dto1 !clv1 !csv1) (Column !dt2 _dto2 !cl
                                     (getOp $ data'type'identifier dt1)
                                     (unsafeCoerce fa2)
                                     exit
+
+elemInpMaskedColumn
+  :: EdhProgState
+  -> Column
+  -> (Text -> Dynamic)
+  -> Column
+  -> Column
+  -> STM ()
+  -> STM ()
+  -> STM ()
+elemInpMaskedColumn !pgs (Column _ _ !mclv !mcsv) !getOp (Column !dt1 _dto1 !clv1 !csv1) (Column !dt2 _dto2 !clv2 !csv2) !naExit !exit
+  = let !dop = getOp $ data'type'identifier dt1
+    in
+      case fromDynamic dop of
+        Just EdhNil -> naExit
+        _           -> if data'type'identifier dt1 /= data'type'identifier dt2
+          then
+            throwEdhSTM pgs UsageError
+            $  "Column dtype mismatch: "
+            <> data'type'identifier dt1
+            <> " vs "
+            <> data'type'identifier dt2
+          else do
+            !mcl <- readTVar mclv
+            !cl1 <- readTVar clv1
+            !cl2 <- readTVar clv2
+            if mcl /= cl1
+              then
+                throwEdhSTM pgs UsageError
+                $  "Index length mismatch: "
+                <> T.pack (show mcl)
+                <> " vs "
+                <> T.pack (show cl1)
+              else if cl1 /= cl2
+                then
+                  throwEdhSTM pgs UsageError
+                  $  "Column length mismatch: "
+                  <> T.pack (show cl1)
+                  <> " vs "
+                  <> T.pack (show cl2)
+                else do
+                  !mcs <- readTVar mcsv
+                  !cs1 <- readTVar csv1
+                  !cs2 <- readTVar csv2
+                  let !ma  = unsafeSliceFlatArray mcs 0 mcl
+                      !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                      !fa2 = unsafeSliceFlatArray cs2 0 cl2
+                  dt'inp'element'wise'masked
+                    dt1
+                    pgs
+                    (unsafeCoerce ma)
+                    fa1
+                    (getOp $ data'type'identifier dt1)
+                    (unsafeCoerce fa2)
+                    exit
 
 
 -- obtain valid column data as an immutable Storable Vector
@@ -662,7 +748,6 @@ colMethods !indexDTO !boolDTO !pgsModule =
   colIdxReadProc :: EdhProcedure
   colIdxReadProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
     case args of
-      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
       [EdhDecimal !idxNum] -> case D.decimalToInteger idxNum of
         Just !idx ->
           readColumnCell pgs (fromInteger idx) col $ exitEdhSTM pgs exit
@@ -670,6 +755,7 @@ colMethods !indexDTO !boolDTO !pgsModule =
           throwEdhSTM pgs UsageError
             $  "Expect an integer to index a Column but you give: "
             <> T.pack (show idxNum)
+      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
       _ ->
         throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
           (show args)
@@ -677,14 +763,58 @@ colMethods !indexDTO !boolDTO !pgsModule =
   colIdxWriteProc :: EdhProcedure
   colIdxWriteProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
     case args of
-      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
-      [EdhDecimal !idxNum, val] -> case D.decimalToInteger idxNum of
+      [EdhDecimal !idxNum, !val] -> case D.decimalToInteger idxNum of
         Just !idx ->
           writeColumnCell pgs val (fromInteger idx) col $ exitEdhSTM pgs exit
         _ ->
           throwEdhSTM pgs UsageError
             $  "Expect an integer to index a Column but you give: "
             <> T.pack (show idxNum)
+      [EdhObject !idxObj, !other] -> fromDynamic <$> objStore idxObj >>= \case
+        Just icol@(Column !idt _ _ _) -> case data'type'identifier idt of
+          "bool" -> -- bool index 
+            let that = thatObject $ contextScope $ edh'context pgs
+            in  case edhUltimate other of
+                  otherVal@(EdhObject !otherObj) ->
+                    fromDynamic <$> objStore otherObj >>= \case
+                      Just colOther@Column{} ->
+                        elemInpMaskedColumn pgs
+                                            icol
+                                            assignOp
+                                            col
+                                            colOther
+                                            (exitEdhSTM pgs exit EdhContinue)
+                          $ exitEdhSTM pgs exit
+                          $ EdhObject that
+                      Nothing ->
+                        vecInpMaskedColumn pgs
+                                           icol
+                                           assignOp
+                                           col
+                                           otherVal
+                                           (exitEdhSTM pgs exit EdhContinue)
+                          $ exitEdhSTM pgs exit
+                          $ EdhObject that
+                  !otherVal ->
+                    vecInpMaskedColumn pgs
+                                       icol
+                                       assignOp
+                                       col
+                                       otherVal
+                                       (exitEdhSTM pgs exit EdhContinue)
+                      $ exitEdhSTM pgs exit
+                      $ EdhObject that
+          "intp" -> -- fancy index
+            undefined -- TODO impl. this
+          !badIdxDti ->
+            throwEdhSTM pgs UsageError
+              $  "Invalid dtype as index for a Column: "
+              <> badIdxDti
+        Nothing -> edhValueReprSTM pgs (EdhObject idxObj) $ \ !objRepr ->
+          throwEdhSTM pgs UsageError
+            $  "Invalid object as index for a Column: "
+            <> objRepr
+      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
       _ ->
         throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
           (show args)
@@ -779,6 +909,18 @@ colMethods !indexDTO !boolDTO !pgsModule =
   colInpProc _ !apk _ =
     throwEdh UsageError $ "Invalid args for a Column operator: " <> T.pack
       (show apk)
+
+  assignOp :: Text -> Dynamic
+  assignOp = \case
+    "float64" -> toDyn ((\_x !y -> y) :: Double -> Double -> Double)
+    "float32" -> toDyn ((\_x !y -> y) :: Float -> Float -> Float)
+    "int64"   -> toDyn ((\_x !y -> y) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((\_x !y -> y) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((\_x !y -> y) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((\_x !y -> y) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((\_x !y -> y) :: Int -> Int -> Int)
+    "bool"    -> toDyn ((\_x !y -> y) :: VecBool -> VecBool -> VecBool)
+    _         -> toDyn nil -- means not applicable here
 
   addOp :: Text -> Dynamic
   addOp = \case
