@@ -392,7 +392,7 @@ unsafeCastColumnData (Column _ _ _ !csv) = do
 colCtor :: EdhValue -> EdhHostCtor
 colCtor !defaultDataType !pgsCtor !apk !ctorExit =
   case parseArgsPack (Nothing, -1 :: Int, defaultDataType) ctorArgsParser apk of
-    Left err -> throwEdhSTM pgsCtor UsageError err
+    Left !err -> throwEdhSTM pgsCtor UsageError err
     Right (Nothing, _, _) -> throwEdhSTM pgsCtor UsageError "Missing capacity"
     Right (Just !cap, !len, !dtv) -> case dtv of
       EdhObject !dto -> do
@@ -762,62 +762,97 @@ colMethods !indexDTO !boolDTO !pgsModule =
 
   colIdxWriteProc :: EdhProcedure
   colIdxWriteProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
-    case args of
-      [EdhDecimal !idxNum, !val] -> case D.decimalToInteger idxNum of
-        Just !idx ->
-          writeColumnCell pgs val (fromInteger idx) col $ exitEdhSTM pgs exit
+    let
+      that = thatObject $ contextScope $ edh'context pgs
+      assignAll !other = case edhUltimate other of
+        otherVal@(EdhObject !otherObj) ->
+          fromDynamic <$> objStore otherObj >>= \case
+            Just colOther@Column{} ->
+              elemInpColumn pgs
+                            assignOp
+                            col
+                            colOther
+                            (exitEdhSTM pgs exit EdhContinue)
+                $ exitEdhSTM pgs exit
+                $ EdhObject that
+            Nothing ->
+              vecInpColumn pgs
+                           assignOp
+                           col
+                           otherVal
+                           (exitEdhSTM pgs exit EdhContinue)
+                $ exitEdhSTM pgs exit
+                $ EdhObject that
+        !otherVal ->
+          vecInpColumn pgs
+                       assignOp
+                       col
+                       otherVal
+                       (exitEdhSTM pgs exit EdhContinue)
+            $ exitEdhSTM pgs exit
+            $ EdhObject that
+    in
+      case args of
+        [EdhDecimal !idxNum, !val] -> case D.decimalToInteger idxNum of
+          Just !idx ->
+            writeColumnCell pgs val (fromInteger idx) col $ exitEdhSTM pgs exit
+          _ ->
+            throwEdhSTM pgs UsageError
+              $  "Expect an integer to index a Column but you give: "
+              <> T.pack (show idxNum)
+        [EdhNamedValue "All" _, !other] -> assignAll other
+        [EdhNamedValue "Any" _, !other] -> assignAll other
+        [EdhArgsPack (ArgsPack [] !kwargs), !other] | Map.null kwargs ->
+          assignAll other
+        [EdhObject !idxObj, !other] ->
+          fromDynamic <$> objStore idxObj >>= \case
+            Just icol@(Column !idt _ _ _) -> case data'type'identifier idt of
+              "bool" -> case edhUltimate other of
+                -- bool index 
+                otherVal@(EdhObject !otherObj) ->
+                  fromDynamic <$> objStore otherObj >>= \case
+                    Just colOther@Column{} ->
+                      elemInpMaskedColumn pgs
+                                          icol
+                                          assignOp
+                                          col
+                                          colOther
+                                          (exitEdhSTM pgs exit EdhContinue)
+                        $ exitEdhSTM pgs exit
+                        $ EdhObject that
+                    Nothing ->
+                      vecInpMaskedColumn pgs
+                                         icol
+                                         assignOp
+                                         col
+                                         otherVal
+                                         (exitEdhSTM pgs exit EdhContinue)
+                        $ exitEdhSTM pgs exit
+                        $ EdhObject that
+                !otherVal ->
+                  vecInpMaskedColumn pgs
+                                     icol
+                                     assignOp
+                                     col
+                                     otherVal
+                                     (exitEdhSTM pgs exit EdhContinue)
+                    $ exitEdhSTM pgs exit
+                    $ EdhObject that
+              "intp" -> -- fancy index
+                undefined -- TODO impl. this
+              !badIdxDti ->
+                throwEdhSTM pgs UsageError
+                  $  "Invalid dtype as index for a Column: "
+                  <> badIdxDti
+            Nothing -> edhValueReprSTM pgs (EdhObject idxObj) $ \ !objRepr ->
+              throwEdhSTM pgs UsageError
+                $  "Invalid object as index for a Column: "
+                <> objRepr
+        -- TODO support slice indexing and @indexDataType@ typed fancy indexing
         _ ->
           throwEdhSTM pgs UsageError
-            $  "Expect an integer to index a Column but you give: "
-            <> T.pack (show idxNum)
-      [EdhObject !idxObj, !other] -> fromDynamic <$> objStore idxObj >>= \case
-        Just icol@(Column !idt _ _ _) -> case data'type'identifier idt of
-          "bool" -> -- bool index 
-            let that = thatObject $ contextScope $ edh'context pgs
-            in  case edhUltimate other of
-                  otherVal@(EdhObject !otherObj) ->
-                    fromDynamic <$> objStore otherObj >>= \case
-                      Just colOther@Column{} ->
-                        elemInpMaskedColumn pgs
-                                            icol
-                                            assignOp
-                                            col
-                                            colOther
-                                            (exitEdhSTM pgs exit EdhContinue)
-                          $ exitEdhSTM pgs exit
-                          $ EdhObject that
-                      Nothing ->
-                        vecInpMaskedColumn pgs
-                                           icol
-                                           assignOp
-                                           col
-                                           otherVal
-                                           (exitEdhSTM pgs exit EdhContinue)
-                          $ exitEdhSTM pgs exit
-                          $ EdhObject that
-                  !otherVal ->
-                    vecInpMaskedColumn pgs
-                                       icol
-                                       assignOp
-                                       col
-                                       otherVal
-                                       (exitEdhSTM pgs exit EdhContinue)
-                      $ exitEdhSTM pgs exit
-                      $ EdhObject that
-          "intp" -> -- fancy index
-            undefined -- TODO impl. this
-          !badIdxDti ->
-            throwEdhSTM pgs UsageError
-              $  "Invalid dtype as index for a Column: "
-              <> badIdxDti
-        Nothing -> edhValueReprSTM pgs (EdhObject idxObj) $ \ !objRepr ->
-          throwEdhSTM pgs UsageError
-            $  "Invalid object as index for a Column: "
-            <> objRepr
-      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
-      _ ->
-        throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
-          (show args)
+            $  "Invalid args to assign a Column by index: "
+            <> T.pack (show args)
 
 
   colCmpProc :: (Ordering -> Bool) -> EdhProcedure
@@ -1011,51 +1046,65 @@ colMethods !indexDTO !boolDTO !pgsModule =
 
 
 arangeProc :: Object -> EntityManipulater -> Class -> EdhProcedure
-arangeProc !indexDTO !emColumn !clsColumn (ArgsPack [!rngSpec] !kwargs) !exit =
-  case rngSpec of
-    EdhPair (EdhPair (EdhDecimal !startN) (EdhDecimal !stopN)) (EdhDecimal stepN)
-      -> case D.decimalToInteger startN of
-        Just !start -> case D.decimalToInteger stopN of
-          Just !stop -> case D.decimalToInteger stepN of
-            Just !step -> createRangeCol (fromInteger start)
-                                         (fromInteger stop)
-                                         (fromInteger step)
-            _ -> throwEdh UsageError "step is not an integer"
-          _ -> throwEdh UsageError "stop is not an integer"
-        _ -> throwEdh UsageError "start is not an integer"
-    EdhPair (EdhDecimal !startN) (EdhDecimal !stopN) ->
-      case D.decimalToInteger startN of
-        Just !start -> case D.decimalToInteger stopN of
-          Just !stop ->
-            createRangeCol (fromInteger start) (fromInteger stop)
-              $ if stop >= start then 1 else -1
-          _ -> throwEdh UsageError "stop is not an integer"
-        _ -> throwEdh UsageError "start is not an integer"
-    EdhDecimal !stopN -> case D.decimalToInteger stopN of
-      Just !stop ->
-        createRangeCol 0 (fromInteger stop) $ if stop >= 0 then 1 else -1
-      _ -> throwEdh UsageError "stop is not an integer"
-    _ -> throwEdh UsageError $ "Invalid range of " <> T.pack
-      (edhTypeNameOf rngSpec)
+arangeProc !indexDTO !emColumn !clsColumn !apk !exit =
+  case parseArgsPack (Nothing, EdhObject indexDTO) argsParser apk of
+    Left !err -> throwEdh UsageError err
+    Right (Nothing, _) -> throwEdh UsageError "Missing range specification"
+    Right (Just !rngSpec, !dtv) -> case rngSpec of
+      EdhPair (EdhPair (EdhDecimal !startN) (EdhDecimal !stopN)) (EdhDecimal stepN)
+        -> case D.decimalToInteger startN of
+          Just !start -> case D.decimalToInteger stopN of
+            Just !stop -> case D.decimalToInteger stepN of
+              Just !step -> createRangeCol dtv
+                                           (fromInteger start)
+                                           (fromInteger stop)
+                                           (fromInteger step)
+              _ -> throwEdh UsageError "step is not an integer"
+            _ -> throwEdh UsageError "stop is not an integer"
+          _ -> throwEdh UsageError "start is not an integer"
+      EdhPair (EdhDecimal !startN) (EdhDecimal !stopN) ->
+        case D.decimalToInteger startN of
+          Just !start -> case D.decimalToInteger stopN of
+            Just !stop ->
+              createRangeCol dtv (fromInteger start) (fromInteger stop)
+                $ if stop >= start then 1 else -1
+            _ -> throwEdh UsageError "stop is not an integer"
+          _ -> throwEdh UsageError "start is not an integer"
+      EdhDecimal !stopN -> case D.decimalToInteger stopN of
+        Just !stop ->
+          createRangeCol dtv 0 (fromInteger stop) $ if stop >= 0 then 1 else -1
+        _ -> throwEdh UsageError "stop is not an integer"
+      _ -> throwEdh UsageError $ "Invalid range of " <> T.pack
+        (edhTypeNameOf rngSpec)
  where
-  createRangeCol :: Int -> Int -> Int -> EdhProc
-  createRangeCol !start !stop !step = ask >>= \ !pgs ->
-    contEdhSTM
-      $ case
-          Map.lookupDefault (EdhObject indexDTO) (AttrByName "dtype") kwargs
-        of
-          EdhObject !dto ->
-            fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
-              Nothing -> throwEdhSTM pgs UsageError "Invalid dtype object"
-              Just (ConcreteDataType !dt) ->
-                create'range'array dt pgs start stop step $ \ !cs -> do
-                  !clv    <- newTVar $ flatArrayCapacity cs
-                  !col    <- Column dt dto clv <$> newTVar cs
-                  !ent    <- createSideEntity emColumn $ toDyn col
-                  !colObj <- viewAsEdhObject ent clsColumn []
-                  exitEdhSTM pgs exit $ EdhObject colObj
-          _ -> throwEdhSTM pgs UsageError "Invalid dtype value"
-arangeProc _ _ _ _ _ = throwEdh UsageError "Invalid args to arange()"
+  argsParser =
+    ArgsPackParser
+        [ \arg (_, dtv) -> Right (Just arg, dtv)
+        , \arg (spec, _) -> case arg of
+          dtv@EdhObject{} -> Right (spec, dtv)
+          _               -> Left "Invalid dtype"
+        ]
+      $ Map.fromList
+          [ ( "dtype"
+            , \arg (spec, _) -> case arg of
+              dtv@EdhObject{} -> Right (spec, dtv)
+              _               -> Left "Invalid dtype"
+            )
+          ]
+  createRangeCol :: EdhValue -> Int -> Int -> Int -> EdhProc
+  createRangeCol !dtv !start !stop !step = ask >>= \ !pgs ->
+    contEdhSTM $ case dtv of
+      EdhObject !dto ->
+        fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
+          Nothing -> throwEdhSTM pgs UsageError "Invalid dtype object"
+          Just (ConcreteDataType !dt) ->
+            create'range'array dt pgs start stop step $ \ !cs -> do
+              !clv    <- newTVar $ flatArrayCapacity cs
+              !col    <- Column dt dto clv <$> newTVar cs
+              !ent    <- createSideEntity emColumn $ toDyn col
+              !colObj <- viewAsEdhObject ent clsColumn []
+              exitEdhSTM pgs exit $ EdhObject colObj
+      _ -> throwEdhSTM pgs UsageError "Invalid dtype value"
 
 
 -- TODO impl. `linspace` following:
