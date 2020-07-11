@@ -2,6 +2,7 @@
 # TODO selectively import artifacts into top level, leaving others
 #      to be addressed via the `hd` module reference
 case import * 'dim' of { hd } -> { pass }
+effect import * 'dim/effects'
 
 
 while true { # this is the *Loop* in so-called REPL

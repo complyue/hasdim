@@ -1,0 +1,19 @@
+
+# this module is supposed to be imported like:
+#
+#  effect import * 'dim/effects'
+#
+
+import * './symbols'
+
+export {
+
+  import (
+    resolveDataType as this.@resolveDataType,
+    resolveDataComparator as this.@resolveDataComparator,
+    resolveDataOperator as this.@resolveDataOperator,
+    resolveNumDataType as this.@resolveNumDataType,
+    **_
+  ) 'dim/RT'
+
+}

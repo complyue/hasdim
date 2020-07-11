@@ -1,5 +1,11 @@
+{-# LANGUAGE 
+   FlexibleContexts 
+  , RankNTypes
+#-}
 
 -- | Numpy dtype inspired abstraction for vectorizable types of data
+--
+-- The data type system is extensible through the effect system of Edh
 module Dim.DataType where
 
 import           Prelude
@@ -15,6 +21,8 @@ import           Control.Concurrent.STM
 
 
 import           Data.Text                      ( Text )
+import qualified Data.Text                     as T
+import qualified Data.HashMap.Strict           as Map
 import           Data.Dynamic
 
 import           Data.Vector.Storable           ( Vector )
@@ -42,9 +50,9 @@ unsafeSliceFlatArray :: forall a . FlatArray a -> Int -> Int -> FlatArray a
 unsafeSliceFlatArray (FlatArray _ !fp) !offset !len =
   FlatArray len $ plusForeignPtr fp offset
 
-unsafeFlatArrayToVector
+unsafeFlatArrayAsVector
   :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => FlatArray a -> Vector b
-unsafeFlatArrayToVector (FlatArray !cap !fp) =
+unsafeFlatArrayAsVector (FlatArray !cap !fp) =
   V.unsafeFromForeignPtr0 (castForeignPtr fp) cap
 
 unsafeFlatArrayFromVector
@@ -52,9 +60,9 @@ unsafeFlatArrayFromVector
 unsafeFlatArrayFromVector !vec = case V.unsafeToForeignPtr0 vec of
   (!fp, !cap) -> FlatArray cap (castForeignPtr fp)
 
-unsafeFlatArrayToMVector
+unsafeFlatArrayAsMVector
   :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => FlatArray a -> IOVector b
-unsafeFlatArrayToMVector (FlatArray !cap !fp) =
+unsafeFlatArrayAsMVector (FlatArray !cap !fp) =
   MV.unsafeFromForeignPtr0 (castForeignPtr fp) cap
 
 unsafeFlatArrayFromMVector
@@ -63,65 +71,144 @@ unsafeFlatArrayFromMVector !mvec = case MV.unsafeToForeignPtr0 mvec of
   (!fp, !cap) -> FlatArray cap (castForeignPtr fp)
 
 
--- type safe data manipulation operations wrt to exchanging data with Edh
--- programs
-data DataType a where
-  DataType ::(Num a, Ord a, Storable a, Typeable a, EdhXchg a) => {
-      data'type'identifier :: Text
-    , data'element'size :: Int
-    , data'element'align :: Int
-    , create'flat'array :: EdhProgState
+type DataTypeIdent = Text
+
+data DataType where
+  DataType ::(EdhXchg a, Storable a, Typeable a) => {
+      data'type'identifier :: DataTypeIdent
+    , data'type'storable :: FlatStorable a
+    } -> DataType
+
+-- | host Class dtype()
+dtypeCtor :: EdhHostCtor
+-- not really constructable from Edh code, relies on host code to fill
+-- the in-band storage
+dtypeCtor _ _ !ctorExit = ctorExit $ toDyn nil
+
+dtypeMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
+dtypeMethods !pgsModule =
+  sequence
+    $  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
+       | (nm, vc, hp, args) <-
+         [ ( "=="
+           , EdhMethod
+           , dtypeEqProc
+           , PackReceiver []
+           )
+-- assuming there's an attribute in context samely named after the
+-- identifier for a valid dtype
+         , ("__repr__", EdhMethod, dtypeIdentProc, PackReceiver [])
+         ]
+       ]
+    ++ [ (AttrByName nm, ) <$> mkHostProperty scope nm getter setter
+       | (nm, getter, setter) <- [("id", dtypeIdentProc, Nothing)]
+       ]
+
+ where
+  !scope = contextScope $ edh'context pgsModule
+
+  dtypeEqProc :: EdhProcedure
+  dtypeEqProc (ArgsPack [EdhObject !dtoOther] _) !exit =
+    withThatEntity $ \ !pgs (DataType !ident _) ->
+      fromDynamic <$> readTVar (entity'store $ objEntity dtoOther) >>= \case
+        Nothing -> exitEdhSTM pgs exit $ EdhBool False
+        Just (DataType !identOther _) ->
+          exitEdhSTM pgs exit $ EdhBool $ identOther == ident
+  dtypeEqProc _ !exit = exitEdhProc exit $ EdhBool False
+
+  dtypeIdentProc :: EdhProcedure
+  dtypeIdentProc _ !exit =
+    withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-dtype>")
+      $ \ !pgs (DataType !ident _) -> exitEdhSTM pgs exit $ EdhString ident
+
+
+-- | Resolve effective data storage routines per data type identifier
+--
+-- an exception is thrown if the identifier is not applicable
+resolveDataType
+  :: EdhProgState -> DataTypeIdent -> (DataType -> STM ()) -> STM ()
+resolveDataType !pgs !dti =
+  resolveDataType' pgs dti
+    $  throwEdhSTM pgs UsageError
+    $  "Not an applicable dtype: "
+    <> dti
+-- | Resolve effective data storage routines per data type identifier
+-- 
+-- will take the @naExit@ if the identifier is not applicable
+resolveDataType'
+  :: EdhProgState -> DataTypeIdent -> STM () -> (DataType -> STM ()) -> STM ()
+resolveDataType' !pgs !dti !naExit !exit =
+  runEdhProc pgs
+    $ performEdhEffect (SymbolicAttr "resolveDataType") [EdhString dti] []
+    $ \case
+        EdhNil         -> contEdhSTM naExit
+        EdhObject !dto -> contEdhSTM $ fromDynamic <$> objStore dto >>= \case
+          Nothing  -> naExit
+          Just !dt -> exit dt
+        !badDtVal ->
+          throwEdh UsageError
+            $  "Bad return type from @resolveDataType(dti): "
+            <> T.pack (edhTypeNameOf badDtVal)
+
+
+-- | The ultimate fallback to have trivial data types resolved
+resolveDataTypeProc :: Object -> EdhProcedure
+resolveDataTypeProc !dtTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
+  | Map.null kwargs = ask >>= \ !pgs -> contEdhSTM $ do
+    let exitWith !dt =
+          cloneEdhObject dtTmplObj (\_ !cloneExit -> cloneExit $ toDyn dt)
+            $ \ !dto -> exitEdhSTM pgs exit $ EdhObject dto
+    case dti of
+      "float64" ->
+        exitWith $ DataType dti (flatStorable :: FlatStorable Double)
+      "float32" -> exitWith $ DataType dti (flatStorable :: FlatStorable Float)
+      "int64"   -> exitWith $ DataType dti (flatStorable :: FlatStorable Int64)
+      "int32"   -> exitWith $ DataType dti (flatStorable :: FlatStorable Int32)
+      "int8"    -> exitWith $ DataType dti (flatStorable :: FlatStorable Int8)
+      "byte"    -> exitWith $ DataType dti (flatStorable :: FlatStorable Word8)
+      "intp"    -> exitWith $ DataType dti (flatStorable :: FlatStorable Int)
+      "bool" -> exitWith $ DataType dti (flatStorable :: FlatStorable VecBool)
+      _ ->
+        throwEdhSTM pgs UsageError
+          $  "A non-trivial data type requested,"
+          <> " you may have some framework/lib to provide an effective dtype"
+          <> " identified by: "
+          <> dti
+resolveDataTypeProc _ _ _ =
+  throwEdh UsageError "Invalid args to @resolveDataType(dti)"
+
+
+-- | FlatStorable facilitates the basic support of a data type to be managable
+-- by HasDim, i.e. array allocation, element read/write, array bulk update.
+--
+-- More sophisticated, vectorized operations are supported by other collections
+-- of routines, as they tends to have more demanding premises than required
+-- here.
+data FlatStorable a where
+  FlatStorable ::(EdhXchg a, Storable a, Typeable a) => {
+      flat'element'size :: Int
+    , flat'element'align :: Int
+    , flat'new'array :: EdhProgState
         -> Int -> (FlatArray a -> STM ()) -> STM ()
-    , grow'flat'array :: EdhProgState
+    , flat'grow'array :: EdhProgState
         -> FlatArray a -> Int -> (FlatArray a -> STM ()) -> STM ()
-    , create'range'array :: EdhProgState
-        -> Int -> Int -> Int -> (FlatArray a -> STM ()) -> STM ()
-    , read'flat'array'cell :: EdhProgState
-        -> Int -> FlatArray a -> (EdhValue -> STM ()) -> STM ()
-    , write'flat'array'cell :: EdhProgState
-        -> EdhValue -> Int -> FlatArray a -> (EdhValue -> STM ()) -> STM ()
-    , update'flat'array :: EdhProgState
+    , flat'array'read :: EdhProgState -> FlatArray a
+        -> Int -> (EdhValue -> STM ()) -> STM ()
+    , flat'array'write :: EdhProgState -> FlatArray a
+        -> Int -> EdhValue -> (EdhValue -> STM ()) -> STM ()
+    , flat'array'update :: EdhProgState
         -> [(Int,a)]  -> FlatArray a  -> STM () -> STM ()
-    , dt'cmp'vectorized :: EdhProgState -> FlatArray a
-        -> (Ordering -> Bool) -> EdhValue -> (FlatArray Int8 -> STM ()) -> STM ()
-    , dt'cmp'element'wise :: EdhProgState -> FlatArray a
-        -> (Ordering -> Bool) -> FlatArray a -> (FlatArray Int8 -> STM ()) -> STM ()
-    , dt'op'vectorized :: EdhProgState -> FlatArray a
-        -> Dynamic -> EdhValue -> (FlatArray a -> STM ()) -> STM ()
-    , dt'op'element'wise :: EdhProgState -> FlatArray a
-        -> Dynamic -> FlatArray a -> (FlatArray a -> STM ()) -> STM ()
-    , dt'inp'vectorized :: EdhProgState -> FlatArray a
-        -> Dynamic -> EdhValue -> STM () -> STM ()
-    , dt'inp'vectorized'masked :: EdhProgState -> FlatArray Int8 -> FlatArray a
-        -> Dynamic -> EdhValue -> STM () -> STM ()
-    , dt'inp'element'wise :: EdhProgState -> FlatArray a
-        -> Dynamic -> FlatArray a -> STM () -> STM ()
-    , dt'inp'element'wise'masked :: EdhProgState ->  FlatArray Int8 -> FlatArray a
-        -> Dynamic -> FlatArray a -> STM () -> STM ()
-  }-> DataType a
+  }-> FlatStorable a
  deriving Typeable
-dataType
-  :: forall a
-   . (Num a, Ord a, Storable a, Typeable a, EdhXchg a)
-  => Text
-  -> DataType a
-dataType !ident = DataType ident
-                           (sizeOf (undefined :: a))
-                           (alignment (undefined :: a))
-                           createArray
-                           growArray
-                           createRange
-                           readArrayCell
-                           writeArrayCell
-                           updateArray
-                           vecCmp
-                           elemCmp
-                           vecOp
-                           elemOp
-                           vecInp
-                           vecInpMasked
-                           elemInp
-                           elemInpMasked
+flatStorable
+  :: forall a . (EdhXchg a, Storable a, Typeable a) => FlatStorable a
+flatStorable = FlatStorable (sizeOf (undefined :: a))
+                            (alignment (undefined :: a))
+                            createArray
+                            growArray
+                            readArrayCell
+                            writeArrayCell
+                            updateArray
  where
   createArray !_ !cap !exit = (exit =<<) $ unsafeIOToSTM $ do
     !p  <- callocArray cap
@@ -134,30 +221,12 @@ dataType !ident = DataType ident
       !fp' <- newForeignPtr finalizerFree p'
       withForeignPtr fp $ \ !p -> copyArray p' p cap
       return $ FlatArray newCap fp'
-  createRange !pgs !start !stop _step !exit | stop == start =
-    createArray pgs 0 exit
-  createRange !pgs !start !stop !step !exit =
-    if (stop > start && step <= 0) || (stop < start && step >= 0)
-      then throwEdhSTM pgs UsageError "Range is not converging"
-      else (exit =<<) $ unsafeIOToSTM $ do
-        let (q, r) = quotRem (stop - start) step
-            !len   = if r == 0 then abs q else 1 + abs q
-            fillRng :: Ptr a -> Int -> Int -> IO ()
-            fillRng !p !n !i = if i >= len
-              then return ()
-              else do
-                pokeElemOff p i $ fromIntegral n
-                fillRng p (n + step) (i + 1)
-        !p  <- callocArray len
-        !fp <- newForeignPtr finalizerFree p
-        fillRng p start 0
-        return $ FlatArray len fp
-  readArrayCell !pgs !idx (FlatArray !cap !fp) !exit =
+  readArrayCell !pgs (FlatArray !cap !fp) !idx !exit =
     edhRegulateIndex pgs cap idx $ \ !posIdx -> do
       sv <- unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr ->
         peekElemOff vPtr posIdx
       toEdh pgs sv $ \ !val -> exit val
-  writeArrayCell !pgs !val !idx (FlatArray !cap !fp) !exit =
+  writeArrayCell !pgs (FlatArray !cap !fp) !idx !val !exit =
     edhRegulateIndex pgs cap idx $ \ !posIdx -> fromEdh pgs val $ \ !sv -> do
       unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
       toEdh pgs sv $ \ !val' -> exit val'
@@ -166,6 +235,58 @@ dataType !ident = DataType ident
     edhRegulateIndex pgs cap idx $ \ !posIdx -> do
       unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
       updateArray pgs rest'upds ary exit
+
+
+-- | A pack of data manipulation routines, per operational category, per data
+-- type identifier
+data DataManiPack where
+  DataManiPack ::{
+      data'mpk'identifier :: DataTypeIdent
+    , data'mpk'category :: Text
+    , data'mpk'routines :: Dynamic
+    } -> DataManiPack
+
+-- | host Class dmpk()
+dmpkCtor :: EdhHostCtor
+-- not really constructable from Edh code, relies on host code to fill
+-- the in-band storage
+dmpkCtor _ _ !ctorExit = ctorExit $ toDyn nil
+
+dmpkMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
+dmpkMethods !pgsModule =
+  sequence
+    $ [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
+      | (nm, vc, hp, args) <-
+        [("__repr__", EdhMethod, dmpkReprProc, PackReceiver [])]
+      ]
+
+ where
+  !scope = contextScope $ edh'context pgsModule
+
+  dmpkReprProc :: EdhProcedure
+  dmpkReprProc _ !exit =
+    withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-dmpk>")
+      $ \ !pgs (DataManiPack !ident !cate _) ->
+          exitEdhSTM pgs exit
+            $  EdhString
+            $  "<dmpk/"
+            <> ident
+            <> "#"
+            <> cate
+            <> ">"
+
+
+data FlatOrd a where
+  FlatOrd ::(Ord a, Storable a, Typeable a, EdhXchg a) => {
+      flat'cmp'vectorized :: EdhProgState -> FlatArray a
+        -> (Ordering -> Bool) -> EdhValue -> (FlatArray VecBool -> STM ()) -> STM ()
+    , flat'cmp'element'wise :: EdhProgState -> FlatArray a
+        -> (Ordering -> Bool) -> FlatArray a -> (FlatArray VecBool -> STM ()) -> STM ()
+  }-> FlatOrd a
+ deriving Typeable
+flatOrd :: (Ord a, Storable a, Typeable a, EdhXchg a) => FlatOrd a
+flatOrd = FlatOrd vecCmp elemCmp
+ where
   -- vectorized comparation, yielding a new Int8 array
   vecCmp !pgs (FlatArray !cap !fp) !cmp !v !exit = fromEdh pgs v $ \ !sv ->
     (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
@@ -190,6 +311,94 @@ dataType !ident = DataType ident
               pokeElemOff rp i $ if cmp $ compare ev1 ev2 then 1 else 0
               go (i + 1)
         go 0
+
+resolveDataComparator
+  :: forall a
+   . (Typeable (FlatOrd a))
+  => EdhProgState
+  -> DataTypeIdent
+  -> FlatArray a
+  -> (FlatOrd a -> STM ())
+  -> STM ()
+resolveDataComparator !pgs !dti !fa =
+  resolveDataComparator' pgs dti fa
+    $  throwEdhSTM pgs UsageError
+    $  "Ordering not supported by dtype: "
+    <> dti
+resolveDataComparator'
+  :: forall a
+   . (Typeable (FlatOrd a))
+  => EdhProgState
+  -> DataTypeIdent
+  -> FlatArray a
+  -> STM ()
+  -> (FlatOrd a -> STM ())
+  -> STM ()
+resolveDataComparator' !pgs !dti _ !naExit !exit =
+  runEdhProc pgs
+    $ performEdhEffect (SymbolicAttr "resolveDataComparator") [EdhString dti] []
+    $ \case
+        EdhNil -> contEdhSTM naExit
+        EdhObject !dmpko ->
+          contEdhSTM $ fromDynamic <$> objStore dmpko >>= \case
+            Nothing -> naExit
+            Just (DataManiPack _dmpk'dti _dmpk'cate !drp) ->
+              case fromDynamic drp of
+                Nothing  -> naExit
+                Just !rp -> exit rp
+        !badDtVal ->
+          throwEdh UsageError
+            $  "Bad return type from @resolveDataComparator(dti): "
+            <> T.pack (edhTypeNameOf badDtVal)
+
+
+-- | The ultimate fallback to have trivial data types resolved
+resolveDataComparatorProc :: Object -> EdhProcedure
+resolveDataComparatorProc !dmpkTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
+  | Map.null kwargs = ask >>= \ !pgs -> contEdhSTM $ do
+    let exitWith !drp =
+          cloneEdhObject
+              dmpkTmplObj
+              (\_ !cloneExit -> cloneExit $ toDyn $ DataManiPack dti "cmp" drp)
+            $ \ !dto -> exitEdhSTM pgs exit $ EdhObject dto
+    case dti of
+      "float64" -> exitWith $ toDyn (flatOrd :: FlatOrd Double)
+      "float32" -> exitWith $ toDyn (flatOrd :: FlatOrd Float)
+      "int64"   -> exitWith $ toDyn (flatOrd :: FlatOrd Int64)
+      "int32"   -> exitWith $ toDyn (flatOrd :: FlatOrd Int32)
+      "int8"    -> exitWith $ toDyn (flatOrd :: FlatOrd Int8)
+      "byte"    -> exitWith $ toDyn (flatOrd :: FlatOrd Word8)
+      "intp"    -> exitWith $ toDyn (flatOrd :: FlatOrd Int)
+      "bool"    -> exitWith $ toDyn (flatOrd :: FlatOrd VecBool)
+      _ ->
+        throwEdhSTM pgs UsageError
+          $  "A non-trivial data type requested,"
+          <> " you may have some framework/lib to provide an effective dtype"
+          <> " identified by: "
+          <> dti
+resolveDataComparatorProc _ _ _ =
+  throwEdh UsageError "Invalid args to @resolveDataComparator(dti)"
+
+
+data FlatOp a where
+  FlatOp ::(EdhXchg a, Storable a, Typeable a) => {
+      flat'op'vectorized :: EdhProgState -> FlatArray a
+        -> Dynamic -> EdhValue -> (FlatArray a -> STM ()) -> STM ()
+    , flat'op'element'wise :: EdhProgState -> FlatArray a
+        -> Dynamic -> FlatArray a -> (FlatArray a -> STM ()) -> STM ()
+    , flat'inp'vectorized :: EdhProgState -> FlatArray a
+        -> Dynamic -> EdhValue -> STM () -> STM ()
+    , flat'inp'vectorized'masked :: EdhProgState -> FlatArray VecBool -> FlatArray a
+        -> Dynamic -> EdhValue -> STM () -> STM ()
+    , flat'inp'element'wise :: EdhProgState -> FlatArray a
+        -> Dynamic -> FlatArray a -> STM () -> STM ()
+    , flat'inp'element'wise'masked :: EdhProgState ->  FlatArray VecBool -> FlatArray a
+        -> Dynamic -> FlatArray a -> STM () -> STM ()
+  }-> FlatOp a
+ deriving Typeable
+flatOp :: (EdhXchg a, Storable a, Typeable a) => FlatOp a
+flatOp = FlatOp vecOp elemOp vecInp vecInpMasked elemInp elemInpMasked
+ where
   -- vectorized operation, yielding a new array
   vecOp !pgs (FlatArray !cap !fp) !dop !v !exit = case fromDynamic dop of
     Nothing                  -> error "bug: dtype op type mismatch"
@@ -279,88 +488,209 @@ dataType !ident = DataType ident
                       go (i + 1)
                 go 0
 
+resolveDataOperator
+  :: forall a
+   . (Typeable (FlatOp a))
+  => EdhProgState
+  -> DataTypeIdent
+  -> FlatArray a
+  -> (FlatOp a -> STM ())
+  -> STM ()
+resolveDataOperator !pgs !dti !fa =
+  resolveDataOperator' pgs dti fa
+    $  throwEdhSTM pgs UsageError
+    $  "Operation not supported by dtype: "
+    <> dti
+resolveDataOperator'
+  :: forall a
+   . (Typeable (FlatOp a))
+  => EdhProgState
+  -> DataTypeIdent
+  -> FlatArray a
+  -> STM ()
+  -> (FlatOp a -> STM ())
+  -> STM ()
+resolveDataOperator' !pgs !dti _ !naExit !exit =
+  runEdhProc pgs
+    $ performEdhEffect (SymbolicAttr "resolveDataOperator") [EdhString dti] []
+    $ \case
+        EdhNil -> contEdhSTM naExit
+        EdhObject !dmpko ->
+          contEdhSTM $ fromDynamic <$> objStore dmpko >>= \case
+            Nothing -> naExit
+            Just (DataManiPack _dmpk'dti _dmpk'cate !drp) ->
+              case fromDynamic drp of
+                Nothing ->
+                  throwEdhSTM pgs UsageError
+                    $  "bug: data manipulation routine pack obtained for dtype "
+                    <> dti
+                    <> " mismatch the flat array type created from it."
+                Just !rp -> exit rp
+        !badDtVal ->
+          throwEdh UsageError
+            $  "Bad return type from @resolveDataOperator(dti): "
+            <> T.pack (edhTypeNameOf badDtVal)
 
-data ConcreteDataType where
-  ConcreteDataType ::(Ord a, Storable a, EdhXchg a) => {
-      concrete'data'type :: !(DataType a)
-    } -> ConcreteDataType
- deriving Typeable
-instance Eq ConcreteDataType where
-  ConcreteDataType x == ConcreteDataType y =
-    data'type'identifier x == data'type'identifier y
+
+-- | The ultimate fallback to have trivial data types resolved
+resolveDataOperatorProc :: Object -> EdhProcedure
+resolveDataOperatorProc !dmpkTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
+  | Map.null kwargs = ask >>= \ !pgs -> contEdhSTM $ do
+    let exitWith !drp =
+          cloneEdhObject
+              dmpkTmplObj
+              (\_ !cloneExit -> cloneExit $ toDyn $ DataManiPack dti "op" drp)
+            $ \ !dto -> exitEdhSTM pgs exit $ EdhObject dto
+    case dti of
+      "float64" -> exitWith $ toDyn (flatOp :: FlatOp Double)
+      "float32" -> exitWith $ toDyn (flatOp :: FlatOp Float)
+      "int64"   -> exitWith $ toDyn (flatOp :: FlatOp Int64)
+      "int32"   -> exitWith $ toDyn (flatOp :: FlatOp Int32)
+      "int8"    -> exitWith $ toDyn (flatOp :: FlatOp Int8)
+      "byte"    -> exitWith $ toDyn (flatOp :: FlatOp Word8)
+      "intp"    -> exitWith $ toDyn (flatOp :: FlatOp Int)
+      "bool"    -> exitWith $ toDyn (flatOp :: FlatOp VecBool)
+      _ ->
+        throwEdhSTM pgs UsageError
+          $  "A non-trivial data type requested,"
+          <> " you may have some framework/lib to provide an effective dtype"
+          <> " identified by: "
+          <> dti
+resolveDataOperatorProc _ _ _ =
+  throwEdh UsageError "Invalid args to @resolveDataOperator(dti)"
 
 
--- | host Class dtype()
-dtypeCtor :: EdhHostCtor
+-- | host Class numdt()
+numdtCtor :: EdhHostCtor
 -- not really constructable from Edh code, relies on host code to fill
 -- the in-band storage
-dtypeCtor _ _ !ctorExit = ctorExit $ toDyn nil
+numdtCtor _ _ !ctorExit = ctorExit $ toDyn nil
 
-dtypeMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
-dtypeMethods !pgsModule =
+numdtMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
+numdtMethods !pgsModule =
   sequence
     $  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
        | (nm, vc, hp, args) <-
-         [ ( "__init__"
-           , EdhMethod
-           , dtypeInitProc
-           , PackReceiver [mandatoryArg "name"]
-           )
-         , ("=="      , EdhMethod, dtypeEqProc   , PackReceiver [])
-         , ("__repr__", EdhMethod, dtypeIdentProc, PackReceiver [])
+         [ ("=="      , EdhMethod, numdtEqProc   , PackReceiver [])
+         , ("__repr__", EdhMethod, numdtIdentProc, PackReceiver [])
          ]
        ]
     ++ [ (AttrByName nm, ) <$> mkHostProperty scope nm getter setter
-       | (nm, getter, setter) <- [("id", dtypeIdentProc, Nothing)]
+       | (nm, getter, setter) <- [("id", numdtIdentProc, Nothing)]
        ]
 
  where
   !scope = contextScope $ edh'context pgsModule
 
-  dtypeInitProc :: EdhProcedure
-  dtypeInitProc (ArgsPack !args _) !exit = case args of
-    [EdhString !name] -> ask >>= \ !pgs -> do
-      let !dtCls = objClass $ thisObject $ contextScope $ edh'context pgs
-      case procedure'lexi dtCls of
-        Nothing -> exitEdhProc exit nil
-        Just !clsLexi ->
-          contEdhSTM $ lookupEdhCtxAttr pgs clsLexi (AttrByName name) >>= \case
-            EdhNil -> throwEdhSTM pgs EvalError $ "No such dtype: " <> name
-            dtv@(EdhObject !dto) ->
-              fromDynamic <$> readTVar (entity'store $ objEntity dto) >>= \case
-                Nothing                 -> exitEdhSTM pgs exit nil
-                Just ConcreteDataType{} -> exitEdhSTM pgs exit dtv
-            _ -> exitEdhSTM pgs exit nil
-    _ -> throwEdh UsageError "Invalid args to dtype()"
-
-  dtypeEqProc :: EdhProcedure
-  dtypeEqProc (ArgsPack [EdhObject !dtoOther] _) !exit =
-    withThatEntity $ \ !pgs cdt@(ConcreteDataType _) ->
+  numdtEqProc :: EdhProcedure
+  numdtEqProc (ArgsPack [EdhObject !dtoOther] _) !exit =
+    withThatEntity $ \ !pgs (NumDataType !ident _) ->
       fromDynamic <$> readTVar (entity'store $ objEntity dtoOther) >>= \case
         Nothing -> exitEdhSTM pgs exit $ EdhBool False
-        Just cdtOther@(ConcreteDataType _) ->
-          exitEdhSTM pgs exit $ EdhBool $ cdtOther == cdt
-  dtypeEqProc _ !exit = exitEdhProc exit $ EdhBool False
+        Just (NumDataType !identOther _) ->
+          exitEdhSTM pgs exit $ EdhBool $ identOther == ident
+  numdtEqProc _ !exit = exitEdhProc exit $ EdhBool False
 
-  dtypeIdentProc :: EdhProcedure
-  dtypeIdentProc _ !exit =
-    withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bad-dtype>")
-      $ \ !pgs (ConcreteDataType !dt) ->
-          exitEdhSTM pgs exit $ EdhString $ data'type'identifier dt
+  numdtIdentProc :: EdhProcedure
+  numdtIdentProc _ !exit =
+    withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-numdt>")
+      $ \ !pgs (NumDataType !ident _) ->
+          exitEdhSTM pgs exit $ EdhString $ "<numeric-dtype:" <> ident <> ">"
 
-wrapDataType
+
+resolveNumDataType
+  :: EdhProgState -> DataTypeIdent -> (NumDataType -> STM ()) -> STM ()
+resolveNumDataType !pgs !dti =
+  resolveNumDataType' pgs dti
+    $  throwEdhSTM pgs UsageError
+    $  "Not an applicable numeric dtype: "
+    <> dti
+resolveNumDataType'
   :: EdhProgState
-  -> Class
-  -> (ConcreteDataType, [Text])
-  -> (([Text], EdhValue) -> STM ())
+  -> DataTypeIdent
   -> STM ()
-wrapDataType !pgs !dtypeClass (cdt@(ConcreteDataType !dt), !alias) !exit' =
+  -> (NumDataType -> STM ())
+  -> STM ()
+resolveNumDataType' !pgs !dti !naExit !exit =
   runEdhProc pgs
-    $ createEdhObject dtypeClass (ArgsPack [] mempty)
-    $ \(OriginalValue !dtypeVal _ _) -> case dtypeVal of
-        EdhObject !dtObj -> contEdhSTM $ do
-          -- actually fill in the in-band entity storage here
-          writeTVar (entity'store $ objEntity dtObj) $ toDyn cdt
-          exit' (data'type'identifier dt : alias, dtypeVal)
-        _ -> error "bug: createEdhObject returned non-object"
+    $ performEdhEffect (SymbolicAttr "resolveNumDataType") [EdhString dti] []
+    $ \case
+        EdhNil          -> contEdhSTM naExit
+        EdhObject !ndto -> contEdhSTM $ fromDynamic <$> objStore ndto >>= \case
+          Nothing   -> naExit
+          Just !ndt -> exit ndt
+        !badDtVal ->
+          throwEdh UsageError
+            $  "Bad return type from @resolveNumDataType(dti): "
+            <> T.pack (edhTypeNameOf badDtVal)
+
+
+-- | The ultimate fallback to have trivial data types resolved
+resolveNumDataTypeProc :: Object -> EdhProcedure
+resolveNumDataTypeProc !numdtTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
+  | Map.null kwargs = ask >>= \ !pgs -> contEdhSTM $ do
+    let exitWith !dndt =
+          cloneEdhObject numdtTmplObj (\_ !cloneExit -> cloneExit dndt)
+            $ \ !ndto -> exitEdhSTM pgs exit $ EdhObject ndto
+    case dti of
+      "float64" ->
+        exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Double)
+      "float32" ->
+        exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Float)
+      "int64" ->
+        exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int64)
+      "int32" ->
+        exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int32)
+      "int8" ->
+        exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int8)
+      "byte" ->
+        exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Word8)
+      "intp" ->
+        exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int)
+      -- todo should include bool ?
+      -- "bool" ->
+      --   exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger VecBool)
+      _ ->
+        throwEdhSTM pgs UsageError
+          $  "A non-trivial numeric data type requested,"
+          <> " you may have some framework/lib to provide an effective numdt"
+          <> " identified by: "
+          <> dti
+resolveNumDataTypeProc _ _ _ =
+  throwEdh UsageError "Invalid args to @resolveNumDataType(dti)"
+
+
+data NumDataType where
+  NumDataType ::(Num a, EdhXchg a, Storable a, Typeable a) => {
+      num'type'identifier :: !DataTypeIdent
+    , num'type'ranger :: !(FlatRanger a)
+    } -> NumDataType
+
+
+data FlatRanger a where
+  FlatRanger ::(Num a, EdhXchg a, Storable a, Typeable a) => {
+    flat'new'range'array :: EdhProgState
+      -> Int -> Int -> Int -> (FlatArray a -> STM ()) -> STM ()
+    }-> FlatRanger a
+ deriving Typeable
+flatRanger
+  :: forall a . (Num a, EdhXchg a, Storable a, Typeable a) => FlatRanger a
+flatRanger = FlatRanger rangeCreator
+ where
+  rangeCreator !pgs !start !stop !step !exit =
+    if (stop > start && step <= 0) || (stop < start && step >= 0)
+      then throwEdhSTM pgs UsageError "Range is not converging"
+      else (exit =<<) $ unsafeIOToSTM $ do
+        let (q, r) = quotRem (stop - start) step
+            !len   = if r == 0 then abs q else 1 + abs q
+            fillRng :: Ptr a -> Int -> Int -> IO ()
+            fillRng !p !n !i = if i >= len
+              then return ()
+              else do
+                pokeElemOff p i $ fromIntegral n
+                fillRng p (n + step) (i + 1)
+        !p  <- callocArray len
+        !fp <- newForeignPtr finalizerFree p
+        fillRng p start 0
+        return $ FlatArray len fp
 

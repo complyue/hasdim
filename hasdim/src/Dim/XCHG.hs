@@ -1,4 +1,9 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE 
+    GeneralizedNewtypeDeriving
+  , FlexibleContexts
+  , FlexibleInstances
+  , UndecidableInstances
+#-}
 
 module Dim.XCHG where
 
@@ -11,10 +16,10 @@ import           Control.Concurrent.STM
 
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
-import           Data.Bits
-import           Data.Dynamic
 
+-- import           Data.Bits
 import           Data.Scientific
+import           Data.Dynamic
 
 import           Data.Lossless.Decimal         as D
 

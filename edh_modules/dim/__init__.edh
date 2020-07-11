@@ -1,9 +1,8 @@
 
 export {
 
-  import * 'dim/dtypes'
-  import * 'dim/RT'
+  import * './symbols'
 
-  import * './consts'
+  import ( Column, arange, **_ ) 'dim/RT'
 
 }
