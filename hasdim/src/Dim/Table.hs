@@ -69,12 +69,12 @@ createColumn
   -> DataTypeIdent
   -> Int
   -> TVar Int
-  -> (Dynamic -> STM ())
+  -> (Column -> STM ())
   -> STM ()
 createColumn !pgs !dti !cap !clv !exit =
   resolveDataType pgs dti $ \(DataType _dti !dtStorable) ->
     flat'new'array dtStorable pgs cap
-      $ \ !cs -> exit . toDyn =<< Column dti clv <$> newTVar cs
+      $ \ !cs -> exit =<< Column dti clv <$> newTVar cs
 
 growColumn :: EdhProgState -> Column -> Int -> STM () -> STM ()
 growColumn !pgs (Column !dti !clv !csv) !newCap !exit =
@@ -112,7 +112,19 @@ fillColumn !pgs (Column !dti _ !csv) !val !idxs !exit =
 
 sliceColumn
   :: EdhProgState -> Column -> Int -> Int -> Int -> (Column -> STM ()) -> STM ()
-sliceColumn !pgs !col !start !stop !step !exit = exit col
+sliceColumn !pgs col@(Column !dti !clv !csv) !start !stop !step !exit = do
+  !cl <- readTVar clv
+  !cs <- readTVar csv
+  let !cap = flatArrayCapacity cs
+  if step == 1
+    then do
+      let !newLen = max 0 $ min cl stop - start
+          !cs'    = unsafeSliceFlatArray cs start (cap - start)
+      !clv' <- newTVar newLen
+      !csv' <- newTVar cs'
+      exit $ Column dti clv' csv'
+    else undefined
+
 
 
 vecCmpColumn
@@ -383,6 +395,13 @@ unsafeCastColumnData (Column _ _ !csv) = do
   return $ unsafeFlatArrayAsVector ary
 
 
+columnFromValue :: EdhValue -> (Maybe Column -> STM ()) -> STM ()
+columnFromValue !val !exit = case edhUltimate val of
+  EdhObject !obj -> fromDynamic <$> objStore obj >>= \case
+    Nothing   -> exit Nothing
+    Just !col -> exit $ Just col
+  _ -> exit Nothing
+
 -- | host constructor Column(capacity, length=None, dtype=f8)
 colCtor :: EdhHostCtor
 colCtor !pgsCtor !apk !ctorExit =
@@ -391,7 +410,7 @@ colCtor !pgsCtor !apk !ctorExit =
     Right (Nothing, _, _) -> throwEdhSTM pgsCtor UsageError "Missing capacity"
     Right (Just !cap, !len, !dti) -> do
       lv <- newTVar $ if len < 0 then cap else len
-      createColumn pgsCtor dti cap lv ctorExit
+      createColumn pgsCtor dti cap lv (ctorExit . toDyn)
  where
   ctorArgsParser =
     ArgsPackParser
@@ -755,21 +774,32 @@ colMethods !pgsModule =
 
   colIdxReadProc :: EdhProcedure
   colIdxReadProc (ArgsPack [!idxVal] !kwargs) !exit | Map.null kwargs =
-    withThatEntity $ \ !pgs !col -> case edhUltimate idxVal of
-      EdhDecimal !idxNum -> case D.decimalToInteger idxNum of
-        Just !idx ->
-          readColumnCell pgs col (fromInteger idx) $ exitEdhSTM pgs exit
-        _ ->
-          throwEdhSTM pgs UsageError
-            $  "Expect an integer to index a Column but you give: "
-            <> T.pack (show idxNum)
-      -- TODO support slice indexing and @indexDataType@ typed fancy indexing
-      !badIdxVal -> edhValueReprSTM pgs badIdxVal $ \idxRepr ->
-        throwEdhSTM pgs UsageError
-          $  "Invalid index to a Column, "
-          <> T.pack (edhTypeNameOf badIdxVal)
-          <> ": "
-          <> idxRepr
+    withThatEntity $ \ !pgs !col -> do
+      let colObj = thatObject $ contextScope $ edh'context pgs
+      columnFromValue idxVal $ \case
+        Just !idxCol -> case column'data'type idxCol of
+          "intp" -> -- fancy index 
+            undefined
+          "bool" -> -- bool index 
+            undefined
+          !badDti ->
+            throwEdhSTM pgs UsageError
+              $  "Invalid dtype="
+              <> badDti
+              <> " for a column as an index to another column"
+        Nothing -> parseEdhIndex pgs idxVal $ \case
+          Left !err -> throwEdhSTM pgs UsageError err
+          Right (EdhIndex !i) -> readColumnCell pgs col i $ exitEdhSTM pgs exit
+          Right EdhAny -> exitEdhSTM pgs exit $ EdhObject colObj
+          Right EdhAll -> exitEdhSTM pgs exit $ EdhObject colObj
+          Right (EdhSlice !start !stop !step) -> do
+            cl <- columnLength col
+            edhRegulateSlice pgs cl (start, stop, step)
+              $ \(!iStart, !iStop, !iStep) ->
+                  sliceColumn pgs col iStart iStop iStep $ \ !newCol ->
+                    cloneEdhObject colObj
+                                   (\_ !cloneTo -> cloneTo $ toDyn newCol)
+                      $ \ !newObj -> exitEdhSTM pgs exit $ EdhObject newObj
   colIdxReadProc !apk _ =
     throwEdh UsageError $ "Invalid indexing syntax for a Column: " <> T.pack
       (show apk)

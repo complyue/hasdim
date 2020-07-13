@@ -46,9 +46,10 @@ flatArrayCapacity (FlatArray !cap _) = cap
 flatArrayNumBytes :: forall a . Storable a => FlatArray a -> Int
 flatArrayNumBytes (FlatArray !cap _) = cap * sizeOf (undefined :: a)
 
-unsafeSliceFlatArray :: forall a . FlatArray a -> Int -> Int -> FlatArray a
+unsafeSliceFlatArray
+  :: forall a . (Storable a) => FlatArray a -> Int -> Int -> FlatArray a
 unsafeSliceFlatArray (FlatArray _ !fp) !offset !len =
-  FlatArray len $ plusForeignPtr fp offset
+  FlatArray len $ plusForeignPtr fp $ offset * sizeOf (undefined :: a)
 
 unsafeFlatArrayAsVector
   :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => FlatArray a -> Vector b
