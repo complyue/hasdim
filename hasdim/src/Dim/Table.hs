@@ -749,9 +749,9 @@ colMethods !pgsModule =
 
 
   colIdxReadProc :: EdhProcedure
-  colIdxReadProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
-    case args of
-      [EdhDecimal !idxNum] -> case D.decimalToInteger idxNum of
+  colIdxReadProc (ArgsPack [!idxVal] !kwargs) !exit | Map.null kwargs =
+    withThatEntity $ \ !pgs !col -> case edhUltimate idxVal of
+      EdhDecimal !idxNum -> case D.decimalToInteger idxNum of
         Just !idx ->
           readColumnCell pgs col (fromInteger idx) $ exitEdhSTM pgs exit
         _ ->
@@ -759,103 +759,114 @@ colMethods !pgsModule =
             $  "Expect an integer to index a Column but you give: "
             <> T.pack (show idxNum)
       -- TODO support slice indexing and @indexDataType@ typed fancy indexing
-      _ ->
-        throwEdhSTM pgs UsageError $ "Invalid index for a Column: " <> T.pack
-          (show args)
+      !badIdxVal -> edhValueReprSTM pgs badIdxVal $ \idxRepr ->
+        throwEdhSTM pgs UsageError
+          $  "Invalid index to a Column, "
+          <> T.pack (edhTypeNameOf badIdxVal)
+          <> ": "
+          <> idxRepr
+  colIdxReadProc !apk _ =
+    throwEdh UsageError $ "Invalid indexing syntax for a Column: " <> T.pack
+      (show apk)
 
   colIdxWriteProc :: EdhProcedure
-  colIdxWriteProc (ArgsPack !args _) !exit = withThatEntity $ \ !pgs !col ->
-    let
-      that = thatObject $ contextScope $ edh'context pgs
-      assignAll !other = case edhUltimate other of
-        otherVal@(EdhObject !otherObj) ->
-          fromDynamic <$> objStore otherObj >>= \case
-            Just colOther@Column{} ->
-              elemInpColumn pgs
-                            assignOp
-                            col
-                            colOther
-                            (exitEdhSTM pgs exit EdhContinue)
-                $ exitEdhSTM pgs exit
-                $ EdhObject that
-            Nothing ->
-              vecInpColumn pgs
-                           assignOp
-                           col
-                           otherVal
-                           (exitEdhSTM pgs exit EdhContinue)
-                $ exitEdhSTM pgs exit
-                $ EdhObject that
-        !otherVal ->
-          vecInpColumn pgs
-                       assignOp
-                       col
-                       otherVal
-                       (exitEdhSTM pgs exit EdhContinue)
-            $ exitEdhSTM pgs exit
-            $ EdhObject that
-    in
-      case args of
-        [EdhDecimal !idxNum, !val] -> case D.decimalToInteger idxNum of
+  colIdxWriteProc (ArgsPack [!idxVal, !other] !kwargs) !exit | Map.null kwargs =
+    withThatEntity $ \ !pgs !col -> do
+      let
+        that      = thatObject $ contextScope $ edh'context pgs
+        assignAll = case edhUltimate other of
+          otherVal@(EdhObject !otherObj) ->
+            fromDynamic <$> objStore otherObj >>= \case
+              Just colOther@Column{} ->
+                elemInpColumn pgs
+                              assignOp
+                              col
+                              colOther
+                              (exitEdhSTM pgs exit EdhContinue)
+                  $ exitEdhSTM pgs exit
+                  $ EdhObject that
+              Nothing ->
+                vecInpColumn pgs
+                             assignOp
+                             col
+                             otherVal
+                             (exitEdhSTM pgs exit EdhContinue)
+                  $ exitEdhSTM pgs exit
+                  $ EdhObject that
+          !otherVal ->
+            vecInpColumn pgs
+                         assignOp
+                         col
+                         otherVal
+                         (exitEdhSTM pgs exit EdhContinue)
+              $ exitEdhSTM pgs exit
+              $ EdhObject that
+      case edhUltimate idxVal of
+        EdhDecimal !idxNum -> case D.decimalToInteger idxNum of
           Just !idx ->
-            writeColumnCell pgs col (fromInteger idx) val $ exitEdhSTM pgs exit
+            writeColumnCell pgs col (fromInteger idx) (edhUltimate other)
+              $ exitEdhSTM pgs exit
           _ ->
             throwEdhSTM pgs UsageError
               $  "Expect an integer to index a Column but given: "
               <> T.pack (show idxNum)
-        [EdhNamedValue "All" _, !other] -> assignAll other
-        [EdhNamedValue "Any" _, !other] -> assignAll other
-        [EdhArgsPack (ArgsPack [] !kwargs), !other] | Map.null kwargs ->
-          assignAll other
-        [EdhObject !idxObj, !other] ->
-          fromDynamic <$> objStore idxObj >>= \case
-            Just icol@(Column !idti _ _) -> case idti of
-              "bool" -> case edhUltimate other of
-                -- bool index 
-                otherVal@(EdhObject !otherObj) ->
-                  fromDynamic <$> objStore otherObj >>= \case
-                    Just colOther@Column{} ->
-                      elemInpMaskedColumn pgs
-                                          icol
-                                          assignOp
-                                          col
-                                          colOther
-                                          (exitEdhSTM pgs exit EdhContinue)
-                        $ exitEdhSTM pgs exit
-                        $ EdhObject that
-                    Nothing ->
-                      vecInpMaskedColumn pgs
-                                         icol
-                                         assignOp
-                                         col
-                                         otherVal
-                                         (exitEdhSTM pgs exit EdhContinue)
-                        $ exitEdhSTM pgs exit
-                        $ EdhObject that
-                !otherVal ->
-                  vecInpMaskedColumn pgs
-                                     icol
-                                     assignOp
-                                     col
-                                     otherVal
-                                     (exitEdhSTM pgs exit EdhContinue)
-                    $ exitEdhSTM pgs exit
-                    $ EdhObject that
-              "intp" -> -- fancy index
-                undefined -- TODO impl. this
-              !badIdxDti ->
-                throwEdhSTM pgs UsageError
-                  $  "Invalid dtype as index for a Column: "
-                  <> badIdxDti
-            Nothing -> edhValueReprSTM pgs (EdhObject idxObj) $ \ !objRepr ->
+        EdhNamedValue "All" _ -> assignAll
+        EdhNamedValue "Any" _ -> assignAll
+        EdhArgsPack (ArgsPack [] !kwargs') | Map.null kwargs' -> assignAll
+        EdhObject !idxObj     -> fromDynamic <$> objStore idxObj >>= \case
+          Just icol@(Column !idti _ _) -> case idti of
+            "bool" -> case edhUltimate other of
+              -- bool index 
+              otherVal@(EdhObject !otherObj) ->
+                fromDynamic <$> objStore otherObj >>= \case
+                  Just colOther@Column{} ->
+                    elemInpMaskedColumn pgs
+                                        icol
+                                        assignOp
+                                        col
+                                        colOther
+                                        (exitEdhSTM pgs exit EdhContinue)
+                      $ exitEdhSTM pgs exit
+                      $ EdhObject that
+                  Nothing ->
+                    vecInpMaskedColumn pgs
+                                       icol
+                                       assignOp
+                                       col
+                                       otherVal
+                                       (exitEdhSTM pgs exit EdhContinue)
+                      $ exitEdhSTM pgs exit
+                      $ EdhObject that
+              !otherVal ->
+                vecInpMaskedColumn pgs
+                                   icol
+                                   assignOp
+                                   col
+                                   otherVal
+                                   (exitEdhSTM pgs exit EdhContinue)
+                  $ exitEdhSTM pgs exit
+                  $ EdhObject that
+            "intp" -> -- fancy index
+              undefined -- TODO impl. this
+            !badIdxDti ->
               throwEdhSTM pgs UsageError
-                $  "Invalid object as index for a Column: "
-                <> objRepr
+                $  "Invalid dtype as index for a Column: "
+                <> badIdxDti
+          Nothing -> edhValueReprSTM pgs (EdhObject idxObj) $ \ !objRepr ->
+            throwEdhSTM pgs UsageError
+              $  "Invalid object as index for a Column: "
+              <> objRepr
         -- TODO support slice indexing and @indexDataType@ typed fancy indexing
-        _ ->
+        !badIdxVal -> edhValueReprSTM pgs badIdxVal $ \idxRepr ->
           throwEdhSTM pgs UsageError
-            $  "Invalid args to assign a Column by index: "
-            <> T.pack (show args)
+            $  "Invalid index to a Column, "
+            <> T.pack (edhTypeNameOf badIdxVal)
+            <> ": "
+            <> idxRepr
+  colIdxWriteProc !apk _ =
+    throwEdh UsageError
+      $  "Invalid assigning indexing syntax for a Column: "
+      <> T.pack (show apk)
 
 
   colCmpProc :: (Ordering -> Bool) -> EdhProcedure
