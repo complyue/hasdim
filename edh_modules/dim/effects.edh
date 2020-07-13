@@ -4,16 +4,12 @@
 #  effect import * 'dim/effects'
 #
 
-import * './symbols'
+import * 'dim/symbols'
 
-export {
-
-  import (
-    resolveDataType as this.@resolveDataType,
-    resolveDataComparator as this.@resolveDataComparator,
-    resolveDataOperator as this.@resolveDataOperator,
-    resolveNumDataType as this.@resolveNumDataType,
-    **_
-  ) 'dim/RT'
-
-}
+export import (
+  @resolveDataType,
+  @resolveDataComparator,
+  @resolveDataOperator,
+  @resolveNumDataType,
+  **_
+) 'dim/RT'

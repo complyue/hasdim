@@ -668,18 +668,20 @@ colMethods !pgsModule =
     $ \ !pgs (Column !dti _ _) -> exitEdhSTM pgs exit $ EdhString dti
 
   colReprProc :: EdhProcedure
-  colReprProc _ !exit = withThatEntity $ \ !pgs (Column !dti !clv !csv) -> do
-    !cl <- readTVar clv
-    !cs <- readTVar csv
-    exitEdhSTM pgs exit
-      $  EdhString
-      $  "Column("
-      <> T.pack (show $ flatArrayCapacity cs)
-      <> ", length="
-      <> T.pack (show cl)
-      <> ", dtype="
-      <> dti -- assuming the identifier is available as attr
-      <> ")"
+  colReprProc _ !exit =
+    withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-Column>")
+      $ \ !pgs (Column !dti !clv !csv) -> do
+          !cl <- readTVar clv
+          !cs <- readTVar csv
+          exitEdhSTM pgs exit
+            $  EdhString
+            $  "Column("
+            <> T.pack (show $ flatArrayCapacity cs)
+            <> ", length="
+            <> T.pack (show cl)
+            <> ", dtype="
+            <> dti -- assuming the identifier is available as attr
+            <> ")"
 
   colShowProc :: EdhProcedure
   colShowProc _ !exit = withThatEntity $ \ !pgs (Column !dti !clv !csv) ->

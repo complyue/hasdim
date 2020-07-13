@@ -24,7 +24,35 @@ import           Dim.Table
 
 
 installDimBatteries :: EdhWorld -> IO ()
-installDimBatteries !world =
+installDimBatteries !world = do
+
+
+  void $ installEdhModule world "dim/symbols" $ \pgs exit -> do
+
+    let !moduScope = contextScope $ edh'context pgs
+        !modu      = thisObject moduScope
+
+    let
+      !moduArts =
+        [ (symbolName resolveDataTypeEffId, EdhSymbol resolveDataTypeEffId)
+        , ( symbolName resolveDataComparatorEffId
+          , EdhSymbol resolveDataComparatorEffId
+          )
+        , ( symbolName resolveDataOperatorEffId
+          , EdhSymbol resolveDataOperatorEffId
+          )
+        , ( symbolName resolveNumDataTypeEffId
+          , EdhSymbol resolveNumDataTypeEffId
+          )
+        ]
+    !artsDict <- createEdhDict
+      $ Map.fromList [ (EdhString k, v) | (k, v) <- moduArts ]
+    updateEntityAttrs pgs (objEntity modu)
+      $  [ (AttrByName k, v) | (k, v) <- moduArts ]
+      ++ [(AttrByName "__exports__", artsDict)]
+
+    exit
+
 
   void $ installEdhModule world "dim/RT" $ \pgs exit -> do
 
@@ -40,9 +68,9 @@ installDimBatteries !world =
       !ent <- createSideEntity em $ toDyn nil
       viewAsEdhObject ent cls []
 
-    !dmpkTmplObj <- do
-      !em     <- createSideEntityManipulater True =<< dmpkMethods pgs
-      !clsVal <- mkHostClass moduScope "dmpk" dmpkCtor em
+    !dmrpTmplObj <- do
+      !em     <- createSideEntityManipulater True =<< dmrpMethods pgs
+      !clsVal <- mkHostClass moduScope "dmrp" dmrpCtor em
       !cls    <- case clsVal of
         EdhClass !cls -> return cls
         _             -> error "bug: mkHostClass returned non-class"
@@ -67,49 +95,54 @@ installDimBatteries !world =
       !ent <- createSideEntity emColumn $ toDyn nil
       viewAsEdhObject ent clsColumn []
 
-    !moduArts0 <- sequence
-      [ (nm, ) <$> mkHostProc moduScope mc nm hp args
-      | (mc, nm, hp, args) <-
-        [ ( EdhMethod
-          , "resolveDataType"
-          , resolveDataTypeProc dtTmplObj
-          , PackReceiver [mandatoryArg "dti"]
-          )
-        , ( EdhMethod
-          , "resolveDataComparator"
-          , resolveDataComparatorProc dmpkTmplObj
-          , PackReceiver [mandatoryArg "dti"]
-          )
-        , ( EdhMethod
-          , "resolveDataOperator"
-          , resolveDataOperatorProc dmpkTmplObj
-          , PackReceiver [mandatoryArg "dti"]
-          )
-        , ( EdhMethod
-          , "resolveNumDataType"
-          , resolveNumDataTypeProc numdtTmplObj
-          , PackReceiver [mandatoryArg "dti"]
-          )
-        , ( EdhMethod
-          , "arange"
-          , arangeProc colTmplObj
-          , PackReceiver [mandatoryArg "rangeSpec"]
-          )
-        ]
-      ]
+    !moduArts0 <-
+      sequence
+      $  [ (AttrBySym sym, ) <$> mkSymbolicHostProc moduScope mc sym hp args
+         | (mc, sym, hp, args) <-
+           [ ( EdhMethod
+             , resolveDataTypeEffId
+             , resolveDataTypeProc dtTmplObj
+             , PackReceiver [mandatoryArg "dti"]
+             )
+           , ( EdhMethod
+             , resolveDataComparatorEffId
+             , resolveDataComparatorProc dmrpTmplObj
+             , PackReceiver [mandatoryArg "dti"]
+             )
+           , ( EdhMethod
+             , resolveDataOperatorEffId
+             , resolveDataOperatorProc dmrpTmplObj
+             , PackReceiver [mandatoryArg "dti"]
+             )
+           , ( EdhMethod
+             , resolveNumDataTypeEffId
+             , resolveNumDataTypeProc numdtTmplObj
+             , PackReceiver [mandatoryArg "dti"]
+             )
+           ]
+         ]
+      ++ [ (AttrByName nm, ) <$> mkHostProc moduScope mc nm hp args
+         | (mc, nm, hp, args) <-
+           [ ( EdhMethod
+             , "arange"
+             , arangeProc colTmplObj
+             , PackReceiver [mandatoryArg "rangeSpec"]
+             )
+           ]
+         ]
 
     let !moduArts =
           moduArts0
-            ++ [ ("dtt"   , EdhObject dtTmplObj)
-               , ("dmpkt" , EdhObject dmpkTmplObj)
-               , ("numdtt", EdhObject numdtTmplObj)
-               , ("colt"  , EdhObject colTmplObj)
-               , ("Column", clsColumnVal)
+            ++ [ (AttrByName "dtt"   , EdhObject dtTmplObj)
+               , (AttrByName "dmrpt" , EdhObject dmrpTmplObj)
+               , (AttrByName "numdtt", EdhObject numdtTmplObj)
+               , (AttrByName "colt"  , EdhObject colTmplObj)
+               , (AttrByName "Column", clsColumnVal)
                ]
     !artsDict <- createEdhDict
-      $ Map.fromList [ (EdhString k, v) | (k, v) <- moduArts ]
+      $ Map.fromList [ (attrKeyValue k, v) | (k, v) <- moduArts ]
     updateEntityAttrs pgs (objEntity modu)
-      $  [ (AttrByName k, v) | (k, v) <- moduArts ]
+      $  [ (k, v) | (k, v) <- moduArts ]
       ++ [(AttrByName "__exports__", artsDict)]
 
     exit

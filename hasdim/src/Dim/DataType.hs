@@ -139,7 +139,7 @@ resolveDataType'
   :: EdhProgState -> DataTypeIdent -> STM () -> (DataType -> STM ()) -> STM ()
 resolveDataType' !pgs !dti !naExit !exit =
   runEdhProc pgs
-    $ performEdhEffect (SymbolicAttr "resolveDataType") [EdhString dti] []
+    $ performEdhEffect (AttrBySym resolveDataTypeEffId) [EdhString dti] []
     $ \case
         EdhNil         -> contEdhSTM naExit
         EdhObject !dto -> contEdhSTM $ fromDynamic <$> objStore dto >>= \case
@@ -149,6 +149,8 @@ resolveDataType' !pgs !dti !naExit !exit =
           throwEdh UsageError
             $  "Bad return type from @resolveDataType(dti): "
             <> T.pack (edhTypeNameOf badDtVal)
+resolveDataTypeEffId :: Symbol
+resolveDataTypeEffId = globalSymbol "@resolveDataType"
 
 
 -- | The ultimate fallback to have trivial data types resolved
@@ -239,37 +241,36 @@ flatStorable = FlatStorable (sizeOf (undefined :: a))
 
 -- | A pack of data manipulation routines, per operational category, per data
 -- type identifier
-data DataManiPack where
-  DataManiPack ::{
+data DataManiRoutinePack where
+  DataManiRoutinePack ::{
       data'mpk'identifier :: DataTypeIdent
     , data'mpk'category :: Text
     , data'mpk'routines :: Dynamic
-    } -> DataManiPack
+    } -> DataManiRoutinePack
 
--- | host Class dmpk()
-dmpkCtor :: EdhHostCtor
+-- | host Class dmrp()
+dmrpCtor :: EdhHostCtor
 -- not really constructable from Edh code, relies on host code to fill
 -- the in-band storage
-dmpkCtor _ _ !ctorExit = ctorExit $ toDyn nil
+dmrpCtor _ _ !ctorExit = ctorExit $ toDyn nil
 
-dmpkMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
-dmpkMethods !pgsModule =
-  sequence
-    $ [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
-      | (nm, vc, hp, args) <-
-        [("__repr__", EdhMethod, dmpkReprProc, PackReceiver [])]
-      ]
+dmrpMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
+dmrpMethods !pgsModule = sequence
+  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp args
+  | (nm, vc, hp, args) <-
+    [("__repr__", EdhMethod, dmrpReprProc, PackReceiver [])]
+  ]
 
  where
   !scope = contextScope $ edh'context pgsModule
 
-  dmpkReprProc :: EdhProcedure
-  dmpkReprProc _ !exit =
-    withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-dmpk>")
-      $ \ !pgs (DataManiPack !ident !cate _) ->
+  dmrpReprProc :: EdhProcedure
+  dmrpReprProc _ !exit =
+    withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-dmrp>")
+      $ \ !pgs (DataManiRoutinePack !ident !cate _) ->
           exitEdhSTM pgs exit
             $  EdhString
-            $  "<dmpk/"
+            $  "<dmrp/"
             <> ident
             <> "#"
             <> cate
@@ -336,13 +337,13 @@ resolveDataComparator'
   -> STM ()
 resolveDataComparator' !pgs !dti _ !naExit !exit =
   runEdhProc pgs
-    $ performEdhEffect (SymbolicAttr "resolveDataComparator") [EdhString dti] []
+    $ performEdhEffect (AttrBySym resolveDataComparatorEffId) [EdhString dti] []
     $ \case
         EdhNil -> contEdhSTM naExit
-        EdhObject !dmpko ->
-          contEdhSTM $ fromDynamic <$> objStore dmpko >>= \case
+        EdhObject !dmrpo ->
+          contEdhSTM $ fromDynamic <$> objStore dmrpo >>= \case
             Nothing -> naExit
-            Just (DataManiPack _dmpk'dti _dmpk'cate !drp) ->
+            Just (DataManiRoutinePack _dmrp'dti _dmrp'cate !drp) ->
               case fromDynamic drp of
                 Nothing  -> naExit
                 Just !rp -> exit rp
@@ -350,16 +351,20 @@ resolveDataComparator' !pgs !dti _ !naExit !exit =
           throwEdh UsageError
             $  "Bad return type from @resolveDataComparator(dti): "
             <> T.pack (edhTypeNameOf badDtVal)
+resolveDataComparatorEffId :: Symbol
+resolveDataComparatorEffId = globalSymbol "@resolveDataComparator"
 
 
 -- | The ultimate fallback to have trivial data types resolved
 resolveDataComparatorProc :: Object -> EdhProcedure
-resolveDataComparatorProc !dmpkTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
+resolveDataComparatorProc !dmrpTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
   | Map.null kwargs = ask >>= \ !pgs -> contEdhSTM $ do
     let exitWith !drp =
           cloneEdhObject
-              dmpkTmplObj
-              (\_ !cloneExit -> cloneExit $ toDyn $ DataManiPack dti "cmp" drp)
+              dmrpTmplObj
+              (\_ !cloneExit ->
+                cloneExit $ toDyn $ DataManiRoutinePack dti "cmp" drp
+              )
             $ \ !dto -> exitEdhSTM pgs exit $ EdhObject dto
     case dti of
       "float64" -> exitWith $ toDyn (flatOrd :: FlatOrd Double)
@@ -512,13 +517,13 @@ resolveDataOperator'
   -> STM ()
 resolveDataOperator' !pgs !dti _ !naExit !exit =
   runEdhProc pgs
-    $ performEdhEffect (SymbolicAttr "resolveDataOperator") [EdhString dti] []
+    $ performEdhEffect (AttrBySym resolveDataOperatorEffId) [EdhString dti] []
     $ \case
         EdhNil -> contEdhSTM naExit
-        EdhObject !dmpko ->
-          contEdhSTM $ fromDynamic <$> objStore dmpko >>= \case
+        EdhObject !dmrpo ->
+          contEdhSTM $ fromDynamic <$> objStore dmrpo >>= \case
             Nothing -> naExit
-            Just (DataManiPack _dmpk'dti _dmpk'cate !drp) ->
+            Just (DataManiRoutinePack _dmrp'dti _dmrp'cate !drp) ->
               case fromDynamic drp of
                 Nothing ->
                   throwEdhSTM pgs UsageError
@@ -530,16 +535,20 @@ resolveDataOperator' !pgs !dti _ !naExit !exit =
           throwEdh UsageError
             $  "Bad return type from @resolveDataOperator(dti): "
             <> T.pack (edhTypeNameOf badDtVal)
+resolveDataOperatorEffId :: Symbol
+resolveDataOperatorEffId = globalSymbol "@resolveDataOperator"
 
 
 -- | The ultimate fallback to have trivial data types resolved
 resolveDataOperatorProc :: Object -> EdhProcedure
-resolveDataOperatorProc !dmpkTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
+resolveDataOperatorProc !dmrpTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
   | Map.null kwargs = ask >>= \ !pgs -> contEdhSTM $ do
     let exitWith !drp =
           cloneEdhObject
-              dmpkTmplObj
-              (\_ !cloneExit -> cloneExit $ toDyn $ DataManiPack dti "op" drp)
+              dmrpTmplObj
+              (\_ !cloneExit ->
+                cloneExit $ toDyn $ DataManiRoutinePack dti "op" drp
+              )
             $ \ !dto -> exitEdhSTM pgs exit $ EdhObject dto
     case dti of
       "float64" -> exitWith $ toDyn (flatOp :: FlatOp Double)
@@ -613,7 +622,7 @@ resolveNumDataType'
   -> STM ()
 resolveNumDataType' !pgs !dti !naExit !exit =
   runEdhProc pgs
-    $ performEdhEffect (SymbolicAttr "resolveNumDataType") [EdhString dti] []
+    $ performEdhEffect (AttrBySym resolveNumDataTypeEffId) [EdhString dti] []
     $ \case
         EdhNil          -> contEdhSTM naExit
         EdhObject !ndto -> contEdhSTM $ fromDynamic <$> objStore ndto >>= \case
@@ -623,6 +632,8 @@ resolveNumDataType' !pgs !dti !naExit !exit =
           throwEdh UsageError
             $  "Bad return type from @resolveNumDataType(dti): "
             <> T.pack (edhTypeNameOf badDtVal)
+resolveNumDataTypeEffId :: Symbol
+resolveNumDataTypeEffId = globalSymbol "@resolveNumDataType"
 
 
 -- | The ultimate fallback to have trivial data types resolved
