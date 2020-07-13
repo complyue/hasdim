@@ -21,12 +21,3 @@ export { # canonical name and aliases to dtype identifiers
   i4 := 'int32'
 
 }
-
-export { # placeholders to be placed in slicers
-
-  # define these terms truthfully valued,
-  # in order for `null(Any)` and `null(All)` to be `false`
-  Any := true
-  All := true
-
-}

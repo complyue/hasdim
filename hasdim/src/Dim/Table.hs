@@ -110,6 +110,11 @@ fillColumn !pgs (Column !dti _ !csv) !val !idxs !exit =
       (coerce cs)
       exit
 
+sliceColumn
+  :: EdhProgState -> Column -> Int -> Int -> Int -> (Column -> STM ()) -> STM ()
+sliceColumn !pgs !col !start !stop !step !exit = exit col
+
+
 vecCmpColumn
   :: EdhProgState
   -> (Ordering -> Bool)

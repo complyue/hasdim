@@ -688,6 +688,9 @@ flatRanger
   :: forall a . (Num a, EdhXchg a, Storable a, Typeable a) => FlatRanger a
 flatRanger = FlatRanger rangeCreator
  where
+  rangeCreator _ !start !stop _ !exit | stop == start = do
+    !np <- unsafeIOToSTM $ newForeignPtr_ nullPtr
+    exit $ FlatArray 0 np
   rangeCreator !pgs !start !stop !step !exit =
     if (stop > start && step <= 0) || (stop < start && step >= 0)
       then throwEdhSTM pgs UsageError "Range is not converging"

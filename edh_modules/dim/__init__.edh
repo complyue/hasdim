@@ -3,6 +3,6 @@ export {
 
   import ( Column, arange, **_ ) 'dim/RT'
 
-  import * './misc'
+  import * './dtypes'
 
 }
