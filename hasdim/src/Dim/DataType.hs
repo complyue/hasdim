@@ -833,13 +833,15 @@ data NumDataType where
 
 data FlatRanger a where
   FlatRanger ::(Num a, EdhXchg a, Storable a, Typeable a) => {
-    flat'new'range'array :: EdhProgState
-      -> Int -> Int -> Int -> (FlatArray a -> STM ()) -> STM ()
+      flat'new'range'array :: EdhProgState
+        -> Int -> Int -> Int -> (FlatArray a -> STM ()) -> STM ()
+    , flat'new'nonzero'array :: EdhProgState
+        -> FlatArray VecBool -> ((FlatArray a, Int) -> STM ()) -> STM ()
     }-> FlatRanger a
  deriving Typeable
 flatRanger
   :: forall a . (Num a, EdhXchg a, Storable a, Typeable a) => FlatRanger a
-flatRanger = FlatRanger rangeCreator
+flatRanger = FlatRanger rangeCreator nonzeroCreator
  where
   rangeCreator _ !start !stop _ !exit | stop == start = exit (emptyFlatArray @a)
   rangeCreator !pgs !start !stop !step !exit =
@@ -858,4 +860,16 @@ flatRanger = FlatRanger rangeCreator
                 fillRng (n + step) (i + 1)
         fillRng start 0
         return $ FlatArray len fp
-
+  nonzeroCreator _ (FlatArray !mcap !mfp) !exit =
+    (exit =<<) $ unsafeIOToSTM $ withForeignPtr mfp $ \ !mp -> do
+      !rp  <- callocArray @a mcap
+      !rfp <- newForeignPtr finalizerFree rp
+      let go i ri | i >= mcap = return (FlatArray mcap rfp, ri)
+          go i ri             = do
+            mv <- peekElemOff mp i
+            if mv /= 0
+              then do
+                pokeElemOff rp ri $ fromIntegral i
+                go (i + 1) (ri + 1)
+              else go (i + 1) ri
+      go 0 0

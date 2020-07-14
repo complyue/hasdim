@@ -128,6 +128,15 @@ installDimBatteries !world = do
              , arangeProc colTmplObj
              , PackReceiver [mandatoryArg "rangeSpec"]
              )
+           , ( EdhMethod
+             , "where"
+             , whereProc
+             , PackReceiver
+               [ mandatoryArg "predict"
+               , optionalArg "trueData"  (LitExpr NilLiteral)
+               , optionalArg "falseData" (LitExpr NilLiteral)
+               ]
+             )
            ]
          ]
 

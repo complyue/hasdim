@@ -576,6 +576,18 @@ elemInpFancyColumn !pgs (Column _ !iclv !icsv) !getOp (Column !dti1 !clv1 !csv1)
                                                          exit
 
 
+nonzeroIdxColumn :: EdhProgState -> Column -> (Column -> STM ()) -> STM ()
+nonzeroIdxColumn !pgs (Column _mdti !mclv !mcsv) !exit =
+  resolveNumDataType pgs "intp" $ \(NumDataType _dti !dtRanger) -> do
+    !mcl <- readTVar mclv
+    !mcs <- readTVar mcsv
+    let !ma = unsafeSliceFlatArray mcs 0 mcl
+    flat'new'nonzero'array dtRanger pgs (unsafeCoerce ma) $ \(!rfa, !rlen) -> do
+      !clvRtn <- newTVar rlen
+      !csvRtn <- newTVar rfa
+      exit $ Column "intp" clvRtn csvRtn
+
+
 -- obtain valid column data as an immutable Storable Vector
 -- this is unsafe in both memory/type regards and thread regard
 unsafeCastColumnData
@@ -1427,4 +1439,28 @@ arangeProc !colTmplObj !apk !exit =
 -- TODO impl. `linspace` following:
 --      https://numpy.org/doc/stable/reference/generated/numpy.linspace.html
 -- Note it can be more exact by stepping with LosslessDecimal
+
+
+-- | resemble https://numpy.org/doc/stable/reference/generated/numpy.where.html
+whereProc :: EdhProcedure
+whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit | Map.null kwargs =
+  ask >>= \ !pgs -> contEdhSTM $ fromDynamic <$> objStore colBoolIdx >>= \case
+    Nothing -> throwEdhSTM
+      pgs
+      UsageError
+      "Invalid index object, need to be a column with dtype=bool"
+    Just mcol@(Column !dti _ _) -> if dti /= "bool"
+      then
+        throwEdhSTM pgs UsageError
+        $  "Invalid dtype="
+        <> dti
+        <> " for where(), need to be bool"
+      else nonzeroIdxColumn pgs mcol $ \ !colResult ->
+        cloneEdhObject colBoolIdx (\_ !cloneTo -> cloneTo $ toDyn colResult)
+          $ \ !newObj -> exitEdhSTM pgs exit $ EdhObject newObj
+whereProc (ArgsPack [EdhObject !_colBoolIdx, !_trueData, !_falseData] !kwargs) !_exit
+  | Map.null kwargs
+  = throwEdh UsageError "Not implemented yet."
+whereProc !apk _ =
+  throwEdh UsageError $ "Invalid args to where()" <> T.pack (show apk)
 
