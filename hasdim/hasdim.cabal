@@ -105,7 +105,7 @@ library hasdim-internal
     default-language: Haskell2010
     default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase
                         BangPatterns TupleSections ScopedTypeVariables
-                        GADTs 
+                        GADTs FlexibleContexts RankNTypes TypeApplications
     ghc-options: -Wall
     build-depends:
         base >=4.12,

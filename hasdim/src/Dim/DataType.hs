@@ -1,7 +1,3 @@
-{-# LANGUAGE 
-   FlexibleContexts 
-  , RankNTypes
-#-}
 
 -- | Numpy dtype inspired abstraction for vectorizable types of data
 --
@@ -11,6 +7,7 @@ module Dim.DataType where
 import           Prelude
 -- import           Debug.Trace
 
+import           System.IO.Unsafe               ( unsafePerformIO )
 import           GHC.Conc                       ( unsafeIOToSTM )
 
 import           Foreign
@@ -39,6 +36,18 @@ data FlatArray a = FlatArray
     {-# UNPACK #-} !Int            -- ^ capacity
     {-# UNPACK #-} !(ForeignPtr a) -- ^ mem ref
   deriving ( Typeable )
+
+emptyFlatArray :: FlatArray a
+emptyFlatArray = unsafePerformIO $ do
+  !np <- newForeignPtr_ nullPtr
+  return $ FlatArray 0 np
+{-# NOINLINE emptyFlatArray #-}
+
+newFlatArray :: forall a . Storable a => Int -> IO (FlatArray a)
+newFlatArray !cap = do
+  !p  <- callocArray cap
+  !fp <- newForeignPtr finalizerFree p
+  return $ FlatArray cap fp
 
 flatArrayCapacity :: FlatArray a -> Int
 flatArrayCapacity (FlatArray !cap _) = cap
@@ -213,10 +222,7 @@ flatStorable = FlatStorable (sizeOf (undefined :: a))
                             writeArrayCell
                             updateArray
  where
-  createArray !_ !cap !exit = (exit =<<) $ unsafeIOToSTM $ do
-    !p  <- callocArray cap
-    !fp <- newForeignPtr finalizerFree p
-    return $ FlatArray cap fp
+  createArray !_ !cap !exit = unsafeIOToSTM (newFlatArray cap) >>= exit
   growArray _ (FlatArray !cap !fp) !newCap !exit = if newCap <= cap
     then exit $ FlatArray newCap fp
     else (exit =<<) $ unsafeIOToSTM $ do
@@ -689,23 +695,21 @@ flatRanger
   :: forall a . (Num a, EdhXchg a, Storable a, Typeable a) => FlatRanger a
 flatRanger = FlatRanger rangeCreator
  where
-  rangeCreator _ !start !stop _ !exit | stop == start = do
-    !np <- unsafeIOToSTM $ newForeignPtr_ nullPtr
-    exit $ FlatArray 0 np
+  rangeCreator _ !start !stop _ !exit | stop == start = exit (emptyFlatArray @a)
   rangeCreator !pgs !start !stop !step !exit =
     if (stop > start && step <= 0) || (stop < start && step >= 0)
       then throwEdhSTM pgs UsageError "Range is not converging"
       else (exit =<<) $ unsafeIOToSTM $ do
         let (q, r) = quotRem (stop - start) step
             !len   = if r == 0 then abs q else 1 + abs q
-            fillRng :: Ptr a -> Int -> Int -> IO ()
-            fillRng !p !n !i = if i >= len
+        !p  <- callocArray @a len
+        !fp <- newForeignPtr finalizerFree p
+        let fillRng :: Int -> Int -> IO ()
+            fillRng !n !i = if i >= len
               then return ()
               else do
                 pokeElemOff p i $ fromIntegral n
-                fillRng p (n + step) (i + 1)
-        !p  <- callocArray len
-        !fp <- newForeignPtr finalizerFree p
-        fillRng p start 0
+                fillRng (n + step) (i + 1)
+        fillRng start 0
         return $ FlatArray len fp
 

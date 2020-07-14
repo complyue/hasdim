@@ -5,7 +5,7 @@ import           Prelude
 -- import           Debug.Trace
 
 import           Unsafe.Coerce
--- import           GHC.Conc                       ( unsafeIOToSTM )
+import           GHC.Conc                       ( unsafeIOToSTM )
 
 import           Foreign                 hiding ( void )
 
@@ -58,11 +58,11 @@ data Column where
 columnLength :: Column -> STM Int
 columnLength (Column _ !clv _) = readTVar clv
 
-markColumnLength :: Column -> Int -> STM ()
-markColumnLength (Column _ !clv _) !newLen = writeTVar clv newLen
-
 columnCapacity :: Column -> STM Int
 columnCapacity (Column _ _ !csv) = flatArrayCapacity <$> readTVar csv
+
+unsafeMarkColumnLength :: Column -> Int -> STM ()
+unsafeMarkColumnLength (Column _ !clv _) !newLen = writeTVar clv newLen
 
 createColumn
   :: EdhProgState
@@ -88,20 +88,21 @@ growColumn !pgs (Column !dti !clv !csv) !newCap !exit =
         -- done
         exit
 
-readColumnCell
+unsafeReadColumnCell
   :: EdhProgState -> Column -> Int -> (EdhValue -> STM ()) -> STM ()
-readColumnCell !pgs (Column !dti _ !csv) !idx !exit =
+unsafeReadColumnCell !pgs (Column !dti _ !csv) !idx !exit =
   resolveDataType pgs dti $ \(DataType _dti !dtStorable) -> readTVar csv
     >>= \ !cs -> flat'array'read dtStorable pgs (coerce cs) idx exit
 
-writeColumnCell
+unsafeWriteColumnCell
   :: EdhProgState -> Column -> Int -> EdhValue -> (EdhValue -> STM ()) -> STM ()
-writeColumnCell !pgs (Column !dti _ !csv) !idx !val !exit =
+unsafeWriteColumnCell !pgs (Column !dti _ !csv) !idx !val !exit =
   resolveDataType pgs dti $ \(DataType _dti !dtStorable) -> readTVar csv
     >>= \ !cs -> flat'array'write dtStorable pgs (coerce cs) idx val exit
 
-fillColumn :: EdhProgState -> Column -> EdhValue -> [Int] -> STM () -> STM ()
-fillColumn !pgs (Column !dti _ !csv) !val !idxs !exit =
+unsafeFillColumn
+  :: EdhProgState -> Column -> EdhValue -> [Int] -> STM () -> STM ()
+unsafeFillColumn !pgs (Column !dti _ !csv) !val !idxs !exit =
   resolveDataType pgs dti $ \(DataType _dti !dtStorable) ->
     fromEdh pgs val $ \ !sv -> readTVar csv >>= \ !cs -> flat'array'update
       dtStorable
@@ -110,21 +111,41 @@ fillColumn !pgs (Column !dti _ !csv) !val !idxs !exit =
       (coerce cs)
       exit
 
-sliceColumn
-  :: EdhProgState -> Column -> Int -> Int -> Int -> (Column -> STM ()) -> STM ()
-sliceColumn !pgs col@(Column !dti !clv !csv) !start !stop !step !exit = do
-  !cl <- readTVar clv
-  !cs <- readTVar csv
-  let !cap = flatArrayCapacity cs
-  if step == 1
-    then do
-      let !newLen = max 0 $ min cl stop - start
-          !cs'    = unsafeSliceFlatArray cs start (cap - start)
-      !clv' <- newTVar newLen
-      !csv' <- newTVar cs'
-      exit $ Column dti clv' csv'
-    else undefined
-
+unsafeSliceColumn :: Column -> Int -> Int -> Int -> (Column -> STM ()) -> STM ()
+unsafeSliceColumn (Column !dti !clv (csv :: TVar (FlatArray a))) !start !stop !step !exit
+  = do
+    !cl                     <- readTVar clv
+    cs@(FlatArray !cap !fp) <- readTVar csv
+    if start >= cap || stop == start
+      then do
+        !clv' <- newTVar 0
+        !csv' <- newTVar (emptyFlatArray @a)
+        exit $ Column dti clv' csv'
+      else if step == 1
+        then do
+          let !len = max 0 $ min cl stop - start
+              !cs' = unsafeSliceFlatArray cs start (cap - start)
+          !clv' <- newTVar len
+          !csv' <- newTVar cs'
+          exit $ Column dti clv' csv'
+        else do
+          let (q, r) = quotRem (stop - start) step
+              !len   = if r == 0 then abs q else 1 + abs q
+          !fp' <- unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
+            !p'  <- callocArray @a len
+            !fp' <- newForeignPtr finalizerFree p'
+            let fillRng :: Int -> Int -> IO ()
+                fillRng !n !i = if i >= len
+                  then return ()
+                  else do
+                    peekElemOff p n >>= pokeElemOff p' i
+                    fillRng (n + step) (i + 1)
+            fillRng start 0
+            return fp'
+          let !cs' = FlatArray len fp'
+          !csv' <- newTVar cs'
+          !clv' <- newTVar len
+          exit $ Column dti clv' csv'
 
 
 vecCmpColumn
@@ -682,7 +703,8 @@ colMethods !pgsModule =
       !cap <- columnCapacity col
       case D.decimalToInteger newLenNum of
         Just !newLen | newLen >= 0 && newLen <= fromIntegral cap ->
-          markColumnLength col (fromInteger newLen) >> exitEdhSTM pgs exit nil
+          unsafeMarkColumnLength col (fromInteger newLen)
+            >> exitEdhSTM pgs exit nil
         _ -> throwEdhSTM pgs UsageError "Column length out of range"
   colMarkLenProc _ _ =
     throwEdh UsageError "Invalid args to Column.markLength()"
@@ -789,14 +811,15 @@ colMethods !pgsModule =
               <> " for a column as an index to another column"
         Nothing -> parseEdhIndex pgs idxVal $ \case
           Left !err -> throwEdhSTM pgs UsageError err
-          Right (EdhIndex !i) -> readColumnCell pgs col i $ exitEdhSTM pgs exit
+          Right (EdhIndex !i) ->
+            unsafeReadColumnCell pgs col i $ exitEdhSTM pgs exit
           Right EdhAny -> exitEdhSTM pgs exit $ EdhObject colObj
           Right EdhAll -> exitEdhSTM pgs exit $ EdhObject colObj
           Right (EdhSlice !start !stop !step) -> do
             cl <- columnLength col
             edhRegulateSlice pgs cl (start, stop, step)
               $ \(!iStart, !iStop, !iStep) ->
-                  sliceColumn pgs col iStart iStop iStep $ \ !newCol ->
+                  unsafeSliceColumn col iStart iStop iStep $ \ !newCol ->
                     cloneEdhObject colObj
                                    (\_ !cloneTo -> cloneTo $ toDyn newCol)
                       $ \ !newObj -> exitEdhSTM pgs exit $ EdhObject newObj
@@ -839,7 +862,7 @@ colMethods !pgsModule =
       case edhUltimate idxVal of
         EdhDecimal !idxNum -> case D.decimalToInteger idxNum of
           Just !idx ->
-            writeColumnCell pgs col (fromInteger idx) (edhUltimate other)
+            unsafeWriteColumnCell pgs col (fromInteger idx) (edhUltimate other)
               $ exitEdhSTM pgs exit
           _ ->
             throwEdhSTM pgs UsageError
@@ -1121,7 +1144,7 @@ arangeProc !colTmplObj !apk !exit =
   case parseArgsPack (Nothing, "intp") argsParser apk of
     Left !err -> throwEdh UsageError err
     Right (Nothing, _) -> throwEdh UsageError "Missing range specification"
-    Right (Just !rngSpec, !dtv) -> case rngSpec of
+    Right (Just !rngSpec, !dtv) -> case edhUltimate rngSpec of
       EdhPair (EdhPair (EdhDecimal !startN) (EdhDecimal !stopN)) (EdhDecimal stepN)
         -> case D.decimalToInteger startN of
           Just !start -> case D.decimalToInteger stopN of
@@ -1145,8 +1168,13 @@ arangeProc !colTmplObj !apk !exit =
         Just !stop ->
           createRangeCol dtv 0 (fromInteger stop) $ if stop >= 0 then 1 else -1
         _ -> throwEdh UsageError "stop is not an integer"
-      _ -> throwEdh UsageError $ "Invalid range of " <> T.pack
-        (edhTypeNameOf rngSpec)
+      !badRngSpec -> ask >>= \ !pgs ->
+        contEdhSTM $ edhValueReprSTM pgs badRngSpec $ \ !rngRepr ->
+          throwEdhSTM pgs UsageError
+            $  "Invalid range of "
+            <> T.pack (edhTypeNameOf badRngSpec)
+            <> ": "
+            <> rngRepr
  where
   argsParser =
     ArgsPackParser
