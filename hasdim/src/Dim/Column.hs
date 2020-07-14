@@ -76,25 +76,20 @@ createColumn
   -> (Column -> STM ())
   -> STM ()
 createColumn !pgs !dti !cap !clv !exit =
-  resolveDataType pgs dti $ \(DataType _dti !dtStorable) ->
-    flat'new'array dtStorable pgs cap
-      $ \ !cs -> exit =<< Column dti clv <$> newTVar cs
+  resolveDataType pgs dti $ \(DataType _dti !dtStorable) -> do
+    !cs  <- flat'new'array dtStorable cap
+    !csv <- newTVar cs
+    exit $ Column dti clv csv
 
 growColumn :: EdhProgState -> Column -> Int -> STM () -> STM ()
 growColumn !pgs (Column !dti !clv !csv) !newCap !exit =
-  resolveDataType pgs dti $ \(DataType _dti !dtStorable) -> do
-    !cl <- takeTMVar clv
-    !cs <- readTVar csv
-    let doIt !pgsTry !exit' =
-          flat'grow'array dtStorable pgsTry (coerce cs) newCap $ \ !cs' -> do
-            writeTVar csv (coerce cs')
-            putTMVar clv $ min newCap cl
-            exitEdhSTM pgs exit' nil
-    edhCatchSTM pgs doIt (const $ contEdhSTM exit)
-      $ \_pgsThrower _exv _recover !rethrow -> do
-          !shouldRestored <- tryPutTMVar clv cl
-          when shouldRestored $ writeTVar csv cs
-          rethrow
+  resolveDataType pgs dti $ \(DataType _dti !dtStorable) ->
+    flip (edhPerformSTM pgs) (const $ contEdhSTM exit) $ do
+      !cl  <- takeTMVar clv
+      !cs  <- readTVar csv
+      !cs' <- flat'grow'array dtStorable (coerce cs) newCap
+      writeTVar csv (coerce cs')
+      putTMVar clv $ min newCap cl
 
 unsafeReadColumnCell
   :: EdhProgState -> Column -> Int -> (EdhValue -> STM ()) -> STM ()

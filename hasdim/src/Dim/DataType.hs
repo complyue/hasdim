@@ -200,10 +200,8 @@ data FlatStorable a where
   FlatStorable ::(EdhXchg a, Storable a, Typeable a) => {
       flat'element'size :: Int
     , flat'element'align :: Int
-    , flat'new'array :: EdhProgState
-        -> Int -> (FlatArray a -> STM ()) -> STM ()
-    , flat'grow'array :: EdhProgState
-        -> FlatArray a -> Int -> (FlatArray a -> STM ()) -> STM ()
+    , flat'new'array :: Int -> STM (FlatArray a)
+    , flat'grow'array :: FlatArray a -> Int -> STM (FlatArray a)
     , flat'array'read :: EdhProgState -> FlatArray a
         -> Int -> (EdhValue -> STM ()) -> STM ()
     , flat'array'write :: EdhProgState -> FlatArray a
@@ -222,14 +220,12 @@ flatStorable = FlatStorable (sizeOf (undefined :: a))
                             writeArrayCell
                             updateArray
  where
-  createArray !_ !cap !exit = unsafeIOToSTM (newFlatArray cap) >>= exit
-  growArray _ (FlatArray !cap !fp) !newCap !exit = if newCap <= cap
-    then exit $ FlatArray newCap fp
-    else (exit =<<) $ unsafeIOToSTM $ do
-      !p'  <- callocArray newCap
-      !fp' <- newForeignPtr finalizerFree p'
-      withForeignPtr fp $ \ !p -> copyArray p' p cap
-      return $ FlatArray newCap fp'
+  createArray !cap = unsafeIOToSTM (newFlatArray cap)
+  growArray (FlatArray !cap !fp) !newCap = unsafeIOToSTM $ do
+    !p'  <- callocArray newCap
+    !fp' <- newForeignPtr finalizerFree p'
+    withForeignPtr fp $ \ !p -> copyArray p' p $ min newCap cap
+    return $ FlatArray newCap fp'
   readArrayCell !pgs (FlatArray !cap !fp) !idx !exit =
     edhRegulateIndex pgs cap idx $ \ !posIdx -> do
       sv <- unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr ->
