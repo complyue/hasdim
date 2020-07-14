@@ -84,11 +84,17 @@ growColumn :: EdhProgState -> Column -> Int -> STM () -> STM ()
 growColumn !pgs (Column !dti !clv !csv) !newCap !exit =
   resolveDataType pgs dti $ \(DataType _dti !dtStorable) -> do
     !cl <- takeTMVar clv
-    readTVar csv >>= \ !cs ->
-      flat'grow'array dtStorable pgs (coerce cs) newCap $ \ !cs' -> do
-        writeTVar csv (coerce cs')
-        putTMVar clv $ min newCap cl
-        exit
+    !cs <- readTVar csv
+    let doIt !pgsTry !exit' =
+          flat'grow'array dtStorable pgsTry (coerce cs) newCap $ \ !cs' -> do
+            writeTVar csv (coerce cs')
+            putTMVar clv $ min newCap cl
+            exitEdhSTM pgs exit' nil
+    edhCatchSTM pgs doIt (const $ contEdhSTM exit)
+      $ \_pgsThrower _exv _recover !rethrow -> do
+          !shouldRestored <- tryPutTMVar clv cl
+          when shouldRestored $ writeTVar csv cs
+          rethrow
 
 unsafeReadColumnCell
   :: EdhProgState -> Column -> Int -> (EdhValue -> STM ()) -> STM ()
