@@ -394,23 +394,87 @@ resolveDataComparatorProc _ _ _ =
 
 data FlatOp a where
   FlatOp ::(EdhXchg a, Storable a, Typeable a) => {
-      flat'op'vectorized :: EdhProgState -> FlatArray a
+      flat'extract'bool :: EdhProgState -> FlatArray VecBool -> FlatArray a
+        -> ((FlatArray a, Int) -> STM ()) -> STM ()
+    , flat'extract'fancy :: EdhProgState -> FlatArray Int -> FlatArray a
+        -> (FlatArray a -> STM ()) -> STM ()
+
+    , flat'op'vectorized :: EdhProgState -> FlatArray a
         -> Dynamic -> EdhValue -> (FlatArray a -> STM ()) -> STM ()
     , flat'op'element'wise :: EdhProgState -> FlatArray a
         -> Dynamic -> FlatArray a -> (FlatArray a -> STM ()) -> STM ()
+
     , flat'inp'vectorized :: EdhProgState -> FlatArray a
+        -> Dynamic -> EdhValue -> STM () -> STM ()
+    , flat'inp'vectorized'slice :: EdhProgState -> (Int,Int,Int) -> FlatArray a
         -> Dynamic -> EdhValue -> STM () -> STM ()
     , flat'inp'vectorized'masked :: EdhProgState -> FlatArray VecBool -> FlatArray a
         -> Dynamic -> EdhValue -> STM () -> STM ()
+    , flat'inp'vectorized'fancy :: EdhProgState -> FlatArray Int -> FlatArray a
+        -> Dynamic -> EdhValue -> STM () -> STM ()
+
     , flat'inp'element'wise :: EdhProgState -> FlatArray a
         -> Dynamic -> FlatArray a -> STM () -> STM ()
-    , flat'inp'element'wise'masked :: EdhProgState ->  FlatArray VecBool -> FlatArray a
+    , flat'inp'element'wise'slice :: EdhProgState -> (Int,Int,Int) -> FlatArray a
+        -> Dynamic -> FlatArray a -> STM () -> STM ()
+    , flat'inp'element'wise'masked :: EdhProgState -> FlatArray VecBool -> FlatArray a
+        -> Dynamic -> FlatArray a -> STM () -> STM ()
+    , flat'inp'element'wise'fancy :: EdhProgState -> FlatArray Int -> FlatArray a
         -> Dynamic -> FlatArray a -> STM () -> STM ()
   }-> FlatOp a
  deriving Typeable
 flatOp :: (EdhXchg a, Storable a, Typeable a) => FlatOp a
-flatOp = FlatOp vecOp elemOp vecInp vecInpMasked elemInp elemInpMasked
+flatOp = FlatOp vecExtractBool
+                vecExtractFancy
+                vecOp
+                elemOp
+                vecInp
+                vecInpSlice
+                vecInpMasked
+                vecInpFancy
+                elemInp
+                elemInpSlice
+                elemInpMasked
+                elemInpFancy
  where
+  -- vectorized data extraction with a bool index, yielding a new array
+  vecExtractBool _pgs (FlatArray !mcap !mfp) (FlatArray _cap !fp) !exit =
+    (exit =<<) $ unsafeIOToSTM $ withForeignPtr mfp $ \ !mp ->
+      withForeignPtr fp $ \ !p -> do
+        !rp  <- callocArray mcap
+        !rfp <- newForeignPtr finalizerFree rp
+        let go i ri | i >= mcap = return (FlatArray mcap rfp, ri)
+            go i ri             = do
+              mv <- peekElemOff mp i
+              if mv /= 0
+                then do
+                  peekElemOff p i >>= pokeElemOff rp ri
+                  go (i + 1) (ri + 1)
+                else go (i + 1) ri
+        go 0 0
+  -- vectorized data extraction with a fancy index, yielding a new array
+  vecExtractFancy !pgs (FlatArray !icap !ifp) (FlatArray !cap !fp) !exit = do
+    !result <- unsafeIOToSTM $ withForeignPtr fp $ \ !p ->
+      withForeignPtr ifp $ \ !ip -> do
+        !rp  <- callocArray icap
+        !rfp <- newForeignPtr finalizerFree rp
+        let go i | i >= icap = return $ Right $ FlatArray icap rfp
+            go i             = do
+              idx <- peekElemOff ip i
+              if idx < 0 || idx >= cap
+                then return $ Left idx
+                else do
+                  peekElemOff p idx >>= pokeElemOff rp i
+                  go (i + 1)
+        go 0
+    case result of
+      Left !badIdx ->
+        throwEdhSTM pgs EvalError
+          $  "Fancy index out of bounds: "
+          <> T.pack (show badIdx)
+          <> " vs "
+          <> T.pack (show cap)
+      Right !rtnAry -> exit rtnAry
   -- vectorized operation, yielding a new array
   vecOp !pgs (FlatArray !cap !fp) !dop !v !exit = case fromDynamic dop of
     Nothing                  -> error "bug: dtype op type mismatch"
@@ -451,6 +515,20 @@ flatOp = FlatOp vecOp elemOp vecInp vecInpMasked elemInp elemInpMasked
               pokeElemOff p i $ op ev sv
               go (i + 1)
         go 0
+  -- vectorized operation, inplace modifying the array, with a slice spec
+  vecInpSlice !pgs (!start, !stop, !step) (FlatArray _cap !fp) !dop !v !exit =
+    case fromDynamic dop of
+      Nothing                  -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) -> fromEdh pgs v $ \ !sv ->
+        (>> exit) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
+          let (q, r) = quotRem (stop - start) step
+              !len   = if r == 0 then abs q else 1 + abs q
+          let go _ i | i >= len = return ()
+              go n i            = do
+                ev <- peekElemOff p n
+                pokeElemOff p n $ op ev sv
+                go (n + step) (i + 1)
+          go start 0
   -- vectorized operation, inplace modifying the array, with a bool mask
   vecInpMasked !pgs (FlatArray _cap !mfp) (FlatArray !cap !fp) !dop !v !exit =
     case fromDynamic dop of
@@ -466,6 +544,29 @@ flatOp = FlatOp vecOp elemOp vecInp vecInpMasked elemInp elemInpMasked
                     pokeElemOff p i $ op ev sv
                   go (i + 1)
             go 0
+  -- vectorized operation, inplace modifying the array, with a fancy index
+  vecInpFancy !pgs (FlatArray !icap !ifp) (FlatArray !cap !fp) !dop !v !exit =
+    case fromDynamic dop of
+      Nothing                  -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) -> fromEdh pgs v $ \ !sv -> do
+        !badIdx <- unsafeIOToSTM $ withForeignPtr ifp $ \ !ip ->
+          withForeignPtr fp $ \ !p -> do
+            let go i | i >= icap = return 0
+                go i = peekElemOff ip i >>= \ !idx -> if idx < 0 || idx >= cap
+                  then return idx
+                  else do
+                    ev <- peekElemOff p idx
+                    pokeElemOff p idx $ op ev sv
+                    go (i + 1)
+            go 0
+        if badIdx == 0
+          then exit
+          else
+            throwEdhSTM pgs EvalError
+            $  "Fancy index out of bounds: "
+            <> T.pack (show badIdx)
+            <> " vs "
+            <> T.pack (show cap)
   -- element-wise operation, inplace modifying array
   elemInp _pgs (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit =
     case fromDynamic dop of
@@ -480,6 +581,22 @@ flatOp = FlatOp vecOp elemOp vecInp vecInpMasked elemInp elemInpMasked
                   pokeElemOff p1 i $ op ev1 ev2
                   go (i + 1)
             go 0
+  -- element-wise operation, inplace modifying array, with a slice spec
+  elemInpSlice _pgs (!start, !stop, !step) (FlatArray _cap1 !fp1) !dop (FlatArray !cap2 !fp2) !exit
+    = case fromDynamic dop of
+      Nothing -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) ->
+        (>> exit) $ unsafeIOToSTM $ withForeignPtr fp1 $ \ !p1 ->
+          withForeignPtr fp2 $ \ !p2 -> do
+            let (q, r) = quotRem (stop - start) step
+                !len   = min cap2 $ if r == 0 then abs q else 1 + abs q
+            let go _ i | i >= len = return ()
+                go n i            = do
+                  ev1 <- peekElemOff p1 n
+                  ev2 <- peekElemOff p2 i
+                  pokeElemOff p1 n $ op ev1 ev2
+                  go (n + step) (i + 1)
+            go start 0
   -- element-wise operation, inplace modifying array, with a bool mask
   elemInpMasked _pgs (FlatArray _cap !mfp) (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit
     = case fromDynamic dop of
@@ -499,6 +616,35 @@ flatOp = FlatOp vecOp elemOp vecInp vecInpMasked elemInp elemInpMasked
                         pokeElemOff p1 i $ op ev1 ev2
                       go (i + 1)
                 go 0
+  -- element-wise operation, inplace modifying array, with a fancy index
+  elemInpFancy !pgs (FlatArray !icap !ifp) (FlatArray !cap1 !fp1) !dop (FlatArray !cap2 !fp2) !exit
+    = case fromDynamic dop of
+      Nothing                  -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) -> do
+        !badIdx <-
+          unsafeIOToSTM
+          $ withForeignPtr ifp
+          $ \ !ip -> withForeignPtr fp1 $ \ !p1 ->
+              withForeignPtr fp2 $ \ !p2 -> do
+                let len = min icap cap2
+                let go i | i >= len = return 0
+                    go i            = peekElemOff ip i >>= \ !idx ->
+                      if idx < 0 || idx >= cap1
+                        then return idx
+                        else do
+                          ev1 <- peekElemOff p1 idx
+                          ev2 <- peekElemOff p2 i
+                          pokeElemOff p1 idx $ op ev1 ev2
+                          go (i + 1)
+                go 0
+        if badIdx == 0
+          then exit
+          else
+            throwEdhSTM pgs EvalError
+            $  "Fancy index out of bounds: "
+            <> T.pack (show badIdx)
+            <> " vs "
+            <> T.pack (show cap1)
 
 resolveDataOperator
   :: forall a

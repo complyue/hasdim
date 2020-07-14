@@ -148,6 +148,48 @@ unsafeSliceColumn (Column !dti !clv (csv :: TVar (FlatArray a))) !start !stop !s
           exit $ Column dti clv' csv'
 
 
+extractColumnBool
+  :: EdhProgState -> Column -> Column -> STM () -> (Column -> STM ()) -> STM ()
+extractColumnBool !pgs (Column _mdti !mclv !mcsv) (Column !dti !clv !csv) !naExit !exit
+  = do
+    !cl <- readTVar clv
+    !cs <- readTVar csv
+    resolveDataOperator' pgs dti cs naExit $ \ !dtOp -> do
+      let !fa = unsafeSliceFlatArray cs 0 cl
+      !mcl <- readTVar mclv
+      if mcl /= cl
+        then
+          throwEdhSTM pgs UsageError
+          $  "Index length mismatch: "
+          <> T.pack (show mcl)
+          <> " vs "
+          <> T.pack (show cl)
+        else do
+          !mcs <- readTVar mcsv
+          let !ma = unsafeSliceFlatArray mcs 0 mcl
+          flat'extract'bool dtOp pgs (unsafeCoerce ma) fa $ \(!rfa, !rlen) -> do
+            !clvRtn <- newTVar rlen
+            !csvRtn <- newTVar rfa
+            exit $ Column dti clvRtn csvRtn
+
+
+extractColumnFancy
+  :: EdhProgState -> Column -> Column -> STM () -> (Column -> STM ()) -> STM ()
+extractColumnFancy !pgs (Column _idti !iclv !icsv) (Column !dti !clv !csv) !naExit !exit
+  = do
+    !icl <- readTVar iclv
+    !ics <- readTVar icsv
+    !cl  <- readTVar clv
+    !cs  <- readTVar csv
+    resolveDataOperator' pgs dti cs naExit $ \ !dtOp -> do
+      let !ifa = unsafeSliceFlatArray (coerce ics) 0 icl
+          !fa  = unsafeSliceFlatArray cs 0 cl
+      flat'extract'fancy dtOp pgs ifa fa $ \ !rfa -> do
+        !clvRtn <- newTVar icl
+        !csvRtn <- newTVar rfa
+        exit $ Column dti clvRtn csvRtn
+
+
 vecCmpColumn
   :: EdhProgState
   -> (Ordering -> Bool)
@@ -283,6 +325,26 @@ vecInpColumn !pgs !getOp (Column !dti !clv !csv) !v !naExit !exit = do
       Just EdhNil -> naExit
       _           -> flat'inp'vectorized dtOp pgs fa dop v exit
 
+vecInpSliceColumn
+  :: EdhProgState
+  -> (Int, Int, Int)
+  -> (Text -> Dynamic)
+  -> Column
+  -> EdhValue
+  -> STM ()
+  -> STM ()
+  -> STM ()
+vecInpSliceColumn !pgs !slice !getOp (Column !dti !clv !csv) !v !naExit !exit =
+  do
+    !cl <- readTVar clv
+    !cs <- readTVar csv
+    resolveDataOperator' pgs dti cs naExit $ \ !dtOp -> do
+      let !fa  = unsafeSliceFlatArray cs 0 cl
+      let !dop = getOp dti
+      case fromDynamic dop of
+        Just EdhNil -> naExit
+        _           -> flat'inp'vectorized'slice dtOp pgs slice fa dop v exit
+
 vecInpMaskedColumn
   :: EdhProgState
   -> Column
@@ -321,6 +383,30 @@ vecInpMaskedColumn !pgs (Column _ !mclv !mcsv) !getOp (Column !dti !clv !csv) !v
                                          v
                                          exit
 
+vecInpFancyColumn
+  :: EdhProgState
+  -> Column
+  -> (Text -> Dynamic)
+  -> Column
+  -> EdhValue
+  -> STM ()
+  -> STM ()
+  -> STM ()
+vecInpFancyColumn !pgs (Column _ !iclv !icsv) !getOp (Column !dti !clv !csv) !v !naExit !exit
+  = do
+    !cl <- readTVar clv
+    !cs <- readTVar csv
+    resolveDataOperator' pgs dti cs naExit $ \ !dtOp -> do
+      let !fa  = unsafeSliceFlatArray cs 0 cl
+      let !dop = getOp dti
+      case fromDynamic dop of
+        Just EdhNil -> naExit
+        _           -> do
+          !icl <- readTVar iclv
+          !ics <- readTVar icsv
+          let !ia = unsafeSliceFlatArray ics 0 icl
+          flat'inp'vectorized'fancy dtOp pgs (unsafeCoerce ia) fa dop v exit
+
 elemInpColumn
   :: EdhProgState
   -> (Text -> Dynamic)
@@ -358,6 +444,42 @@ elemInpColumn !pgs !getOp (Column !dti1 !clv1 !csv1) (Column !dti2 !clv2 !csv2) 
               Just EdhNil -> naExit
               _ ->
                 flat'inp'element'wise dtOp pgs fa1 dop (unsafeCoerce fa2) exit
+
+elemInpSliceColumn
+  :: EdhProgState
+  -> (Int, Int, Int)
+  -> (Text -> Dynamic)
+  -> Column
+  -> Column
+  -> STM ()
+  -> STM ()
+  -> STM ()
+elemInpSliceColumn !pgs !slice !getOp (Column !dti1 !clv1 !csv1) (Column !dti2 !clv2 !csv2) !naExit !exit
+  = if dti1 /= dti2
+    then
+      throwEdhSTM pgs UsageError
+      $  "Column dtype mismatch: "
+      <> dti1
+      <> " vs "
+      <> dti2
+    else do
+      !cl1 <- readTVar clv1
+      !cl2 <- readTVar clv2
+      !cs1 <- readTVar csv1
+      !cs2 <- readTVar csv2
+      resolveDataOperator' pgs dti1 cs1 naExit $ \ !dtOp -> do
+        let !fa1 = unsafeSliceFlatArray cs1 0 cl1
+            !fa2 = unsafeSliceFlatArray cs2 0 cl2
+        let !dop = getOp dti1
+        case fromDynamic dop of
+          Just EdhNil -> naExit
+          _           -> flat'inp'element'wise'slice dtOp
+                                                     pgs
+                                                     slice
+                                                     fa1
+                                                     dop
+                                                     (unsafeCoerce fa2)
+                                                     exit
 
 elemInpMaskedColumn
   :: EdhProgState
@@ -405,6 +527,53 @@ elemInpMaskedColumn !pgs (Column _ !mclv !mcsv) !getOp (Column !dti1 !clv1 !csv1
                                                           dop
                                                           (unsafeCoerce fa2)
                                                           exit
+
+elemInpFancyColumn
+  :: EdhProgState
+  -> Column
+  -> (Text -> Dynamic)
+  -> Column
+  -> Column
+  -> STM ()
+  -> STM ()
+  -> STM ()
+elemInpFancyColumn !pgs (Column _ !iclv !icsv) !getOp (Column !dti1 !clv1 !csv1) (Column !dti2 !clv2 !csv2) !naExit !exit
+  = if dti1 /= dti2
+    then
+      throwEdhSTM pgs UsageError
+      $  "Column dtype mismatch: "
+      <> dti1
+      <> " vs "
+      <> dti2
+    else do
+      !cl1 <- readTVar clv1
+      !cl2 <- readTVar clv2
+      if cl1 /= cl2
+        then
+          throwEdhSTM pgs UsageError
+          $  "Column length mismatch: "
+          <> T.pack (show cl1)
+          <> " vs "
+          <> T.pack (show cl2)
+        else do
+          !icl <- readTVar iclv
+          !ics <- readTVar icsv
+          !cs1 <- readTVar csv1
+          !cs2 <- readTVar csv2
+          resolveDataOperator' pgs dti1 cs1 naExit $ \ !dtOp -> do
+            let !ia  = unsafeSliceFlatArray ics 0 icl
+                !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                !fa2 = unsafeSliceFlatArray cs2 0 cl2
+            let !dop = getOp dti1
+            case fromDynamic dop of
+              Just EdhNil -> naExit
+              _           -> flat'inp'element'wise'fancy dtOp
+                                                         pgs
+                                                         (unsafeCoerce ia)
+                                                         fa1
+                                                         dop
+                                                         (unsafeCoerce fa2)
+                                                         exit
 
 
 -- obtain valid column data as an immutable Storable Vector
@@ -800,10 +969,18 @@ colMethods !pgsModule =
       let colObj = thatObject $ contextScope $ edh'context pgs
       columnFromValue idxVal $ \case
         Just !idxCol -> case column'data'type idxCol of
-          "intp" -> -- fancy index 
-            undefined
           "bool" -> -- bool index 
-            undefined
+            extractColumnBool pgs idxCol col (exitEdhSTM pgs exit EdhContinue)
+              $ \ !colResult ->
+                  cloneEdhObject colObj
+                                 (\_ !cloneTo -> cloneTo $ toDyn colResult)
+                    $ \ !newObj -> exitEdhSTM pgs exit $ EdhObject newObj
+          "intp" -> -- fancy index 
+            extractColumnFancy pgs idxCol col (exitEdhSTM pgs exit EdhContinue)
+              $ \ !colResult ->
+                  cloneEdhObject colObj
+                                 (\_ !cloneTo -> cloneTo $ toDyn colResult)
+                    $ \ !newObj -> exitEdhSTM pgs exit $ EdhObject newObj
           !badDti ->
             throwEdhSTM pgs UsageError
               $  "Invalid dtype="
@@ -816,7 +993,7 @@ colMethods !pgsModule =
           Right EdhAny -> exitEdhSTM pgs exit $ EdhObject colObj
           Right EdhAll -> exitEdhSTM pgs exit $ EdhObject colObj
           Right (EdhSlice !start !stop !step) -> do
-            cl <- columnLength col
+            !cl <- columnLength col
             edhRegulateSlice pgs cl (start, stop, step)
               $ \(!iStart, !iStop, !iStep) ->
                   unsafeSliceColumn col iStart iStop iStep $ \ !newCol ->
@@ -829,98 +1006,144 @@ colMethods !pgsModule =
 
   colIdxWriteProc :: EdhProcedure
   colIdxWriteProc (ArgsPack [!idxVal, !other] !kwargs) !exit | Map.null kwargs =
-    withThatEntity $ \ !pgs !col -> do
-      let
-        that      = thatObject $ contextScope $ edh'context pgs
-        assignAll = case edhUltimate other of
-          otherVal@(EdhObject !otherObj) ->
-            fromDynamic <$> objStore otherObj >>= \case
-              Just colOther@Column{} ->
-                elemInpColumn pgs
-                              assignOp
-                              col
-                              colOther
-                              (exitEdhSTM pgs exit EdhContinue)
-                  $ exitEdhSTM pgs exit
-                  $ EdhObject that
-              Nothing ->
-                vecInpColumn pgs
-                             assignOp
-                             col
-                             otherVal
-                             (exitEdhSTM pgs exit EdhContinue)
-                  $ exitEdhSTM pgs exit
-                  $ EdhObject that
-          !otherVal ->
-            vecInpColumn pgs
-                         assignOp
-                         col
-                         otherVal
-                         (exitEdhSTM pgs exit EdhContinue)
-              $ exitEdhSTM pgs exit
-              $ EdhObject that
-      case edhUltimate idxVal of
-        EdhDecimal !idxNum -> case D.decimalToInteger idxNum of
-          Just !idx ->
-            unsafeWriteColumnCell pgs col (fromInteger idx) (edhUltimate other)
-              $ exitEdhSTM pgs exit
-          _ ->
+    withThatEntity $ \ !pgs col@(Column !dti !clv _csv) -> do
+      let colObj = thatObject $ contextScope $ edh'context pgs
+      columnFromValue (edhUltimate other) $ \case
+        -- assign column to column
+        Just colOther@(Column !dtiOther !clvOther _) -> if dtiOther /= dti
+          then
             throwEdhSTM pgs UsageError
-              $  "Expect an integer to index a Column but given: "
-              <> T.pack (show idxNum)
-        EdhNamedValue "All" _ -> assignAll
-        EdhNamedValue "Any" _ -> assignAll
-        EdhArgsPack (ArgsPack [] !kwargs') | Map.null kwargs' -> assignAll
-        EdhObject !idxObj     -> fromDynamic <$> objStore idxObj >>= \case
-          Just icol@(Column !idti _ _) -> case idti of
-            "bool" -> case edhUltimate other of
-              -- bool index 
-              otherVal@(EdhObject !otherObj) ->
-                fromDynamic <$> objStore otherObj >>= \case
-                  Just colOther@Column{} ->
-                    elemInpMaskedColumn pgs
-                                        icol
-                                        assignOp
-                                        col
-                                        colOther
-                                        (exitEdhSTM pgs exit EdhContinue)
-                      $ exitEdhSTM pgs exit
-                      $ EdhObject that
-                  Nothing ->
-                    vecInpMaskedColumn pgs
-                                       icol
-                                       assignOp
-                                       col
-                                       otherVal
-                                       (exitEdhSTM pgs exit EdhContinue)
-                      $ exitEdhSTM pgs exit
-                      $ EdhObject that
-              !otherVal ->
-                vecInpMaskedColumn pgs
-                                   icol
+            $  "Assigning column of dtype="
+            <> dtiOther
+            <> " to "
+            <> dti
+            <> " not supported."
+          else columnFromValue idxVal $ \case
+            Just !idxCol -> case column'data'type idxCol of
+              "bool" -> -- bool index 
+                elemInpMaskedColumn pgs
+                                    idxCol
+                                    assignOp
+                                    col
+                                    colOther
+                                    (exitEdhSTM pgs exit EdhContinue)
+                  $ exitEdhSTM pgs exit
+                  $ EdhObject colObj
+              "intp" -> -- fancy index 
+                elemInpFancyColumn pgs
+                                   idxCol
                                    assignOp
                                    col
-                                   otherVal
+                                   colOther
                                    (exitEdhSTM pgs exit EdhContinue)
                   $ exitEdhSTM pgs exit
-                  $ EdhObject that
+                  $ EdhObject colObj
+              !badDti ->
+                throwEdhSTM pgs UsageError
+                  $  "Invalid dtype="
+                  <> badDti
+                  <> " for a column as an index to another column"
+            Nothing -> parseEdhIndex pgs idxVal $ \case
+              Left  !err         -> throwEdhSTM pgs UsageError err
+              Right (EdhIndex _) -> throwEdhSTM
+                pgs
+                UsageError
+                "Can not assign a column to a single index of another column"
+              Right EdhAny -> throwEdhSTM
+                pgs
+                UsageError
+                "Can not assign a column to every element of another column"
+              Right EdhAll -> if dtiOther /= dti
+                then
+                  throwEdhSTM pgs UsageError
+                  $  "Assigning column of dtype="
+                  <> dtiOther
+                  <> " to "
+                  <> dti
+                  <> " not supported."
+                else do
+                  !cl      <- readTVar clv
+                  !clOther <- readTVar clvOther
+                  if clOther /= cl
+                    then
+                      throwEdhSTM pgs UsageError
+                      $  "Column length mismatch: "
+                      <> T.pack (show clOther)
+                      <> " vs "
+                      <> T.pack (show cl)
+                    else
+                      elemInpColumn pgs
+                                    assignOp
+                                    col
+                                    colOther
+                                    (exitEdhSTM pgs exit EdhContinue)
+                      $ exitEdhSTM pgs exit
+                      $ EdhObject colObj
+              Right (EdhSlice !start !stop !step) -> do
+                !cl <- columnLength col
+                edhRegulateSlice pgs cl (start, stop, step) $ \ !slice ->
+                  elemInpSliceColumn pgs
+                                     slice
+                                     assignOp
+                                     col
+                                     colOther
+                                     (exitEdhSTM pgs exit EdhContinue)
+                    $ exitEdhSTM pgs exit other
+
+        -- assign scalar to column
+        Nothing -> columnFromValue idxVal $ \case
+          Just idxCol@(Column !dtiIdx _clvIdx _csvIdx) -> case dtiIdx of
+            "bool" -> -- bool index 
+              vecInpMaskedColumn pgs
+                                 idxCol
+                                 assignOp
+                                 col
+                                 (edhUltimate other)
+                                 (exitEdhSTM pgs exit EdhContinue)
+                $ exitEdhSTM pgs exit
+                $ EdhObject colObj
             "intp" -> -- fancy index
-              undefined -- TODO impl. this
-            !badIdxDti ->
+              vecInpFancyColumn pgs
+                                idxCol
+                                assignOp
+                                col
+                                (edhUltimate other)
+                                (exitEdhSTM pgs exit EdhContinue)
+                $ exitEdhSTM pgs exit
+                $ EdhObject colObj
+            !badDti ->
               throwEdhSTM pgs UsageError
-                $  "Invalid dtype as index for a Column: "
-                <> badIdxDti
-          Nothing -> edhValueReprSTM pgs (EdhObject idxObj) $ \ !objRepr ->
-            throwEdhSTM pgs UsageError
-              $  "Invalid object as index for a Column: "
-              <> objRepr
-        -- TODO support slice indexing and @indexDataType@ typed fancy indexing
-        !badIdxVal -> edhValueReprSTM pgs badIdxVal $ \idxRepr ->
-          throwEdhSTM pgs UsageError
-            $  "Invalid index to a Column, "
-            <> T.pack (edhTypeNameOf badIdxVal)
-            <> ": "
-            <> idxRepr
+                $  "Invalid dtype="
+                <> badDti
+                <> " for a column as an index to another column"
+          Nothing -> parseEdhIndex pgs idxVal $ \case
+            Left !err -> throwEdhSTM pgs UsageError err
+            Right (EdhIndex !i) ->
+              unsafeWriteColumnCell pgs col i (edhUltimate other)
+                $ exitEdhSTM pgs exit
+            Right EdhAny -> do
+              !cl <- columnLength col
+              unsafeFillColumn pgs col (edhUltimate other) [0 .. cl - 1]
+                $ exitEdhSTM pgs exit
+                $ EdhObject colObj
+            Right EdhAll -> do
+              !cl <- columnLength col
+              unsafeFillColumn pgs col (edhUltimate other) [0 .. cl - 1]
+                $ exitEdhSTM pgs exit
+                $ EdhObject colObj
+            Right (EdhSlice !start !stop !step) -> do
+              !cl <- columnLength col
+              edhRegulateSlice pgs cl (start, stop, step)
+                $ \(!iStart, !iStop, !iStep) ->
+                    vecInpSliceColumn pgs
+                                      (iStart, iStop, iStep)
+                                      assignOp
+                                      col
+                                      (edhUltimate other)
+                                      (exitEdhSTM pgs exit EdhContinue)
+                      $ exitEdhSTM pgs exit
+                      $ EdhObject colObj
+
   colIdxWriteProc !apk _ =
     throwEdh UsageError
       $  "Invalid assigning indexing syntax for a Column: "
@@ -983,7 +1206,7 @@ colMethods !pgsModule =
   colInpProc :: (Text -> Dynamic) -> EdhProcedure
   colInpProc !getOp (ArgsPack [!other] _) !exit =
     withThatEntity $ \ !pgs !col ->
-      let that = thatObject $ contextScope $ edh'context pgs
+      let colObj = thatObject $ contextScope $ edh'context pgs
       in
         case edhUltimate other of
           otherVal@(EdhObject !otherObj) ->
@@ -995,7 +1218,7 @@ colMethods !pgsModule =
                               colOther
                               (exitEdhSTM pgs exit EdhContinue)
                   $ exitEdhSTM pgs exit
-                  $ EdhObject that
+                  $ EdhObject colObj
               Nothing ->
                 vecInpColumn pgs
                              getOp
@@ -1003,7 +1226,7 @@ colMethods !pgsModule =
                              otherVal
                              (exitEdhSTM pgs exit EdhContinue)
                   $ exitEdhSTM pgs exit
-                  $ EdhObject that
+                  $ EdhObject colObj
           !otherVal ->
             vecInpColumn pgs
                          getOp
@@ -1011,7 +1234,7 @@ colMethods !pgsModule =
                          otherVal
                          (exitEdhSTM pgs exit EdhContinue)
               $ exitEdhSTM pgs exit
-              $ EdhObject that
+              $ EdhObject colObj
   colInpProc _ !apk _ =
     throwEdh UsageError $ "Invalid args for a Column operator: " <> T.pack
       (show apk)
