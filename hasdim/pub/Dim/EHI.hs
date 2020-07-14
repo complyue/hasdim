@@ -20,6 +20,7 @@ import           Language.Edh.EHI
 
 import           Dim.XCHG
 import           Dim.DataType
+import           Dim.Column
 import           Dim.Table
 
 
