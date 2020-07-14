@@ -11,7 +11,8 @@ export class DataSchema {
   }
 
 
-  # atomic storage data types, valued as expr in host language (Haskell)
+  # atomic storage data types, valued as expr for the repr to appear in host
+  # language (Haskell)
   InstrumentId := expr Text
   TradeTime := expr Int64
   TradeMinutes := expr Int32
@@ -34,7 +35,9 @@ export class DataSchema {
     ) -> this
     method __init__(
       instruId as this.instruId,
-    ) extends db.superBack()
+    ) {
+      extends db.superBack()
+    }
 
 
     # invoked on initial creation of this persistent business object, or
