@@ -7,7 +7,7 @@ import           Prelude
 -- import           Unsafe.Coerce
 import           GHC.Conc                       ( unsafeIOToSTM )
 
--- import           Foreign                 hiding ( void )
+import           Foreign                 hiding ( void )
 
 import           Control.Monad
 -- import           Control.Monad.Reader
@@ -60,14 +60,15 @@ unsafeMarkTableRowCount !rc (Table !trcv _ _ _) = do
 createTable
   :: EdhProgState
   -> Int
-  -> [(EdhValue, DataTypeIdent)]
+  -> Int
+  -> [(EdhValue, Int -> TMVar Int -> (Column -> STM ()) -> STM ())]
   -> (Table -> STM ())
   -> STM ()
-createTable !pgs !cap !col2dtype !exit = do
-  !trcv      <- newTMVar 0
+createTable _pgs !cap !rowCnt !colCreators !exit = do
+  !trcv      <- newTMVar rowCnt
   !colLabels <- unsafeIOToSTM $ V.unsafeThaw $ V.fromList
-    [ label | (label, _dti) <- col2dtype ]
-  seqcontSTM [ createColumn pgs dti cap trcv | (_label, dti) <- col2dtype ]
+    [ label | (label, _dti) <- colCreators ]
+  seqcontSTM [ colCreator cap trcv | (_label, colCreator) <- colCreators ]
     $ \ !cols -> exit $ Table trcv Nothing (V.fromList cols) colLabels
 
 growTable :: EdhProgState -> Int -> Table -> STM () -> STM ()
@@ -88,32 +89,68 @@ growTable !pgs !newRowCnt (Table !trcv _ !cols _) !exit =
     writeTVar csv (coerce cs')
 
 
--- | host constructor Table(capacity, *columns=(col1:dtype1, ...))
+-- | host constructor Table( capacity, rowCount, col1=<dtype> | <Column>, col2=... )
 tabCtor :: EdhHostCtor
-tabCtor !pgsCtor (ArgsPack ((EdhDecimal !capNum) : columnSpecs) _kwargs) !ctorExit
-  = case D.decimalToInteger capNum of
-    Just !cap | cap > 0 ->
-      seqcontSTM (parseColSpec <$> columnSpecs) $ \ !specs ->
-        createTable pgsCtor (fromInteger cap) specs (ctorExit . toDyn)
+tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
+  parseArgs $ \(cap, rowCnt) -> seqcontSTM (parseColSpec <$> Map.toList kwargs)
+    $ \ !specs -> createTable pgsCtor cap rowCnt specs (ctorExit . toDyn)
+ where
+  parseArgs :: ((Int, Int) -> STM ()) -> STM ()
+  parseArgs !exit = case args of
+    [EdhDecimal !capNum, EdhDecimal !rcNum] -> gotArgs capNum rcNum
+    [EdhDecimal !capNum]                    -> gotArgs capNum 0
     _ ->
       throwEdhSTM pgsCtor UsageError
-        $  "Table capacity should be a positive integer, not "
-        <> T.pack (show capNum)
- where
-  parseColSpec :: EdhValue -> ((EdhValue, DataTypeIdent) -> STM ()) -> STM ()
-  parseColSpec !val !exit = case val of
-    EdhPair !colIdent !colDtype -> case edhUltimate colDtype of
-      EdhString !dti -> exit (colIdent, dti)
-      !badDti        -> edhValueReprSTM pgsCtor badDti $ \ !dtiRepr ->
-        throwEdhSTM pgsCtor UsageError $ "Invalid dtype identifier: " <> dtiRepr
-    !badColSpec -> edhValueReprSTM pgsCtor badColSpec $ \ !specRepr ->
+        $  "Invalid capacity/rowCount to create a Table: "
+        <> T.pack (show args)
+   where
+    gotArgs :: Decimal -> Decimal -> STM ()
+    gotArgs !capNum !rcNum = case D.decimalToInteger capNum of
+      Just !cap | cap > 0 -> case D.decimalToInteger rcNum of
+        Just !rc | rc >= 0 -> exit (fromInteger cap, fromInteger rc)
+        _ ->
+          throwEdhSTM pgsCtor UsageError
+            $  "Table row count should be zero or a positive integer, not "
+            <> T.pack (show rcNum)
+      _ ->
+        throwEdhSTM pgsCtor UsageError
+          $  "Table capacity should be a positive integer, not "
+          <> T.pack (show capNum)
+
+  parseColSpec
+    :: (AttrKey, EdhValue)
+    -> (  (EdhValue, Int -> TMVar Int -> (Column -> STM ()) -> STM ())
+       -> STM ()
+       )
+    -> STM ()
+  parseColSpec (!key, !val) !exit = case edhUltimate val of
+    EdhString !dti -> exit (attrKeyValue key, createCol dti)
+    EdhObject !obj -> castObjectStore obj >>= \case
+      Just col@Column{} -> exit (attrKeyValue key, copyCol col)
+      Nothing ->
+        throwEdhSTM pgsCtor UsageError $ "Not a Column object for " <> T.pack
+          (show key)
+    !badColSpec -> edhValueReprSTM pgsCtor badColSpec $ \ !colRepr ->
       throwEdhSTM pgsCtor UsageError
-        $  "Invalid column specification: "
-        <> specRepr
-tabCtor !pgsCtor !apk _ =
-  throwEdhSTM pgsCtor UsageError
-    $  "Invalid args for Table construction: "
-    <> T.pack (show apk)
+        $  "Invalid column specification, "
+        <> T.pack (show $ edhTypeNameOf badColSpec)
+        <> ": "
+        <> colRepr
+
+  createCol :: DataTypeIdent -> Int -> TMVar Int -> (Column -> STM ()) -> STM ()
+  createCol !dti !cap !clv !exit = createColumn pgsCtor dti cap clv exit
+  copyCol :: Column -> Int -> TMVar Int -> (Column -> STM ()) -> STM ()
+  copyCol (Column !dti !clvSrc !csvSrc) !cap !clv !exit = do
+    !clSrc                  <- readTMVar clvSrc
+    (FlatArray _capSrc !fp) <- readTVar csvSrc
+    !cs'                    <- unsafeIOToSTM $ do
+      !p'  <- callocArray cap
+      !fp' <- newForeignPtr finalizerFree p'
+      withForeignPtr fp $ \ !p -> copyArray p' p $ min cap clSrc
+      return $ FlatArray cap fp'
+    !csv' <- newTVar cs'
+    exit $ Column dti clv csv'
+
 
 tabMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
 tabMethods !pgsModule =
@@ -180,12 +217,15 @@ tabMethods !pgsModule =
   tabReprProc :: EdhProcedure
   tabReprProc _ !exit =
     withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-Table>")
-      $ \ !pgs tab@(Table _trcv _rowLabels !_cols !_colLabels) -> do
+      $ \ !pgs tab@(Table !trcv _rowLabels !_cols !_colLabels) -> do
+          !rc  <- readTMVar trcv
           !cap <- tableRowCapacity tab
-          -- TODO impl. this
           exitEdhSTM pgs exit
             $  EdhString
             $  "Table("
             <> T.pack (show cap)
+            <> ", "
+            <> T.pack (show rc)
+          -- TODO fill here with column identifier and their dtypes
             <> ", ...)"
 
