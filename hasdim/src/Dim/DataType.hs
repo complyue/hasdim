@@ -20,6 +20,7 @@ import           Control.Concurrent.STM
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 import qualified Data.HashMap.Strict           as Map
+import           Data.Coerce
 import           Data.Dynamic
 
 import           Data.Vector.Storable           ( Vector )
@@ -198,7 +199,8 @@ resolveDataTypeProc _ _ _ =
 -- here.
 data FlatStorable a where
   FlatStorable ::(EdhXchg a, Storable a, Typeable a) => {
-      flat'element'size :: Int
+      coerce'flat'array :: FlatArray b -> FlatArray a
+    , flat'element'size :: Int
     , flat'element'align :: Int
     , flat'new'array :: Int -> STM (FlatArray a)
     , flat'grow'array :: FlatArray a -> Int -> STM (FlatArray a)
@@ -212,7 +214,8 @@ data FlatStorable a where
  deriving Typeable
 flatStorable
   :: forall a . (EdhXchg a, Storable a, Typeable a) => FlatStorable a
-flatStorable = FlatStorable (sizeOf (undefined :: a))
+flatStorable = FlatStorable coerceArray
+                            (sizeOf (undefined :: a))
                             (alignment (undefined :: a))
                             createArray
                             growArray
@@ -220,6 +223,7 @@ flatStorable = FlatStorable (sizeOf (undefined :: a))
                             writeArrayCell
                             updateArray
  where
+  coerceArray = coerce
   createArray !cap = unsafeIOToSTM (newFlatArray cap)
   growArray (FlatArray !cap !fp) !newCap = unsafeIOToSTM $ do
     !p'  <- callocArray newCap
