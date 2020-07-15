@@ -168,6 +168,7 @@ tabMethods !pgsModule =
 --    , tabIdxWriteProc
 --    , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
 --    )
+         , ("@"       , EdhMethod, tabAttrProc, PackReceiver [])
          , ("__repr__", EdhMethod, tabReprProc, PackReceiver [])
 --  , ("__show__", EdhMethod, tabShowProc, PackReceiver [])
 --  , ("__desc__", EdhMethod, tabDescProc, PackReceiver [])
@@ -213,6 +214,12 @@ tabMethods !pgsModule =
             >> exitEdhSTM pgs exit nil
         _ -> throwEdhSTM pgs UsageError "Table length out of range"
   tabMarkLenProc _ _ = throwEdh UsageError "Invalid args to Table.markLength()"
+
+  tabAttrProc :: EdhProcedure
+  tabAttrProc (ArgsPack [!attrKey] _) !exit =
+    -- TODO impl. 
+    exitEdhProc exit $ EdhString "<not impl.>"
+  tabAttrProc _ _ = throwEdh EvalError "bug: unexpected args to (@)"
 
   tabReprProc :: EdhProcedure
   tabReprProc _ !exit =
