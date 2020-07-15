@@ -63,8 +63,8 @@ columnLength (Column _ !clv _) = readTMVar clv
 columnCapacity :: Column -> STM Int
 columnCapacity (Column _ _ !csv) = flatArrayCapacity <$> readTVar csv
 
-unsafeMarkColumnLength :: Column -> Int -> STM ()
-unsafeMarkColumnLength (Column _ !clv _) !newLen = do
+unsafeMarkColumnLength :: Int -> Column -> STM ()
+unsafeMarkColumnLength !newLen (Column _ !clv _) = do
   void $ tryTakeTMVar clv
   void $ tryPutTMVar clv newLen
 
@@ -81,8 +81,8 @@ createColumn !pgs !dti !cap !clv !exit =
     !csv <- newTVar cs
     exit $ Column dti clv csv
 
-growColumn :: EdhProgState -> Column -> Int -> STM () -> STM ()
-growColumn !pgs (Column !dti !clv !csv) !newCap !exit =
+growColumn :: EdhProgState -> Int -> Column -> STM () -> STM ()
+growColumn !pgs !newCap (Column !dti !clv !csv) !exit =
   resolveDataType pgs dti $ \(DataType _dti !dtStorable) ->
     flip (edhPerformSTM pgs) (const $ contEdhSTM exit) $ do
       !cl  <- takeTMVar clv
@@ -600,13 +600,6 @@ unsafeCastColumnData (Column _ _ !csv) = do
   return $ unsafeFlatArrayAsVector ary
 
 
-columnFromValue :: EdhValue -> (Maybe Column -> STM ()) -> STM ()
-columnFromValue !val !exit = case edhUltimate val of
-  EdhObject !obj -> fromDynamic <$> objStore obj >>= \case
-    Nothing   -> exit Nothing
-    Just !col -> exit $ Just col
-  _ -> exit Nothing
-
 -- | host constructor Column(capacity, length=None, dtype=f8)
 colCtor :: EdhHostCtor
 colCtor !pgsCtor !apk !ctorExit =
@@ -863,8 +856,8 @@ colMethods !pgsModule =
   colGrowProc :: EdhProcedure
   colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit
     | Map.null kwargs = case D.decimalToInteger newCapNum of
-      Just !newCap | newCap >= 0 -> withThatEntity $ \ !pgs !col ->
-        growColumn pgs col (fromInteger newCap)
+      Just !newCap | newCap > 0 -> withThatEntity $ \ !pgs !col ->
+        growColumn pgs (fromInteger newCap) col
           $ exitEdhSTM pgs exit
           $ EdhObject
           $ thatObject
@@ -887,7 +880,7 @@ colMethods !pgsModule =
       !cap <- columnCapacity col
       case D.decimalToInteger newLenNum of
         Just !newLen | newLen >= 0 && newLen <= fromIntegral cap ->
-          unsafeMarkColumnLength col (fromInteger newLen)
+          unsafeMarkColumnLength (fromInteger newLen) col
             >> exitEdhSTM pgs exit nil
         _ -> throwEdhSTM pgs UsageError "Column length out of range"
   colMarkLenProc _ _ =
@@ -982,7 +975,7 @@ colMethods !pgsModule =
   colIdxReadProc (ArgsPack [!idxVal] !kwargs) !exit | Map.null kwargs =
     withThatEntity $ \ !pgs !col -> do
       let colObj = thatObject $ contextScope $ edh'context pgs
-      columnFromValue idxVal $ \case
+      castObjectStore' idxVal >>= \case
         Just !idxCol -> case column'data'type idxCol of
           "bool" -> -- bool index 
             extractColumnBool pgs idxCol col (exitEdhSTM pgs exit EdhContinue)
@@ -1023,7 +1016,7 @@ colMethods !pgsModule =
   colIdxWriteProc (ArgsPack [!idxVal, !other] !kwargs) !exit | Map.null kwargs =
     withThatEntity $ \ !pgs col@(Column !dti !clv _csv) -> do
       let colObj = thatObject $ contextScope $ edh'context pgs
-      columnFromValue (edhUltimate other) $ \case
+      castObjectStore' (edhUltimate other) >>= \case
         -- assign column to column
         Just colOther@(Column !dtiOther !clvOther _) -> if dtiOther /= dti
           then
@@ -1033,7 +1026,7 @@ colMethods !pgsModule =
             <> " to "
             <> dti
             <> " not supported."
-          else columnFromValue idxVal $ \case
+          else castObjectStore' idxVal >>= \case
             Just !idxCol -> case column'data'type idxCol of
               "bool" -> -- bool index 
                 elemInpMaskedColumn pgs
@@ -1106,7 +1099,7 @@ colMethods !pgsModule =
                     $ exitEdhSTM pgs exit other
 
         -- assign scalar to column
-        Nothing -> columnFromValue idxVal $ \case
+        Nothing -> castObjectStore' idxVal >>= \case
           Just idxCol@(Column !dtiIdx _clvIdx _csvIdx) -> case dtiIdx of
             "bool" -> -- bool index 
               vecInpMaskedColumn pgs

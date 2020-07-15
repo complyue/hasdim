@@ -140,6 +140,12 @@ installDimBatteries !world = do
              )
            ]
          ]
+      ++ [ ((AttrByName nm, ) <$>)
+           $   mkHostClass moduScope nm hc
+           =<< createSideEntityManipulater True
+           =<< mths pgs
+         | (nm, hc, mths) <- [("Table", tabCtor, tabMethods)]
+         ]
 
     let !moduArts =
           moduArts0

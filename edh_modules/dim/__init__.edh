@@ -1,7 +1,7 @@
 
 export {
 
-  import ( Column, arange, where, **_ ) 'dim/RT'
+  import ( Table, Column, arange, where, **_ ) 'dim/RT'
 
   import * './dtypes'
 
