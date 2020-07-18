@@ -46,8 +46,7 @@ installDimBatteries !world = do
           , EdhSymbol resolveNumDataTypeEffId
           )
         ]
-    !artsDict <- createEdhDict
-      $ Map.fromList [ (EdhString k, v) | (k, v) <- moduArts ]
+    !artsDict <- createEdhDict [ (EdhString k, v) | (k, v) <- moduArts ]
     updateEntityAttrs pgs (objEntity modu)
       $  [ (AttrByName k, v) | (k, v) <- moduArts ]
       ++ [(AttrByName "__exports__", artsDict)]
@@ -155,8 +154,7 @@ installDimBatteries !world = do
                , (AttrByName "colt"  , EdhObject colTmplObj)
                , (AttrByName "Column", clsColumnVal)
                ]
-    !artsDict <- createEdhDict
-      $ Map.fromList [ (attrKeyValue k, v) | (k, v) <- moduArts ]
+    !artsDict <- createEdhDict [ (attrKeyValue k, v) | (k, v) <- moduArts ]
     updateEntityAttrs pgs (objEntity modu)
       $  [ (k, v) | (k, v) <- moduArts ]
       ++ [(AttrByName "__exports__", artsDict)]

@@ -19,7 +19,6 @@ import           Control.Concurrent.STM
 
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
-import qualified Data.HashMap.Strict           as Map
 import           Data.Coerce
 import           Data.Dynamic
 
@@ -167,7 +166,7 @@ resolveDataTypeEffId = globalSymbol "@resolveDataType"
 -- | The ultimate fallback to have trivial data types resolved
 resolveDataTypeProc :: Object -> EdhProcedure
 resolveDataTypeProc !dtTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
-  | Map.null kwargs = ask >>= \ !pgs -> contEdhSTM $ do
+  | odNull kwargs = ask >>= \ !pgs -> contEdhSTM $ do
     let exitWith !dt =
           cloneEdhObject dtTmplObj (\_ !cloneExit -> cloneExit $ toDyn dt)
             $ \ !dto -> exitEdhSTM pgs exit $ EdhObject dto
@@ -365,7 +364,7 @@ resolveDataComparatorEffId = globalSymbol "@resolveDataComparator"
 -- | The ultimate fallback to have trivial data types resolved
 resolveDataComparatorProc :: Object -> EdhProcedure
 resolveDataComparatorProc !dmrpTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
-  | Map.null kwargs = ask >>= \ !pgs -> contEdhSTM $ do
+  | odNull kwargs = ask >>= \ !pgs -> contEdhSTM $ do
     let exitWith !drp =
           cloneEdhObject
               dmrpTmplObj
@@ -695,7 +694,7 @@ resolveDataOperatorEffId = globalSymbol "@resolveDataOperator"
 -- | The ultimate fallback to have trivial data types resolved
 resolveDataOperatorProc :: Object -> EdhProcedure
 resolveDataOperatorProc !dmrpTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
-  | Map.null kwargs = ask >>= \ !pgs -> contEdhSTM $ do
+  | odNull kwargs = ask >>= \ !pgs -> contEdhSTM $ do
     let exitWith !drp =
           cloneEdhObject
               dmrpTmplObj
@@ -792,7 +791,7 @@ resolveNumDataTypeEffId = globalSymbol "@resolveNumDataType"
 -- | The ultimate fallback to have trivial data types resolved
 resolveNumDataTypeProc :: Object -> EdhProcedure
 resolveNumDataTypeProc !numdtTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
-  | Map.null kwargs = ask >>= \ !pgs -> contEdhSTM $ do
+  | odNull kwargs = ask >>= \ !pgs -> contEdhSTM $ do
     let exitWith !dndt =
           cloneEdhObject numdtTmplObj (\_ !cloneExit -> cloneExit dndt)
             $ \ !ndto -> exitEdhSTM pgs exit $ EdhObject ndto

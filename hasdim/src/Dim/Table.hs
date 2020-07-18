@@ -16,7 +16,6 @@ import           Control.Concurrent.STM
 
 -- import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
-import qualified Data.HashMap.Strict           as Map
 
 import           Data.Coerce
 import           Data.Dynamic
@@ -92,7 +91,7 @@ growTable !pgs !newRowCnt (Table !trcv _ !cols _) !exit =
 -- | host constructor Table( capacity, rowCount, col1=<dtype> | <Column>, col2=... )
 tabCtor :: EdhHostCtor
 tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
-  parseArgs $ \(cap, rowCnt) -> seqcontSTM (parseColSpec <$> Map.toList kwargs)
+  parseArgs $ \(cap, rowCnt) -> seqcontSTM (parseColSpec <$> odToList kwargs)
     $ \ !specs -> createTable pgsCtor cap rowCnt specs (ctorExit . toDyn)
  where
   parseArgs :: ((Int, Int) -> STM ()) -> STM ()
@@ -184,8 +183,8 @@ tabMethods !pgsModule =
   !scope = contextScope $ edh'context pgsModule
 
   tabGrowProc :: EdhProcedure
-  tabGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit
-    | Map.null kwargs = case D.decimalToInteger newCapNum of
+  tabGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit | odNull kwargs =
+    case D.decimalToInteger newCapNum of
       Just !newCap | newCap > 0 -> withThatEntity $ \ !pgs !tab ->
         growTable pgs (fromInteger newCap) tab
           $ exitEdhSTM pgs exit
@@ -206,7 +205,7 @@ tabMethods !pgsModule =
 
   tabMarkLenProc :: EdhProcedure
   tabMarkLenProc (ArgsPack [EdhDecimal !newLenNum] !kwargs) !exit
-    | Map.null kwargs = withThatEntity $ \ !pgs !tab -> do
+    | odNull kwargs = withThatEntity $ \ !pgs !tab -> do
       !cap <- tableRowCapacity tab
       case D.decimalToInteger newLenNum of
         Just !newLen | newLen >= 0 && newLen <= fromIntegral cap ->

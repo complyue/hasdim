@@ -855,7 +855,7 @@ colMethods !pgsModule =
 
   colGrowProc :: EdhProcedure
   colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit
-    | Map.null kwargs = case D.decimalToInteger newCapNum of
+    | odNull kwargs = case D.decimalToInteger newCapNum of
       Just !newCap | newCap > 0 -> withThatEntity $ \ !pgs !col ->
         growColumn pgs (fromInteger newCap) col
           $ exitEdhSTM pgs exit
@@ -876,7 +876,7 @@ colMethods !pgsModule =
 
   colMarkLenProc :: EdhProcedure
   colMarkLenProc (ArgsPack [EdhDecimal !newLenNum] !kwargs) !exit
-    | Map.null kwargs = withThatEntity $ \ !pgs !col -> do
+    | odNull kwargs = withThatEntity $ \ !pgs !col -> do
       !cap <- columnCapacity col
       case D.decimalToInteger newLenNum of
         Just !newLen | newLen >= 0 && newLen <= fromIntegral cap ->
@@ -972,7 +972,7 @@ colMethods !pgsModule =
 
 
   colIdxReadProc :: EdhProcedure
-  colIdxReadProc (ArgsPack [!idxVal] !kwargs) !exit | Map.null kwargs =
+  colIdxReadProc (ArgsPack [!idxVal] !kwargs) !exit | odNull kwargs =
     withThatEntity $ \ !pgs !col -> do
       let colObj = thatObject $ contextScope $ edh'context pgs
       castObjectStore' idxVal >>= \case
@@ -1013,7 +1013,7 @@ colMethods !pgsModule =
       (show apk)
 
   colIdxWriteProc :: EdhProcedure
-  colIdxWriteProc (ArgsPack [!idxVal, !other] !kwargs) !exit | Map.null kwargs =
+  colIdxWriteProc (ArgsPack [!idxVal, !other] !kwargs) !exit | odNull kwargs =
     withThatEntity $ \ !pgs col@(Column !dti !clv _csv) -> do
       let colObj = thatObject $ contextScope $ edh'context pgs
       castObjectStore' (edhUltimate other) >>= \case
@@ -1439,7 +1439,7 @@ arangeProc !colTmplObj !apk !exit =
 
 -- | resemble https://numpy.org/doc/stable/reference/generated/numpy.where.html
 whereProc :: EdhProcedure
-whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit | Map.null kwargs =
+whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit | odNull kwargs =
   ask >>= \ !pgs -> contEdhSTM $ fromDynamic <$> objStore colBoolIdx >>= \case
     Nothing -> throwEdhSTM
       pgs
@@ -1455,7 +1455,7 @@ whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit | Map.null kwargs =
         cloneEdhObject colBoolIdx (\_ !cloneTo -> cloneTo $ toDyn colResult)
           $ \ !newObj -> exitEdhSTM pgs exit $ EdhObject newObj
 whereProc (ArgsPack [EdhObject !_colBoolIdx, !_trueData, !_falseData] !kwargs) !_exit
-  | Map.null kwargs
+  | odNull kwargs
   = throwEdh UsageError "Not implemented yet."
 whereProc !apk _ =
   throwEdh UsageError $ "Invalid args to where()" <> T.pack (show apk)

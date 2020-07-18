@@ -100,7 +100,7 @@ coerceEdhToFloat' !pgs !v !naExit !exit = case edhUltimate v of
     EdhNil -> naExit
     EdhMethod !mth ->
       runEdhProc pgs
-        $ callEdhMethod o mth (ArgsPack [] mempty) id
+        $ callEdhMethod o mth (ArgsPack [] odEmpty) id
         $ \(OriginalValue !rtn _ _) -> case edhUltimate rtn of
             EdhDecimal !n -> contEdhSTM $ exitWith n
             !badVal ->
@@ -142,7 +142,7 @@ coerceEdhToIntegral' !pgs !v !naExit !exit = case edhUltimate v of
     EdhNil -> naExit
     EdhMethod !mth ->
       runEdhProc pgs
-        $ callEdhMethod o mth (ArgsPack [] mempty) id
+        $ callEdhMethod o mth (ArgsPack [] odEmpty) id
         $ \(OriginalValue !rtn _ _) -> case edhUltimate rtn of
             EdhDecimal !n -> contEdhSTM $ case D.decimalToInteger n of
               Just !i -> exit $ fromInteger i
