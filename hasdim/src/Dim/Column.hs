@@ -56,6 +56,10 @@ data Column where
     , column'storage :: !(TVar (FlatArray a))
     } -> Column
  deriving Typeable
+instance Eq Column where
+  (Column x'dti _ x'cs) == (Column y'dti _ y'cs) =
+    -- note coerce is safe only when dti matches
+    x'dti == y'dti && x'cs == coerce y'cs
 
 columnLength :: Column -> STM Int
 columnLength (Column _ !clv _) = readTMVar clv
@@ -854,8 +858,8 @@ colMethods !pgsModule =
   !scope = contextScope $ edh'context pgsModule
 
   colGrowProc :: EdhProcedure
-  colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit
-    | odNull kwargs = case D.decimalToInteger newCapNum of
+  colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit | odNull kwargs =
+    case D.decimalToInteger newCapNum of
       Just !newCap | newCap > 0 -> withThatEntity $ \ !pgs !col ->
         growColumn pgs (fromInteger newCap) col
           $ exitEdhSTM pgs exit

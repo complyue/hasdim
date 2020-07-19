@@ -20,9 +20,6 @@ import qualified Data.Text                     as T
 import           Data.Coerce
 import           Data.Dynamic
 
-import           Data.Vector                    ( Vector )
-import qualified Data.Vector                   as V
-
 import           Data.Lossless.Decimal         as D
 
 import           Language.Edh.EHI
@@ -35,24 +32,27 @@ data Table = Table {
     -- this is also the mutex to coordinate concurrent modifications to the
     -- table
     table'row'count :: !(TMVar Int)
+    -- underlying table storage, represented as columns, those sharing 
+  , table'columns :: !(IOPD AttrKey Column)
     -- optional labels associated with each row
   , table'row'labels :: !(Maybe EdhVector)
-    -- underlying table storage, represented as columns, those sharing 
-  , table'columns :: !(Vector Column)
     -- labels associated with each column, default to their respective index
-  , table'column'labels :: !EdhVector
+  , table'column'labels :: !(Maybe EdhVector)
   } deriving (Typeable)
 
 tableRowCount :: Table -> STM Int
 tableRowCount (Table !trcv _ _ _) = readTMVar trcv
 
 tableRowCapacity :: Table -> STM Int
-tableRowCapacity (Table _ _ !cols _) = if V.length cols < 1
-  then return 0
-  else V.foldM' (\ !cap !col -> min cap <$> columnCapacity col) maxBound cols
+tableRowCapacity (Table _ !cols _ _) = iopdNull cols >>= \case
+  True -> return 0
+  _ ->
+    iopdValues cols
+      >>= foldM (\ !cap !col -> min cap <$> columnCapacity col) maxBound
 
 unsafeMarkTableRowCount :: Int -> Table -> STM ()
 unsafeMarkTableRowCount !rc (Table !trcv _ _ _) = do
+  -- TODO check rc not exceeding cap of any column ?
   void $ tryTakeTMVar trcv
   void $ tryPutTMVar trcv rc
 
@@ -60,26 +60,30 @@ createTable
   :: EdhProgState
   -> Int
   -> Int
-  -> [(EdhValue, Int -> TMVar Int -> (Column -> STM ()) -> STM ())]
+  -> OrderedDict
+       AttrKey
+       (Int -> TMVar Int -> (Column -> STM ()) -> STM ())
   -> (Table -> STM ())
   -> STM ()
 createTable _pgs !cap !rowCnt !colCreators !exit = do
-  !trcv      <- newTMVar rowCnt
-  !colLabels <- unsafeIOToSTM $ V.unsafeThaw $ V.fromList
-    [ label | (label, _dti) <- colCreators ]
-  seqcontSTM [ colCreator cap trcv | (_label, colCreator) <- colCreators ]
-    $ \ !cols -> exit $ Table trcv Nothing (V.fromList cols) colLabels
+  !trcv <- newTMVar rowCnt
+  seqcontSTM
+      [ \ !exit' -> colCreator cap trcv $ \ !col -> exit' (key, col)
+      | (!key, !colCreator) <- odToReverseList colCreators
+      ]
+    $ \ !colEntries -> iopdFromList colEntries
+        >>= \ !tcols -> exit $ Table trcv tcols Nothing Nothing
 
 growTable :: EdhProgState -> Int -> Table -> STM () -> STM ()
-growTable !pgs !newRowCnt (Table !trcv _ !cols _) !exit =
-  seqcontSTM [ resolveDataType pgs dti | (Column !dti _ _) <- V.toList cols ]
-    $ \ !dtl -> flip (edhPerformSTM pgs) (const $ contEdhSTM exit) $ do
-        !trc <- takeTMVar trcv
+growTable !pgs !newRowCnt (Table !trcv !tcols _ _) !exit =
+  iopdValues tcols >>= \ !cols ->
+    seqcontSTM [ resolveDataType pgs dti | (Column !dti _ _) <- cols ]
+      $ \ !dtl -> flip (edhPerformSTM pgs) (const $ contEdhSTM exit) $ do
+          !trc <- takeTMVar trcv
 
-        forM_ [ (dt, col) | (dt, col) <- zip dtl (V.toList cols) ]
-          $ uncurry growCol
+          forM_ [ (dt, col) | (dt, col) <- zip dtl cols ] $ uncurry growCol
 
-        putTMVar trcv $ min newRowCnt trc
+          putTMVar trcv $ min newRowCnt trc
  where
   growCol :: DataType -> Column -> STM ()
   growCol (DataType _dti !dtStorable) (Column _ _ !csv) = do
@@ -91,8 +95,9 @@ growTable !pgs !newRowCnt (Table !trcv _ !cols _) !exit =
 -- | host constructor Table( capacity, rowCount, col1=<dtype> | <Column>, col2=... )
 tabCtor :: EdhHostCtor
 tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
-  parseArgs $ \(cap, rowCnt) -> seqcontSTM (parseColSpec <$> odToList kwargs)
-    $ \ !specs -> createTable pgsCtor cap rowCnt specs (ctorExit . toDyn)
+  parseArgs $ \(!cap, !rowCnt) ->
+    odMapContSTM parseColSpec kwargs $ \ !colCreators ->
+      createTable pgsCtor cap rowCnt colCreators $ ctorExit . toDyn
  where
   parseArgs :: ((Int, Int) -> STM ()) -> STM ()
   parseArgs !exit = case args of
@@ -117,18 +122,14 @@ tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
           <> T.pack (show capNum)
 
   parseColSpec
-    :: (AttrKey, EdhValue)
-    -> (  (EdhValue, Int -> TMVar Int -> (Column -> STM ()) -> STM ())
-       -> STM ()
-       )
+    :: EdhValue
+    -> ((Int -> TMVar Int -> (Column -> STM ()) -> STM ()) -> STM ())
     -> STM ()
-  parseColSpec (!key, !val) !exit = case edhUltimate val of
-    EdhString !dti -> exit (attrKeyValue key, createCol dti)
+  parseColSpec !val !exit = case edhUltimate val of
+    EdhString !dti -> exit $ createCol dti
     EdhObject !obj -> castObjectStore obj >>= \case
-      Just col@Column{} -> exit (attrKeyValue key, copyCol col)
-      Nothing ->
-        throwEdhSTM pgsCtor UsageError $ "Not a Column object for " <> T.pack
-          (show key)
+      Just col@Column{} -> exit $ copyCol col
+      Nothing -> throwEdhSTM pgsCtor UsageError $ "Not a Column object"
     !badColSpec -> edhValueReprSTM pgsCtor badColSpec $ \ !colRepr ->
       throwEdhSTM pgsCtor UsageError
         $  "Invalid column specification, "
@@ -138,6 +139,7 @@ tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
 
   createCol :: DataTypeIdent -> Int -> TMVar Int -> (Column -> STM ()) -> STM ()
   createCol !dti !cap !clv !exit = createColumn pgsCtor dti cap clv exit
+
   copyCol :: Column -> Int -> TMVar Int -> (Column -> STM ()) -> STM ()
   copyCol (Column !dti !clvSrc !csvSrc) !cap !clv !exit = do
     !clSrc                  <- readTMVar clvSrc
