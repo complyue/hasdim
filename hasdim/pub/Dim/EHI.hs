@@ -14,8 +14,6 @@ import           Control.Monad.Reader
 
 import           Data.Dynamic
 
-import qualified Data.HashMap.Strict           as Map
-
 import           Language.Edh.EHI
 
 import           Dim.XCHG
@@ -143,7 +141,7 @@ installDimBatteries !world = do
            $   mkHostClass moduScope nm hc
            =<< createSideEntityManipulater True
            =<< mths pgs
-         | (nm, hc, mths) <- [("Table", tabCtor, tabMethods)]
+         | (nm, hc, mths) <- [("Table", tabCtor, tabMethods colTmplObj)]
          ]
 
     let !moduArts =

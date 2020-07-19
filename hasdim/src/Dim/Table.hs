@@ -69,7 +69,7 @@ createTable _pgs !cap !rowCnt !colCreators !exit = do
   !trcv <- newTMVar rowCnt
   seqcontSTM
       [ \ !exit' -> colCreator cap trcv $ \ !col -> exit' (key, col)
-      | (!key, !colCreator) <- odToReverseList colCreators
+      | (!key, !colCreator) <- odToList colCreators
       ]
     $ \ !colEntries -> iopdFromList colEntries
         >>= \ !tcols -> exit $ Table trcv tcols Nothing Nothing
@@ -153,8 +153,8 @@ tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
     exit $ Column dti clv csv'
 
 
-tabMethods :: EdhProgState -> STM [(AttrKey, EdhValue)]
-tabMethods !pgsModule =
+tabMethods :: Object -> EdhProgState -> STM [(AttrKey, EdhValue)]
+tabMethods !colt !pgsModule =
   sequence
     $  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
        | (nm, vc, hp, mthArgs) <-
@@ -163,16 +163,25 @@ tabMethods !pgsModule =
            , tabGrowProc
            , PackReceiver [mandatoryArg "newCapacity"]
            )
---  , ("[]", EdhMethod, tabIdxReadProc, PackReceiver [mandatoryArg "idx"])
---  , ( "[=]"
---    , EdhMethod
---    , tabIdxWriteProc
---    , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
---    )
-         , ("@"       , EdhMethod, tabAttrProc, PackReceiver [])
+         , ("[]", EdhMethod, tabIdxReadProc, PackReceiver [mandatoryArg "idx"])
+         , ( "[=]"
+           , EdhMethod
+           , tabIdxWriteProc
+           , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
+           )
+         , ( "@"
+           , EdhMethod
+           , tabAttrReadProc
+           , PackReceiver [mandatoryArg "attrKey"]
+           )
+         , ( "@="
+           , EdhMethod
+           , tabAttrWriteProc
+           , PackReceiver [mandatoryArg "attrKey", mandatoryArg "attrVal"]
+           )
          , ("__repr__", EdhMethod, tabReprProc, PackReceiver [])
---  , ("__show__", EdhMethod, tabShowProc, PackReceiver [])
---  , ("__desc__", EdhMethod, tabDescProc, PackReceiver [])
+         , ("__show__", EdhMethod, tabShowProc, PackReceiver [])
+         , ("__desc__", EdhMethod, tabDescProc, PackReceiver [])
          ]
        ]
     ++ [ (AttrByName nm, ) <$> mkHostProperty scope nm getter setter
@@ -216,24 +225,85 @@ tabMethods !pgsModule =
         _ -> throwEdhSTM pgs UsageError "Table length out of range"
   tabMarkLenProc _ _ = throwEdh UsageError "Invalid args to Table.markLength()"
 
-  tabAttrProc :: EdhProcedure
-  tabAttrProc (ArgsPack [!attrKey] _) !exit =
+
+  tabIdxReadProc :: EdhProcedure
+  tabIdxReadProc (ArgsPack [!idxVal] _) !exit =
     -- TODO impl. 
     exitEdhProc exit $ EdhString "<not impl.>"
-  tabAttrProc _ _ = throwEdh EvalError "bug: unexpected args to (@)"
+  tabIdxReadProc !apk _ =
+    throwEdh EvalError $ "Bad args to index a table" <> T.pack (show apk)
+
+  tabIdxWriteProc :: EdhProcedure
+  tabIdxWriteProc (ArgsPack [!idxVal, !toVal] _) !exit =
+    -- TODO impl. 
+    exitEdhProc exit $ EdhString "<not impl.>"
+  tabIdxWriteProc !apk _ =
+    throwEdh EvalError $ "Bad args to index assign a table" <> T.pack (show apk)
+
+
+  tabAttrReadProc :: EdhProcedure
+  tabAttrReadProc (ArgsPack [!attrKey] _) !exit =
+    withThatEntity $ \ !pgs (Table _ !tcols _ _) -> case attrKey of
+      EdhString !attrName -> iopdLookup (AttrByName attrName) tcols >>= \case
+        Nothing   -> exitEdhSTM pgs exit nil
+        Just !col -> cloneEdhObject colt (\_ !cloneTo -> cloneTo $ toDyn col)
+          $ \ !colObj -> exitEdhSTM pgs exit $ EdhObject colObj
+      !badColId ->
+        throwEdhSTM pgs UsageError $ "Invalid Column identifier of " <> T.pack
+          (edhTypeNameOf badColId)
+  tabAttrReadProc !apk _ =
+    throwEdh EvalError $ "Bad args to get column(s) from a table" <> T.pack
+      (show apk)
+
+  tabAttrWriteProc :: EdhProcedure
+  tabAttrWriteProc (ArgsPack [!attrKey, !attrVal] _) !exit =
+    -- TODO impl. 
+    exitEdhProc exit $ EdhString "<not impl.>"
+  tabAttrWriteProc !apk _ =
+    throwEdh EvalError $ "Bad args to set column(s) to a table" <> T.pack
+      (show apk)
+
 
   tabReprProc :: EdhProcedure
   tabReprProc _ !exit =
     withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-Table>")
-      $ \ !pgs tab@(Table !trcv _rowLabels !_cols !_colLabels) -> do
-          !rc  <- readTMVar trcv
-          !cap <- tableRowCapacity tab
+      $ \ !pgs tab@(Table !trcv !tcols _ _) -> do
+          !trc      <- readTMVar trcv
+          !cap      <- tableRowCapacity tab
+          !colReprs <-
+            (iopdToList tcols >>=) $ (return .) $ fmap $ \(!colKey, !col) ->
+              T.pack (show colKey) <> "=" <> column'data'type col <> ", "
           exitEdhSTM pgs exit
             $  EdhString
-            $  "Table("
+            $  "Table( "
             <> T.pack (show cap)
             <> ", "
-            <> T.pack (show rc)
-          -- TODO fill here with column identifier and their dtypes
-            <> ", ...)"
+            <> T.pack (show trc)
+            <> ", "
+            <> T.concat colReprs
+            <> ")"
+
+  tabShowProc :: EdhProcedure
+  tabShowProc _ !exit =
+    withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-Table>")
+      $ \ !pgs tab@(Table !trcv !tcols _ _) -> do
+          !trc <- readTMVar trcv
+          exitEdhSTM pgs exit
+            $  EdhString
+            $  "Table:\n * Row Count: "
+            <> T.pack (show trc)
+          -- TODO fill here with column data
+            <> "...\n"
+
+  tabDescProc :: EdhProcedure
+  tabDescProc _ !exit =
+    withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-Table>")
+      $ \ !pgs tab@(Table !trcv !tcols _ _) -> do
+          !trc <- readTMVar trcv
+          exitEdhSTM pgs exit
+            $  EdhString
+            $  "Table:\n * Row Count: "
+            <> T.pack (show trc)
+          -- TODO fill here with column statistics
+            <> "...\n"
 
