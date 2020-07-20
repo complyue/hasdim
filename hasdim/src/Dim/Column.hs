@@ -650,10 +650,17 @@ colMethods !pgsModule =
   sequence
     $  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
        | (nm, vc, hp, mthArgs) <-
-         [ ( "grow"
+         [ ("__cap__", EdhMethod, colCapProc, PackReceiver [])
+         , ( "__grow__"
            , EdhMethod
            , colGrowProc
            , PackReceiver [mandatoryArg "newCapacity"]
+           )
+         , ("__len__", EdhMethod, colLenProc, PackReceiver [])
+         , ( "__mark__"
+           , EdhMethod
+           , colMarkLenProc
+           , PackReceiver [mandatoryArg "newLength"]
            )
          , ("[]", EdhMethod, colIdxReadProc, PackReceiver [mandatoryArg "idx"])
          , ( "[=]"
@@ -848,11 +855,7 @@ colMethods !pgsModule =
          ]
        ]
     ++ [ (AttrByName nm, ) <$> mkHostProperty scope nm getter setter
-       | (nm, getter, setter) <-
-         [ ("capacity", colCapProc  , Nothing)
-         , ("length"  , colLenProc  , Just colMarkLenProc)
-         , ("dtype"   , colDtypeProc, Nothing)
-         ]
+       | (nm, getter, setter) <- [("dtype", colDtypeProc, Nothing)]
        ]
  where
   !scope = contextScope $ edh'context pgsModule

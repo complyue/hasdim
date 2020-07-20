@@ -156,40 +156,41 @@ tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
 tabMethods :: Object -> EdhProgState -> STM [(AttrKey, EdhValue)]
 tabMethods !colt !pgsModule =
   sequence
-    $  [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
-       | (nm, vc, hp, mthArgs) <-
-         [ ( "grow"
-           , EdhMethod
-           , tabGrowProc
-           , PackReceiver [mandatoryArg "newCapacity"]
-           )
-         , ("[]", EdhMethod, tabIdxReadProc, PackReceiver [mandatoryArg "idx"])
-         , ( "[=]"
-           , EdhMethod
-           , tabIdxWriteProc
-           , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
-           )
-         , ( "@"
-           , EdhMethod
-           , tabAttrReadProc
-           , PackReceiver [mandatoryArg "attrKey"]
-           )
-         , ( "@="
-           , EdhMethod
-           , tabAttrWriteProc
-           , PackReceiver [mandatoryArg "attrKey", mandatoryArg "attrVal"]
-           )
-         , ("__repr__", EdhMethod, tabReprProc, PackReceiver [])
-         , ("__show__", EdhMethod, tabShowProc, PackReceiver [])
-         , ("__desc__", EdhMethod, tabDescProc, PackReceiver [])
-         ]
-       ]
-    ++ [ (AttrByName nm, ) <$> mkHostProperty scope nm getter setter
-       | (nm, getter, setter) <-
-         [ ("capacity", tabCapProc, Nothing)
-         , ("length"  , tabLenProc, Just tabMarkLenProc)
-         ]
-       ]
+    $ [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
+      | (nm, vc, hp, mthArgs) <-
+        [ ("__cap__", EdhMethod, tabCapProc, PackReceiver [])
+        , ( "__grow__"
+          , EdhMethod
+          , tabGrowProc
+          , PackReceiver [mandatoryArg "newCapacity"]
+          )
+        , ("__len__", EdhMethod, tabLenProc, PackReceiver [])
+        , ( "__mark__"
+          , EdhMethod
+          , tabMarkRowCntProc
+          , PackReceiver [mandatoryArg "newRowCount"]
+          )
+        , ("[]", EdhMethod, tabIdxReadProc, PackReceiver [mandatoryArg "idx"])
+        , ( "[=]"
+          , EdhMethod
+          , tabIdxWriteProc
+          , PackReceiver [mandatoryArg "idx", mandatoryArg "val"]
+          )
+        , ( "@"
+          , EdhMethod
+          , tabAttrReadProc
+          , PackReceiver [mandatoryArg "attrKey"]
+          )
+        , ( "@="
+          , EdhMethod
+          , tabAttrWriteProc
+          , PackReceiver [mandatoryArg "attrKey", mandatoryArg "attrVal"]
+          )
+        , ("__repr__", EdhMethod, tabReprProc, PackReceiver [])
+        , ("__show__", EdhMethod, tabShowProc, PackReceiver [])
+        , ("__desc__", EdhMethod, tabDescProc, PackReceiver [])
+        ]
+      ]
  where
   !scope = contextScope $ edh'context pgsModule
 
@@ -214,8 +215,8 @@ tabMethods !colt !pgsModule =
   tabLenProc _ !exit = withThatEntity $ \ !pgs !tab -> tableRowCount tab
     >>= \ !len -> exitEdhSTM pgs exit $ EdhDecimal $ fromIntegral len
 
-  tabMarkLenProc :: EdhProcedure
-  tabMarkLenProc (ArgsPack [EdhDecimal !newLenNum] !kwargs) !exit
+  tabMarkRowCntProc :: EdhProcedure
+  tabMarkRowCntProc (ArgsPack [EdhDecimal !newLenNum] !kwargs) !exit
     | odNull kwargs = withThatEntity $ \ !pgs !tab -> do
       !cap <- tableRowCapacity tab
       case D.decimalToInteger newLenNum of
@@ -223,7 +224,8 @@ tabMethods !colt !pgsModule =
           unsafeMarkTableRowCount (fromInteger newLen) tab
             >> exitEdhSTM pgs exit nil
         _ -> throwEdhSTM pgs UsageError "Table length out of range"
-  tabMarkLenProc _ _ = throwEdh UsageError "Invalid args to Table.markLength()"
+  tabMarkRowCntProc _ _ =
+    throwEdh UsageError "Invalid args to Table.markLength()"
 
 
   tabIdxReadProc :: EdhProcedure
