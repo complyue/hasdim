@@ -148,20 +148,35 @@ resolveDataType !pgs !dti =
 resolveDataType'
   :: EdhProgState -> DataTypeIdent -> STM () -> (DataType -> STM ()) -> STM ()
 resolveDataType' !pgs !dti !naExit !exit =
-  runEdhProc pgs
-    $ performEdhEffect (AttrBySym resolveDataTypeEffId) [EdhString dti] []
-    $ \case
-        EdhNil         -> contEdhSTM naExit
-        EdhObject !dto -> contEdhSTM $ fromDynamic <$> objStore dto >>= \case
-          Nothing  -> naExit
-          Just !dt -> exit dt
-        !badDtVal ->
-          throwEdh UsageError
-            $  "Bad return type from @resolveDataType(dti): "
-            <> T.pack (edhTypeNameOf badDtVal)
+  lookupEntityAttr pgs cacheEntity (AttrBySym dataTypeCacheId) >>= \case
+    EdhDict (Dict _ !cds) -> resolveWithCache cds
+    _                     -> do
+      cd@(Dict _ !cds) <- createEdhDict []
+      changeEntityAttr pgs cacheEntity (AttrBySym dataTypeCacheId) $ EdhDict cd
+      resolveWithCache cds
+ where
+  !cacheEntity = scopeEntity $ contextScope $ edh'context pgs
+  exitWithDto !dto = fromDynamic <$> objStore dto >>= \case
+    Nothing  -> naExit
+    Just !dt -> exit dt
+  resolveWithCache !cds = iopdLookup (EdhString dti) cds >>= \case
+    Just (EdhObject !dto) -> exitWithDto dto
+    _ ->
+      runEdhProc pgs
+        $ performEdhEffect (AttrBySym resolveDataTypeEffId) [EdhString dti] []
+        $ \case
+            EdhNil         -> contEdhSTM naExit
+            EdhObject !dto -> contEdhSTM $ do
+              iopdUpdate [(EdhString dti, EdhObject dto)] cds
+              exitWithDto dto
+            !badDtVal ->
+              throwEdh UsageError
+                $  "Bad return type from @resolveDataType(dti): "
+                <> T.pack (edhTypeNameOf badDtVal)
 resolveDataTypeEffId :: Symbol
 resolveDataTypeEffId = globalSymbol "@resolveDataType"
-
+dataTypeCacheId :: Symbol
+dataTypeCacheId = globalSymbol "@dataTypeCache"
 
 -- | The ultimate fallback to have trivial data types resolved
 resolveDataTypeProc :: Object -> EdhProcedure
