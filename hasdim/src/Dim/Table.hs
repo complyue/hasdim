@@ -129,7 +129,10 @@ tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
     EdhString !dti -> exit $ createCol dti
     EdhObject !obj -> castObjectStore obj >>= \case
       Just col@Column{} -> exit $ copyCol col
-      Nothing -> throwEdhSTM pgsCtor UsageError $ "Not a Column object"
+      Nothing ->
+        throwEdhSTM pgsCtor UsageError
+          $  "Not a Column object but of class: "
+          <> procedureName (objClass obj)
     !badColSpec -> edhValueReprSTM pgsCtor badColSpec $ \ !colRepr ->
       throwEdhSTM pgsCtor UsageError
         $  "Invalid column specification, "
