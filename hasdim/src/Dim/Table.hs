@@ -14,7 +14,7 @@ import           Control.Monad
 
 import           Control.Concurrent.STM
 
--- import           Data.Text                      ( Text )
+import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 
 import           Data.Coerce
@@ -288,17 +288,77 @@ tabMethods !colt !pgsModule =
             <> T.concat colReprs
             <> ")"
 
+
   tabShowProc :: EdhProcedure
-  tabShowProc _ !exit =
+  tabShowProc (ArgsPack _ !kwargs) !exit =
     withThatEntity' (\ !pgs -> exitEdhSTM pgs exit $ EdhString "<bogus-Table>")
-      $ \ !pgs tab@(Table !trcv !tcols _ _) -> do
-          !trc <- readTMVar trcv
-          exitEdhSTM pgs exit
-            $  EdhString
-            $  "Table:\n * Row Count: "
-            <> T.pack (show trc)
-          -- TODO fill here with column data
-            <> "...\n"
+      $ \ !pgs tab@(Table !trcv !tcols _ _) ->
+          let
+            parseTabTitle :: (Text -> STM ()) -> EdhValue -> STM ()
+            parseTabTitle !exit' = \case
+              EdhString !title -> exit' title
+              !titleVal ->
+                edhValueReprSTM pgs titleVal $ \ !title -> exit' title
+            parseColWidth :: (Int -> STM ()) -> EdhValue -> STM ()
+            parseColWidth !exit' = \case
+              EdhDecimal !cwNum -> case D.decimalToInteger cwNum of
+                Just !cw | cw > 0 && cw < 200 -> exit' $ fromInteger cw
+                _ ->
+                  throwEdhSTM pgs UsageError $ "Invalid columnWidth: " <> T.pack
+                    (show cwNum)
+              !badColWidthVal ->
+                edhValueReprSTM pgs badColWidthVal $ \ !badColWidth ->
+                  throwEdhSTM pgs UsageError
+                    $  "Invalid columnWidth: "
+                    <> badColWidth
+          in
+            odLookupContSTM 10 (flip parseColWidth) (AttrByName "cw") kwargs
+              $ \ !colWidth ->
+                  odLookupContSTM "Table"
+                                  (flip parseTabTitle)
+                                  (AttrByName "title")
+                                  kwargs
+                    $ \ !tabTitle -> do
+                        !tcc        <- iopdSize tcols
+                        !trc        <- readTMVar trcv
+                        !cap        <- tableRowCapacity tab
+                        !colEntries <- iopdToList tcols
+                        let !titleLine =
+                              T.concat
+                                $   centerBriefAlign colWidth
+                                .   T.pack
+                                .   show
+                                .   fst
+                                <$> colEntries
+                            !totalWidth = T.length titleLine
+                        exitEdhSTM pgs exit
+                          $  EdhString
+                          $  T.replicate (totalWidth + 1) "-"
+                          <> "\n|"
+                          <> centerBriefAlign
+                               totalWidth
+                               (  tabTitle
+                               <> " "
+                               <> T.pack (show trc)
+                               <> "/"
+                               <> T.pack (show cap)
+                               <> " * "
+                               <> T.pack (show tcc)
+                               )
+                          <> "\n|"
+                          <> T.replicate (totalWidth - 1) "-"
+                          <> "|\n|"
+                          <> titleLine
+                          <> "\n|"
+                          <> T.replicate (totalWidth - 1) "-"
+                          <> "|\n|"
+
+  -- TODO fill here with column data
+                          <> centerBriefAlign totalWidth "..."
+
+                          <> "\n"
+                          <> T.replicate (totalWidth + 1) "-"
+
 
   tabDescProc :: EdhProcedure
   tabDescProc _ !exit =
@@ -311,4 +371,17 @@ tabMethods !colt !pgsModule =
             <> T.pack (show trc)
           -- TODO fill here with column statistics
             <> "...\n"
+
+
+centerBriefAlign :: Int -> Text -> Text
+centerBriefAlign !colWidth !txt | colWidth <= 5 = T.take colWidth txt
+centerBriefAlign !colWidth !txt                 = if len < colWidth
+  then
+    let (!margin, !rightPadding) = quotRem (colWidth - len) 2
+    in  T.pack (replicate margin ' ')
+        <> txt
+        <> T.pack (replicate (margin - 1 + rightPadding) ' ')
+        <> "|"
+  else T.take (colWidth - 4) txt <> "...|"
+  where !len = T.length txt
 

@@ -928,6 +928,7 @@ colMethods !pgsModule =
     showData !pgs !len !readElem = go 0 [] 0 ""
      where
       go :: Int -> [Text] -> Int -> Text -> STM ()
+      -- TODO don't generate all lines for large columns
       go !i !cumLines !lineIdx !line | i >= len =
         exitEdhSTM pgs exit $ EdhString $ if T.null line && null cumLines
           then "Zero-Length Column"
