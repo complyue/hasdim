@@ -61,11 +61,11 @@ instance Eq Column where
     -- note coerce is safe only when dti matches
     x'dti == y'dti && x'cs == coerce y'cs
 
-columnLength :: Column -> STM Int
-columnLength (Column _ !clv _) = readTMVar clv
-
 columnCapacity :: Column -> STM Int
 columnCapacity (Column _ _ !csv) = flatArrayCapacity <$> readTVar csv
+
+columnLength :: Column -> STM Int
+columnLength (Column _ !clv _) = readTMVar clv
 
 unsafeMarkColumnLength :: Int -> Column -> STM ()
 unsafeMarkColumnLength !newLen (Column _ !clv _) = do

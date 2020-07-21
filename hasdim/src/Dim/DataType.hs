@@ -309,7 +309,7 @@ data FlatOrd a where
 flatOrd :: (Ord a, Storable a, Typeable a, EdhXchg a) => FlatOrd a
 flatOrd = FlatOrd vecCmp elemCmp
  where
-  -- vectorized comparation, yielding a new Int8 array
+  -- vectorized comparation, yielding a new VecBool array
   vecCmp !pgs (FlatArray !cap !fp) !cmp !v !exit = fromEdh pgs v $ \ !sv ->
     (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
       !rp  <- callocArray cap
@@ -320,7 +320,7 @@ flatOrd = FlatOrd vecCmp elemCmp
             pokeElemOff rp i $ if cmp $ compare ev sv then 1 else 0
             go (i + 1)
       go 0
-  -- element-wise comparation, yielding a new Int8 array
+  -- element-wise comparation, yielding a new VecBool array
   elemCmp _pgs (FlatArray !cap1 !fp1) !cmp (FlatArray _cap2 !fp2) !exit =
     (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp1 $ \ !p1 ->
       withForeignPtr fp2 $ \ !p2 -> do
