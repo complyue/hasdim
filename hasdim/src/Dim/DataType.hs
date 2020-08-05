@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 -- | Numpy dtype inspired abstraction for vectorizable types of data
 --
@@ -15,7 +16,6 @@ import           Foreign
 import           Control.Monad.Reader
 
 import           Control.Concurrent.STM
-
 
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
@@ -35,7 +35,6 @@ import           Dim.XCHG
 data FlatArray a = FlatArray
     {-# UNPACK #-} !Int            -- ^ capacity
     {-# UNPACK #-} !(ForeignPtr a) -- ^ mem ref
-  deriving ( Typeable )
 
 emptyFlatArray :: FlatArray a
 emptyFlatArray = unsafePerformIO $ do
@@ -132,78 +131,12 @@ dtypeMethods !pgsModule =
       $ \ !pgs (DataType !ident _) -> exitEdhSTM pgs exit $ EdhString ident
 
 
--- | Resolve effective data storage routines per data type identifier
---
--- an exception is thrown if the identifier is not applicable
-resolveDataType
-  :: EdhProgState -> DataTypeIdent -> (DataType -> STM ()) -> STM ()
-resolveDataType !pgs !dti =
-  resolveDataType' pgs dti
-    $  throwEdhSTM pgs UsageError
-    $  "Not an applicable dtype: "
-    <> dti
--- | Resolve effective data storage routines per data type identifier
--- 
--- will take the @naExit@ if the identifier is not applicable
-resolveDataType'
-  :: EdhProgState -> DataTypeIdent -> STM () -> (DataType -> STM ()) -> STM ()
-resolveDataType' !pgs !dti !naExit !exit =
-  lookupEntityAttr pgs cacheEntity (AttrBySym dataTypeCacheId) >>= \case
-    EdhDict (Dict _ !cds) -> resolveWithCache cds
-    _                     -> do
-      cd@(Dict _ !cds) <- createEdhDict []
-      changeEntityAttr pgs cacheEntity (AttrBySym dataTypeCacheId) $ EdhDict cd
-      resolveWithCache cds
- where
-  !cacheEntity = scopeEntity $ contextScope $ edh'context pgs
-  exitWithDto !dto = fromDynamic <$> objStore dto >>= \case
-    Nothing  -> naExit
-    Just !dt -> exit dt
-  resolveWithCache !cds = iopdLookup (EdhString dti) cds >>= \case
-    Just (EdhObject !dto) -> exitWithDto dto
-    _ ->
-      runEdhProc pgs
-        $ performEdhEffect (AttrBySym resolveDataTypeEffId) [EdhString dti] []
-        $ \case
-            EdhNil         -> contEdhSTM naExit
-            EdhObject !dto -> contEdhSTM $ do
-              iopdUpdate [(EdhString dti, EdhObject dto)] cds
-              exitWithDto dto
-            !badDtVal ->
-              throwEdh UsageError
-                $  "Bad return type from @resolveDataType(dti): "
-                <> T.pack (edhTypeNameOf badDtVal)
-resolveDataTypeEffId :: Symbol
-resolveDataTypeEffId = globalSymbol "@resolveDataType"
-dataTypeCacheId :: Symbol
-dataTypeCacheId = globalSymbol "@dataTypeCache"
-
--- | The ultimate fallback to have trivial data types resolved
-resolveDataTypeProc :: Object -> EdhProcedure
-resolveDataTypeProc !dtTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
-  | odNull kwargs = ask >>= \ !pgs -> contEdhSTM $ do
-    let exitWith !dt =
-          cloneEdhObject dtTmplObj (\_ !cloneExit -> cloneExit $ toDyn dt)
-            $ \ !dto -> exitEdhSTM pgs exit $ EdhObject dto
-    case dti of
-      "float64" ->
-        exitWith $ DataType dti (flatStorable :: FlatStorable Double)
-      "float32" -> exitWith $ DataType dti (flatStorable :: FlatStorable Float)
-      "int64"   -> exitWith $ DataType dti (flatStorable :: FlatStorable Int64)
-      "int32"   -> exitWith $ DataType dti (flatStorable :: FlatStorable Int32)
-      "int8"    -> exitWith $ DataType dti (flatStorable :: FlatStorable Int8)
-      "byte"    -> exitWith $ DataType dti (flatStorable :: FlatStorable Word8)
-      "intp"    -> exitWith $ DataType dti (flatStorable :: FlatStorable Int)
-      "bool" -> exitWith $ DataType dti (flatStorable :: FlatStorable VecBool)
-      _ ->
-        throwEdhSTM pgs UsageError
-          $  "A non-trivial data type requested,"
-          <> " you may have some framework/lib to provide an effective dtype"
-          <> " identified by: "
-          <> dti
-resolveDataTypeProc _ _ _ =
-  throwEdh UsageError "Invalid args to @resolveDataType(dti)"
-
+makeDataType
+  :: forall a
+   . (EdhXchg a, Storable a, Typeable a)
+  => DataTypeIdent
+  -> DataType
+makeDataType !dti = DataType dti (flatStorable :: FlatStorable a)
 
 -- | FlatStorable facilitates the basic support of a data type to be managable
 -- by HasDim, i.e. array allocation, element read/write, array bulk update.

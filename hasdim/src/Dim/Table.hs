@@ -18,6 +18,7 @@ import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 
 import           Data.Coerce
+import           Data.Unique
 import           Data.Dynamic
 
 import           Data.Lossless.Decimal         as D
@@ -75,18 +76,18 @@ createTable _pgs !cap !rowCnt !colCreators !exit = do
         >>= \ !tcols -> exit $ Table trcv tcols Nothing Nothing
 
 growTable :: EdhProgState -> Int -> Table -> STM () -> STM ()
-growTable !pgs !newRowCnt (Table !trcv !tcols _ _) !exit =
-  iopdValues tcols >>= \ !cols ->
-    seqcontSTM [ resolveDataType pgs dti | (Column !dti _ _) <- cols ]
-      $ \ !dtl -> flip (edhPerformSTM pgs) (const $ contEdhSTM exit) $ do
-          !trc <- takeTMVar trcv
+growTable _pgs !newRowCnt (Table !trcv !tcols _ _) !exit =
+  iopdValues tcols >>= \ !cols -> do
+    !trc <- takeTMVar trcv
 
-          forM_ [ (dt, col) | (dt, col) <- zip dtl cols ] $ uncurry growCol
+    sequence_ $ growCol <$> cols
 
-          putTMVar trcv $ min newRowCnt trc
+    putTMVar trcv $ min newRowCnt trc
+
+    exit
  where
-  growCol :: DataType -> Column -> STM ()
-  growCol (DataType _dti !dtStorable) (Column _ _ !csv) = do
+  growCol :: Column -> STM ()
+  growCol (Column (DataType _dti !dtStorable) _ !csv) = do
     !cs  <- readTVar csv
     !cs' <- flat'grow'array dtStorable (coerce cs) newRowCnt
     writeTVar csv (coerce cs')
@@ -126,13 +127,14 @@ tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
     -> ((Int -> TMVar Int -> (Column -> STM ()) -> STM ()) -> STM ())
     -> STM ()
   parseColSpec !val !exit = case edhUltimate val of
-    EdhString !dti -> exit $ createCol dti
     EdhObject !obj -> castObjectStore obj >>= \case
       Just col@Column{} -> exit $ copyCol col
-      Nothing ->
-        throwEdhSTM pgsCtor UsageError
-          $  "Not a Column object but of class: "
-          <> procedureName (objClass obj)
+      Nothing           -> castObjectStore obj >>= \case
+        Just !dt -> exit $ createCol dt
+        Nothing ->
+          throwEdhSTM pgsCtor UsageError
+            $  "Neither a Column object nor a dtype, but of class: "
+            <> procedureName (objClass obj)
     !badColSpec -> edhValueReprSTM pgsCtor badColSpec $ \ !colRepr ->
       throwEdhSTM pgsCtor UsageError
         $  "Invalid column specification, "
@@ -140,8 +142,8 @@ tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
         <> ": "
         <> colRepr
 
-  createCol :: DataTypeIdent -> Int -> TMVar Int -> (Column -> STM ()) -> STM ()
-  createCol !dti !cap !clv !exit = createColumn pgsCtor dti cap clv exit
+  createCol :: DataType -> Int -> TMVar Int -> (Column -> STM ()) -> STM ()
+  createCol !dt !cap !clv !exit = createColumn pgsCtor dt cap clv exit
 
   copyCol :: Column -> Int -> TMVar Int -> (Column -> STM ()) -> STM ()
   copyCol (Column !dti !clvSrc !csvSrc) !cap !clv !exit = do
@@ -156,8 +158,8 @@ tabCtor !pgsCtor (ArgsPack !args !kwargs) !ctorExit =
     exit $ Column dti clv csv'
 
 
-tabMethods :: Object -> EdhProgState -> STM [(AttrKey, EdhValue)]
-tabMethods !colt !pgsModule =
+tabMethods :: Object -> Unique -> EdhProgState -> STM [(AttrKey, EdhValue)]
+tabMethods !colt !classUniq !pgsModule =
   sequence
     $ [ (AttrByName nm, ) <$> mkHostProc scope vc nm hp mthArgs
       | (nm, vc, hp, mthArgs) <-
@@ -277,7 +279,10 @@ tabMethods !colt !pgsModule =
           !cap      <- tableRowCapacity tab
           !colReprs <-
             (iopdToList tcols >>=) $ (return .) $ fmap $ \(!colKey, !col) ->
-              T.pack (show colKey) <> "=" <> column'data'type col <> ", "
+              T.pack (show colKey)
+                <> "="
+                <> data'type'identifier (column'data'type col)
+                <> ", "
           exitEdhSTM pgs exit
             $  EdhString
             $  "Table( "

@@ -27,6 +27,7 @@ library
     default-language: Haskell2010
     default-extensions: NoImplicitPrelude OverloadedStrings LambdaCase
                         BangPatterns TupleSections ScopedTypeVariables
+                        GADTs FlexibleContexts RankNTypes TypeApplications
     ghc-options: -Wall
     build-depends:
         hasdim-internal -any,
@@ -100,6 +101,7 @@ library hasdim-internal
     exposed-modules:
         Dim.XCHG
         Dim.DataType
+        Dim.Array
         Dim.Column
         Dim.Table
     hs-source-dirs: src

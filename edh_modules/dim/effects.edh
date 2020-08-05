@@ -7,7 +7,6 @@
 import * 'dim/symbols'
 
 export import (
-  @resolveDataType,
   @resolveDataComparator,
   @resolveDataOperator,
   @resolveNumDataType,
