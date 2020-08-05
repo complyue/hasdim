@@ -29,6 +29,8 @@ import           Data.Unique
 import           Data.Coerce
 import           Data.Dynamic
 
+import           Data.Vector.Storable           ( Vector )
+
 import qualified Data.Lossless.Decimal         as D
 import           Language.Edh.EHI
 
@@ -289,6 +291,19 @@ mmapDbArray !asVar !dataDir !dataPath (DataType _dti (dts :: FlatStorable a)) =
 -- | unwrap an array from Edh object form
 unwrapDbArrayObject :: Object -> STM (Maybe DbArray)
 unwrapDbArrayObject = castObjectStore
+
+castDbArrayData
+  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (Vector a)
+castDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das) =
+  atomically (readTMVar das) >>= \case
+    Left  !err              -> throwIO err
+    Right (_, !hdrPtr, !fa) -> do
+      !vlen <- readDbArrayLength hdrPtr
+      return
+        $ unsafeFlatArrayAsVector
+        $ unsafeSliceFlatArray fa 0
+        $ fromIntegral vlen
+
 
 -- | host constructor DbArray(dataDir, dataPath, dtype=float64, shape=None)
 aryCtor :: EdhValue -> EdhHostCtor
