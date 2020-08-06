@@ -1,1 +1,1 @@
-# HasDim - Haskell Native Dimensional Data Modeling
+# HasDim - Haskell Dimensional Data Modeling
