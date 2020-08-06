@@ -54,45 +54,26 @@ instance Show ArrayShape where
       ++ [")"]
 type DimName = Text
 type DimSize = Int
-parseArrayShape :: EdhProgState -> EdhValue -> (ArrayShape -> STM ()) -> STM ()
-parseArrayShape !pgs !val !exit = case val of
-  EdhArgsPack (ArgsPack (dim1 : dims) _) -> parseDim dim1 $ \pd ->
-    seqcontSTM (parseDim <$> dims) $ \pds -> exit $ ArrayShape $ pd :| pds
-  _ -> edhValueReprSTM pgs val
-    $ \r -> throwEdhSTM pgs UsageError $ "Invalid array shape spec: " <> r
- where
-  parseDim :: EdhValue -> ((DimName, DimSize) -> STM ()) -> STM ()
-  parseDim v@(EdhDecimal d) !exit' = case D.decimalToInteger d of
-    Just size | size > 0 -> exit' ("", fromInteger size)
-    _                    -> edhValueReprSTM pgs v
-      $ \r -> throwEdhSTM pgs UsageError $ "Invalid dimension size: " <> r
-  parseDim v@(EdhNamedValue name (EdhDecimal d)) !exit' =
-    case D.decimalToInteger d of
-      Just size | size > 0 -> exit' (name, fromInteger size)
-      _                    -> edhValueReprSTM pgs v
-        $ \r -> throwEdhSTM pgs UsageError $ "Invalid dimension size: " <> r
-  parseDim v _ = edhValueReprSTM pgs v
-    $ \r -> throwEdhSTM pgs UsageError $ "Invalid dimension spec: " <> r
-edhArrayShape :: ArrayShape -> EdhValue
-edhArrayShape (ArrayShape !shape) = EdhArgsPack
-  $ ArgsPack (edhDim <$> NE.toList shape) odEmpty
- where
-  edhDim :: (DimName, DimSize) -> EdhValue
-  edhDim (""  , size) = EdhDecimal $ fromIntegral size
-  edhDim (name, size) = EdhNamedValue name $ EdhDecimal $ fromIntegral size
 
-dbArraySize :: ArrayShape -> Int
+dbArraySize1d :: ArrayShape -> DimSize
+dbArraySize1d (ArrayShape !shape) = snd $ NE.head shape
+
+dbArraySize :: ArrayShape -> DimSize
 dbArraySize (ArrayShape !shape) = product (snd <$> shape)
 
--- TODO make error msg more friendly
 flatIndexInShape
-  :: EdhProgState -> [EdhValue] -> ArrayShape -> (Int -> STM ()) -> STM ()
+  :: EdhProgState -> [EdhValue] -> ArrayShape -> (DimSize -> STM ()) -> STM ()
 flatIndexInShape !pgs !idxs (ArrayShape !shape) !exit =
   if length idxs /= NE.length shape
-    then throwEdhSTM pgs UsageError $ "NDim of index mismatch shape"
+    then
+      throwEdhSTM pgs UsageError
+      $  "NDim of index mismatch shape: "
+      <> T.pack (show $ length idxs)
+      <> " vs "
+      <> T.pack (show $ NE.length shape)
     else flatIdx (reverse idxs) (reverse $ NE.toList shape) exit
  where
-  flatIdx :: [EdhValue] -> [(DimName, DimSize)] -> (Int -> STM ()) -> STM ()
+  flatIdx :: [EdhValue] -> [(DimName, DimSize)] -> (DimSize -> STM ()) -> STM ()
   flatIdx [] [] !exit' = exit' 0
   flatIdx (EdhDecimal d : restIdxs) ((_, ds) : restDims) !exit' =
     case D.decimalToInteger d of
@@ -112,15 +93,47 @@ flatIndexInShape !pgs !idxs (ArrayShape !shape) !exit =
         throwEdhSTM pgs UsageError $ "Index not an integer: " <> T.pack (show d)
   flatIdx _ _ _ = throwEdhSTM pgs UsageError "Invalid index"
 
+parseArrayShape :: EdhProgState -> EdhValue -> (ArrayShape -> STM ()) -> STM ()
+parseArrayShape !pgs !val !exit = case val of
+  EdhArgsPack (ArgsPack [!dim1] _) ->
+    parseDim dim1 $ \pd -> exit $ ArrayShape $ pd :| []
+  EdhArgsPack (ArgsPack (dim1 : dims) _) -> parseDim dim1 $ \pd ->
+    seqcontSTM (parseDim <$> dims) $ \pds -> exit $ ArrayShape $ pd :| pds
+  !dim1 -> parseDim dim1 $ \pd -> exit $ ArrayShape $ pd :| []
+ where
+  parseDim :: EdhValue -> ((DimName, DimSize) -> STM ()) -> STM ()
+  parseDim v@(EdhDecimal d) !exit' = case D.decimalToInteger d of
+    Just size | size > 0 -> exit' ("", fromInteger size)
+    _                    -> edhValueReprSTM pgs v
+      $ \r -> throwEdhSTM pgs UsageError $ "Invalid dimension size: " <> r
+  parseDim v@(EdhNamedValue name (EdhDecimal d)) !exit' =
+    case D.decimalToInteger d of
+      Just size | size > 0 -> exit' (name, fromInteger size)
+      _                    -> edhValueReprSTM pgs v
+        $ \r -> throwEdhSTM pgs UsageError $ "Invalid dimension size: " <> r
+  parseDim v _ = edhValueReprSTM pgs v
+    $ \r -> throwEdhSTM pgs UsageError $ "Invalid dimension spec: " <> r
+
+edhArrayShape :: ArrayShape -> EdhValue
+edhArrayShape (ArrayShape !shape) = EdhArgsPack
+  $ ArgsPack (edhDim <$> NE.toList shape) odEmpty
+ where
+  edhDim :: (DimName, DimSize) -> EdhValue
+  edhDim (""  , size) = EdhDecimal $ fromIntegral size
+  edhDim (name, size) = EdhNamedValue name $ EdhDecimal $ fromIntegral size
+
 
 data DbArrayHeader = DbArrayHeader {
-    -- | version of array layout
+    -- | version of file data layout
     array'layout'version :: {-# UNPACK #-} !Int32
     -- | a.k.a. padded header size
-  , array'data'offset :: {-# UNPACK #-} !Int16
-    -- | a.k.a. padded item size
-  , array'item'align :: {-# UNPACK #-} !Int16
-    -- | number of valid items in array, to be read/written on-the-fly
+  , array'data'offset :: {-# UNPACK #-} !Int32
+    -- | padded item size
+  , array'item'size :: {-# UNPACK #-} !Int32
+    -- | alignment required for an item
+  , array'item'align :: {-# UNPACK #-} !Int32
+    -- | number of valid items in the array, to be read/written on-the-fly
+    -- rest of the file content should be considered pre-allocated capacity
   , array'data'length :: {-# UNPACK #-} !Int64
   } deriving (Eq)
 instance Storable DbArrayHeader where
@@ -130,31 +143,35 @@ instance Storable DbArrayHeader where
   --
   -- strive to be compliant with mainstream toolchains of Ubuntu 18.04 on x64,
   -- as far as working with decent macOS on x64 during development.
-  sizeOf _ = 16
   peek !ptr = do
-    !ver   <- peekByteOff ptr 0
-    !doff  <- peekByteOff ptr 4
-    !align <- peekByteOff ptr 6
-    !vlen  <- peekByteOff ptr 8
-    return $ DbArrayHeader ver doff align vlen
-  poke !ptr (DbArrayHeader !ver !doff !align !vlen) = do
-    pokeByteOff ptr 0 ver
-    pokeByteOff ptr 4 doff
-    pokeByteOff ptr 6 align
-    pokeByteOff ptr 8 vlen
+    !ver  <- peekByteOff ptr 0
+    !doff <- peekByteOff ptr 4
+    !isz  <- peekByteOff ptr 8
+    !ial  <- peekByteOff ptr 12
+    !vlen <- peekByteOff ptr 16
+    return $ DbArrayHeader ver doff isz ial vlen
+  poke !ptr (DbArrayHeader !ver !doff !isz ial !vlen) = do
+    pokeByteOff ptr 0  ver
+    pokeByteOff ptr 4  doff
+    pokeByteOff ptr 8  isz
+    pokeByteOff ptr 12 ial
+    pokeByteOff ptr 16 vlen
   -- a disk file for array is always mmaped from beginning, data following the
   -- header. align the header so start of data is aligned with at least 512
   -- bits for possible SIMD performance improvement or even compliance
   alignment _ = 64
-
-readDbArrayLength :: Ptr DbArrayHeader -> IO Int64
-readDbArrayLength !ptr = peekByteOff ptr 8
-writeDbArrayLength :: Ptr DbArrayHeader -> Int64 -> IO ()
-writeDbArrayLength !ptr !vlen = pokeByteOff ptr 8 vlen
+  -- so 40 bytes is unused in the head as far
+  sizeOf _ = 24
 
 dbArrayHeaderSize, dbArrayHeaderAlign :: Int
 dbArrayHeaderSize = sizeOf (undefined :: DbArrayHeader)
 dbArrayHeaderAlign = alignment (undefined :: DbArrayHeader)
+
+readDbArrayLength :: Ptr DbArrayHeader -> IO Int64
+readDbArrayLength !ptr = peekByteOff ptr 16
+writeDbArrayLength :: Ptr DbArrayHeader -> Int64 -> IO ()
+writeDbArrayLength !ptr !vlen = pokeByteOff ptr 16 vlen
+
 
 dbArrayHeaderV0 :: forall a . (Storable a) => DbArrayHeader
 dbArrayHeaderV0 = DbArrayHeader
@@ -162,6 +179,7 @@ dbArrayHeaderV0 = DbArrayHeader
   , array'data'offset    = fromIntegral
                            $ dbArrayHeaderAlign
                            * (1 + div dbArrayHeaderSize dbArrayHeaderAlign)
+  , array'item'size      = fromIntegral $ sizeOf (undefined :: a)
   , array'item'align     = fromIntegral $ alignment (undefined :: a)
   , array'data'length    = 0
   }
@@ -178,11 +196,7 @@ data DbArray where
     } -> DbArray
 
 mmapDbArray
-  ::
-  -- forall a
-  --  . (EdhXchg a, Storable a, Typeable a)
-  -- => 
-     TMVar (Either SomeException (ArrayShape, Ptr DbArrayHeader, FlatArray a))
+  :: TMVar (Either SomeException (ArrayShape, Ptr DbArrayHeader, FlatArray a))
   -> Text
   -> Text
   -> DataType
@@ -202,15 +216,20 @@ mmapDbArray !asVar !dataDir !dataPath (DataType _dti (dts :: FlatStorable a)) =
           !headerPayload | B.length headerPayload == dbArrayHeaderSize -> do
             let (!fpHdr, !fpOffHdr, _) = B.toForeignPtr headerPayload
             withForeignPtr (plusForeignPtr fpHdr fpOffHdr) $ \ !pHdr' -> do
-              let (pHdr :: Ptr DbArrayHeader) = castPtr $ pHdr'
+              let (pHdr :: Ptr DbArrayHeader) = castPtr pHdr'
               !hdr <- peek pHdr
               let
                 !mmap'size =
                   fromIntegral (array'data'offset hdr)
                     + cap
                     * flat'element'size dts
-              -- todo check file size, mandate exact match to specified shape,
-              --      or at least no shorter than array'data'length in header
+              when (fromIntegral (dbArraySize1d shape) < array'data'length hdr)
+                $  throwIO
+                $  userError
+                $  "Len1d of shape "
+                <> show (dbArraySize1d shape)
+                <> " too small to cover valid data in data file: "
+                <> show (array'data'length hdr)
               -- mind to avoid truncating file shorter, i.e. possible data loss
               (fp, _, _) <- mmapFileForeignPtr @a dataFilePath ReadWriteEx
                 $ Just (0, mmap'size)
@@ -226,7 +245,7 @@ mmapDbArray !asVar !dataDir !dataPath (DataType _dti (dts :: FlatStorable a)) =
                 )
 
           -- don't have a header long enough, most prolly not existing
-          -- todo more care of abnormal situations
+          -- todo more care for abnormal situations
           _ -> do
             let
               !hdr = dbArrayHeaderV0 @a
@@ -255,7 +274,7 @@ mmapDbArray !asVar !dataDir !dataPath (DataType _dti (dts :: FlatStorable a)) =
         $ withFile dataFilePath ReadWriteMode
         $ \ !dfh -> hFileSize dfh >>= \case
 
-          -- existing and with a header long enough
+            -- existing and with a header long enough
             !fileSize | fileSize >= fromIntegral dbArrayHeaderSize -> do
               (fp, _, _) <- mmapFileForeignPtr @a dataFilePath ReadWriteEx
                 $ Just (0, fromIntegral fileSize)
@@ -374,9 +393,9 @@ aryMethods !classUniq !pgsModule =
        | (nm, getter, setter) <-
          [ ("dir"  , aryDirGetter  , Nothing)
          , ("path" , aryPathGetter , Nothing)
-         , ("shape", aryShapeGetter, Nothing)
          , ("dtype", aryDtypeGetter, Nothing)
          , ("size" , arySizeGetter , Nothing)
+         , ("shape", aryShapeGetter, Nothing)
          , ("len1d", aryLen1dGetter, Just aryLen1dSetter)
          ]
        ]
@@ -391,13 +410,6 @@ aryMethods !classUniq !pgsModule =
   aryPathGetter _ !exit = withEntityOfClass classUniq
     $ \ !pgs !ary -> exitEdhSTM pgs exit $ EdhString $ db'array'path ary
 
-  aryShapeGetter :: EdhProcedure
-  aryShapeGetter _ !exit =
-    withEntityOfClass classUniq $ \ !pgs (DbArray _ _ _ !das) ->
-      readTMVar das >>= \case
-        Right (!shape, _, _) -> exitEdhSTM pgs exit $ edhArrayShape shape
-        Left  !err           -> throwSTM err
-
   aryDtypeGetter :: EdhProcedure
   aryDtypeGetter _ !exit = withEntityOfClass classUniq $ \ !pgs !ary ->
     exitEdhSTM pgs exit $ EdhString $ data'type'identifier $ db'array'dtype ary
@@ -409,6 +421,13 @@ aryMethods !classUniq !pgsModule =
         Right (!shape, _, _) ->
           exitEdhSTM pgs exit $ EdhDecimal $ fromIntegral $ dbArraySize shape
         Left !err -> throwSTM err
+
+  aryShapeGetter :: EdhProcedure
+  aryShapeGetter _ !exit =
+    withEntityOfClass classUniq $ \ !pgs (DbArray _ _ _ !das) ->
+      readTMVar das >>= \case
+        Right (!shape, _, _) -> exitEdhSTM pgs exit $ edhArrayShape shape
+        Left  !err           -> throwSTM err
 
   aryLen1dGetter :: EdhProcedure
   aryLen1dGetter _ !exit =

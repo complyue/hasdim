@@ -36,10 +36,9 @@ builtinDataTypes !dtTmplObj !exit =
     $ mkDtAlias @Float "float32" ["f4"]
     $ mkDtAlias @Int64 "int64" ["i8"]
     $ mkDtAlias @Int32 "int32" ["i4"]
-    $ mkDtAlias @Int8 "int8" []
-    $ mkDtAlias @Word8 "byte" []
+    $ mkDtAlias @Int8 "int8" ["byte"]
     $ mkDtAlias @Int "intp" []
-    $ mkDtAlias @VecBool "bool" []
+    $ mkDtAlias @YesNo "yesno" []
     $ exit
  where
   mkDtAlias
@@ -81,7 +80,9 @@ installDimBatteries !world = do
 
     builtinDataTypes dtTmplObj $ \ !dtAlias -> do
 
-      let !moduArts = [ (k, EdhObject dto) | (k, dto) <- dtAlias ]
+      let !moduArts =
+            ("dtype", EdhClass (objClass dtTmplObj))
+              : [ (k, EdhObject dto) | (k, dto) <- dtAlias ]
       !artsDict <- EdhDict
         <$> createEdhDict [ (EdhString k, v) | (k, v) <- moduArts ]
       updateEntityAttrs pgs (objEntity modu)

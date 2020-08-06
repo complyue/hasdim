@@ -165,10 +165,11 @@ extractColumnBool !pgs (Column _mdt !mclv !mcsv) (Column dt@(DataType !dti _) !c
         else do
           !mcs <- readTVar mcsv
           let !ma = unsafeSliceFlatArray mcs 0 mcl
-          flat'extract'bool dtOp pgs (unsafeCoerce ma) fa $ \(!rfa, !rlen) -> do
-            !clvRtn <- newTMVar rlen
-            !csvRtn <- newTVar rfa
-            exit $ Column dt clvRtn csvRtn
+          flat'extract'yesno dtOp pgs (unsafeCoerce ma) fa $ \(!rfa, !rlen) ->
+            do
+              !clvRtn <- newTMVar rlen
+              !csvRtn <- newTVar rfa
+              exit $ Column dt clvRtn csvRtn
 
 
 extractColumnFancy
@@ -196,7 +197,7 @@ vecCmpColumn
   -> EdhValue
   -> (Column -> STM ())
   -> STM ()
-vecCmpColumn !dtBool !pgs !cmp (Column (DataType !dti _) !clv !csv) !v !exit =
+vecCmpColumn !dtYesNo !pgs !cmp (Column (DataType !dti _) !clv !csv) !v !exit =
   do
     !cl <- readTMVar clv
     !cs <- readTVar csv
@@ -205,7 +206,7 @@ vecCmpColumn !dtBool !pgs !cmp (Column (DataType !dti _) !clv !csv) !v !exit =
       flat'cmp'vectorized dtOrd pgs fa cmp v $ \ !bifa -> do
         !biclv <- newTMVar cl
         !bicsv <- newTVar bifa
-        exit $ Column dtBool biclv bicsv
+        exit $ Column dtYesNo biclv bicsv
 
 elemCmpColumn
   :: DataType
@@ -215,7 +216,7 @@ elemCmpColumn
   -> Column
   -> (Column -> STM ())
   -> STM ()
-elemCmpColumn !dtBool !pgs !cmp (Column (DataType !dti1 _) !clv1 !csv1) (Column (DataType !dti2 _) !clv2 !csv2) !exit
+elemCmpColumn !dtYesNo !pgs !cmp (Column (DataType !dti1 _) !clv1 !csv1) (Column (DataType !dti2 _) !clv2 !csv2) !exit
   = if dti1 /= dti2
     then
       throwEdhSTM pgs UsageError
@@ -243,7 +244,7 @@ elemCmpColumn !dtBool !pgs !cmp (Column (DataType !dti1 _) !clv1 !csv1) (Column 
               $ \ !bifa -> do
                   !biclv <- newTMVar cl1
                   !bicsv <- newTVar bifa
-                  exit $ Column dtBool biclv bicsv
+                  exit $ Column dtYesNo biclv bicsv
 
 vecOpColumn
   :: EdhProgState
@@ -860,9 +861,9 @@ colMethods !pgsModule =
        | (nm, getter, setter) <- [("dtype", colDtypeProc, Nothing)]
        ]
  where
-  !scope = contextScope $ edh'context pgsModule
+  !scope  = contextScope $ edh'context pgsModule
 
-  dtBool = makeDataType @VecBool "bool"
+  dtYesNo = makeDataType @YesNo "yesno"
 
   colGrowProc :: EdhProcedure
   colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit | odNull kwargs =
@@ -990,7 +991,7 @@ colMethods !pgsModule =
       let colObj = thatObject $ contextScope $ edh'context pgs
       castObjectStore' idxVal >>= \case
         Just !idxCol -> case data'type'identifier $ column'data'type idxCol of
-          "bool" -> -- bool index 
+          "yesno" -> -- yesno index 
             extractColumnBool pgs idxCol col (exitEdhSTM pgs exit EdhContinue)
               $ \ !colResult ->
                   cloneEdhObject colObj
@@ -1043,7 +1044,7 @@ colMethods !pgsModule =
             else castObjectStore' idxVal >>= \case
               Just !idxCol ->
                 case data'type'identifier $ column'data'type idxCol of
-                  "bool" -> -- bool index 
+                  "yesno" -> -- yesno index 
                     elemInpMaskedColumn pgs
                                         idxCol
                                         assignOp
@@ -1117,7 +1118,7 @@ colMethods !pgsModule =
         Nothing -> castObjectStore' idxVal >>= \case
           Just idxCol@(Column (DataType !dtiIdx _) _clvIdx _csvIdx) ->
             case dtiIdx of
-              "bool" -> -- bool index 
+              "yesno" -> -- yesno index 
                 vecInpMaskedColumn pgs
                                    idxCol
                                    assignOp
@@ -1180,16 +1181,16 @@ colMethods !pgsModule =
       otherVal@(EdhObject !otherObj) ->
         fromDynamic <$> objStore otherObj >>= \case
           Just colOther@Column{} ->
-            elemCmpColumn dtBool pgs cmp col colOther $ \ !colResult ->
+            elemCmpColumn dtYesNo pgs cmp col colOther $ \ !colResult ->
               cloneEdhObject (thatObject $ contextScope $ edh'context pgs)
                              (\_ !esdx -> esdx $ toDyn colResult)
                 $ \ !bio -> exitEdhSTM pgs exit $ EdhObject bio
           Nothing ->
-            vecCmpColumn dtBool pgs cmp col otherVal $ \ !colResult ->
+            vecCmpColumn dtYesNo pgs cmp col otherVal $ \ !colResult ->
               cloneEdhObject (thatObject $ contextScope $ edh'context pgs)
                              (\_ !esdx -> esdx $ toDyn colResult)
                 $ \ !bio -> exitEdhSTM pgs exit $ EdhObject bio
-      !otherVal -> vecCmpColumn dtBool pgs cmp col otherVal $ \ !colResult ->
+      !otherVal -> vecCmpColumn dtYesNo pgs cmp col otherVal $ \ !colResult ->
         cloneEdhObject (thatObject $ contextScope $ edh'context pgs)
                        (\_ !esdx -> esdx $ toDyn colResult)
           $ \ !bio -> exitEdhSTM pgs exit $ EdhObject bio
@@ -1273,7 +1274,7 @@ colMethods !pgsModule =
     "int8"    -> toDyn ((\_x !y -> y) :: Int8 -> Int8 -> Int8)
     "byte"    -> toDyn ((\_x !y -> y) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((\_x !y -> y) :: Int -> Int -> Int)
-    "bool"    -> toDyn ((\_x !y -> y) :: VecBool -> VecBool -> VecBool)
+    "yesno"   -> toDyn ((\_x !y -> y) :: YesNo -> YesNo -> YesNo)
     _         -> toDyn nil -- means not applicable here
 
   bitAndOp :: Text -> Dynamic
@@ -1285,7 +1286,7 @@ colMethods !pgsModule =
     "int8"  -> toDyn ((.&.) :: Int8 -> Int8 -> Int8)
     "byte"  -> toDyn ((.&.) :: Word8 -> Word8 -> Word8)
     "intp"  -> toDyn ((.&.) :: Int -> Int -> Int)
-    "bool"  -> toDyn ((.&.) :: VecBool -> VecBool -> VecBool)
+    "yesno" -> toDyn ((.&.) :: YesNo -> YesNo -> YesNo)
     _       -> toDyn nil -- means not applicable here
   bitOrOp :: Text -> Dynamic
   bitOrOp = \case
@@ -1296,7 +1297,7 @@ colMethods !pgsModule =
     "int8"  -> toDyn ((.|.) :: Int8 -> Int8 -> Int8)
     "byte"  -> toDyn ((.|.) :: Word8 -> Word8 -> Word8)
     "intp"  -> toDyn ((.|.) :: Int -> Int -> Int)
-    "bool"  -> toDyn ((.|.) :: VecBool -> VecBool -> VecBool)
+    "yesno" -> toDyn ((.|.) :: YesNo -> YesNo -> YesNo)
     _       -> toDyn nil -- means not applicable here
 
   addOp :: Text -> Dynamic
@@ -1467,13 +1468,13 @@ whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit | odNull kwargs =
     Nothing -> throwEdhSTM
       pgs
       UsageError
-      "Invalid index object, need to be a column with dtype=bool"
-    Just mcol@(Column (DataType !dti _) _ _) -> if dti /= "bool"
+      "Invalid index object, need to be a column with dtype=yesno"
+    Just mcol@(Column (DataType !dti _) _ _) -> if dti /= "yesno"
       then
         throwEdhSTM pgs UsageError
         $  "Invalid dtype="
         <> dti
-        <> " for where(), need to be bool"
+        <> " for where(), need to be yesno"
       else nonzeroIdxColumn pgs mcol $ \ !colResult ->
         cloneEdhObject colBoolIdx (\_ !cloneTo -> cloneTo $ toDyn colResult)
           $ \ !newObj -> exitEdhSTM pgs exit $ EdhObject newObj

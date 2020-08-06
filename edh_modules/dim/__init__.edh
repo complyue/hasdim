@@ -1,8 +1,8 @@
 
 export {
 
-  import ( Table, Column, arange, where, DbArray, **_ ) 'dim/RT'
-
   import * 'dim/dtypes'
+
+  import ( Table, Column, arange, where, DbArray, **_ ) 'dim/RT'
 
 }

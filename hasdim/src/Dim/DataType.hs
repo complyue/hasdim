@@ -234,15 +234,15 @@ dmrpMethods !pgsModule = sequence
 data FlatOrd a where
   FlatOrd ::(Ord a, Storable a, Typeable a, EdhXchg a) => {
       flat'cmp'vectorized :: EdhProgState -> FlatArray a
-        -> (Ordering -> Bool) -> EdhValue -> (FlatArray VecBool -> STM ()) -> STM ()
+        -> (Ordering -> Bool) -> EdhValue -> (FlatArray YesNo -> STM ()) -> STM ()
     , flat'cmp'element'wise :: EdhProgState -> FlatArray a
-        -> (Ordering -> Bool) -> FlatArray a -> (FlatArray VecBool -> STM ()) -> STM ()
+        -> (Ordering -> Bool) -> FlatArray a -> (FlatArray YesNo -> STM ()) -> STM ()
   }-> FlatOrd a
  deriving Typeable
 flatOrd :: (Ord a, Storable a, Typeable a, EdhXchg a) => FlatOrd a
 flatOrd = FlatOrd vecCmp elemCmp
  where
-  -- vectorized comparation, yielding a new VecBool array
+  -- vectorized comparation, yielding a new YesNo array
   vecCmp !pgs (FlatArray !cap !fp) !cmp !v !exit = fromEdh pgs v $ \ !sv ->
     (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
       !rp  <- callocArray cap
@@ -253,7 +253,7 @@ flatOrd = FlatOrd vecCmp elemCmp
             pokeElemOff rp i $ if cmp $ compare ev sv then 1 else 0
             go (i + 1)
       go 0
-  -- element-wise comparation, yielding a new VecBool array
+  -- element-wise comparation, yielding a new YesNo array
   elemCmp _pgs (FlatArray !cap1 !fp1) !cmp (FlatArray _cap2 !fp2) !exit =
     (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp1 $ \ !p1 ->
       withForeignPtr fp2 $ \ !p2 -> do
@@ -326,9 +326,9 @@ resolveDataComparatorProc !dmrpTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
       "int64"   -> exitWith $ toDyn (flatOrd :: FlatOrd Int64)
       "int32"   -> exitWith $ toDyn (flatOrd :: FlatOrd Int32)
       "int8"    -> exitWith $ toDyn (flatOrd :: FlatOrd Int8)
-      "byte"    -> exitWith $ toDyn (flatOrd :: FlatOrd Word8)
+      "byte"    -> exitWith $ toDyn (flatOrd :: FlatOrd Int8)
       "intp"    -> exitWith $ toDyn (flatOrd :: FlatOrd Int)
-      "bool"    -> exitWith $ toDyn (flatOrd :: FlatOrd VecBool)
+      "yesno"   -> exitWith $ toDyn (flatOrd :: FlatOrd YesNo)
       _ ->
         throwEdhSTM pgs UsageError
           $  "A non-trivial data type requested,"
@@ -341,7 +341,7 @@ resolveDataComparatorProc _ _ _ =
 
 data FlatOp a where
   FlatOp ::(EdhXchg a, Storable a, Typeable a) => {
-      flat'extract'bool :: EdhProgState -> FlatArray VecBool -> FlatArray a
+      flat'extract'yesno :: EdhProgState -> FlatArray YesNo -> FlatArray a
         -> ((FlatArray a, Int) -> STM ()) -> STM ()
     , flat'extract'fancy :: EdhProgState -> FlatArray Int -> FlatArray a
         -> (FlatArray a -> STM ()) -> STM ()
@@ -355,7 +355,7 @@ data FlatOp a where
         -> Dynamic -> EdhValue -> STM () -> STM ()
     , flat'inp'vectorized'slice :: EdhProgState -> (Int,Int,Int) -> FlatArray a
         -> Dynamic -> EdhValue -> STM () -> STM ()
-    , flat'inp'vectorized'masked :: EdhProgState -> FlatArray VecBool -> FlatArray a
+    , flat'inp'vectorized'masked :: EdhProgState -> FlatArray YesNo -> FlatArray a
         -> Dynamic -> EdhValue -> STM () -> STM ()
     , flat'inp'vectorized'fancy :: EdhProgState -> FlatArray Int -> FlatArray a
         -> Dynamic -> EdhValue -> STM () -> STM ()
@@ -364,7 +364,7 @@ data FlatOp a where
         -> Dynamic -> FlatArray a -> STM () -> STM ()
     , flat'inp'element'wise'slice :: EdhProgState -> (Int,Int,Int) -> FlatArray a
         -> Dynamic -> FlatArray a -> STM () -> STM ()
-    , flat'inp'element'wise'masked :: EdhProgState -> FlatArray VecBool -> FlatArray a
+    , flat'inp'element'wise'masked :: EdhProgState -> FlatArray YesNo -> FlatArray a
         -> Dynamic -> FlatArray a -> STM () -> STM ()
     , flat'inp'element'wise'fancy :: EdhProgState -> FlatArray Int -> FlatArray a
         -> Dynamic -> FlatArray a -> STM () -> STM ()
@@ -384,7 +384,7 @@ flatOp = FlatOp vecExtractBool
                 elemInpMasked
                 elemInpFancy
  where
-  -- vectorized data extraction with a bool index, yielding a new array
+  -- vectorized data extraction with a yesno index, yielding a new array
   vecExtractBool _pgs (FlatArray !mcap !mfp) (FlatArray _cap !fp) !exit =
     (exit =<<) $ unsafeIOToSTM $ withForeignPtr mfp $ \ !mp ->
       withForeignPtr fp $ \ !p -> do
@@ -476,7 +476,7 @@ flatOp = FlatOp vecExtractBool
                 pokeElemOff p n $ op ev sv
                 go (n + step) (i + 1)
           go start 0
-  -- vectorized operation, inplace modifying the array, with a bool mask
+  -- vectorized operation, inplace modifying the array, with a yesno mask
   vecInpMasked !pgs (FlatArray _cap !mfp) (FlatArray !cap !fp) !dop !v !exit =
     case fromDynamic dop of
       Nothing                  -> error "bug: dtype op type mismatch"
@@ -544,7 +544,7 @@ flatOp = FlatOp vecExtractBool
                   pokeElemOff p1 n $ op ev1 ev2
                   go (n + step) (i + 1)
             go start 0
-  -- element-wise operation, inplace modifying array, with a bool mask
+  -- element-wise operation, inplace modifying array, with a yesno mask
   elemInpMasked _pgs (FlatArray _cap !mfp) (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit
     = case fromDynamic dop of
       Nothing -> error "bug: dtype op type mismatch"
@@ -656,9 +656,9 @@ resolveDataOperatorProc !dmrpTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
       "int64"   -> exitWith $ toDyn (flatOp :: FlatOp Int64)
       "int32"   -> exitWith $ toDyn (flatOp :: FlatOp Int32)
       "int8"    -> exitWith $ toDyn (flatOp :: FlatOp Int8)
-      "byte"    -> exitWith $ toDyn (flatOp :: FlatOp Word8)
+      "byte"    -> exitWith $ toDyn (flatOp :: FlatOp Int8)
       "intp"    -> exitWith $ toDyn (flatOp :: FlatOp Int)
-      "bool"    -> exitWith $ toDyn (flatOp :: FlatOp VecBool)
+      "yesno"   -> exitWith $ toDyn (flatOp :: FlatOp YesNo)
       _ ->
         throwEdhSTM pgs UsageError
           $  "A non-trivial data type requested,"
@@ -755,12 +755,9 @@ resolveNumDataTypeProc !numdtTmplObj (ArgsPack [EdhString !dti] !kwargs) !exit
       "int8" ->
         exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int8)
       "byte" ->
-        exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Word8)
+        exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int8)
       "intp" ->
         exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int)
-      -- todo should include bool ?
-      -- "bool" ->
-      --   exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger VecBool)
       _ ->
         throwEdhSTM pgs UsageError
           $  "A non-trivial numeric data type requested,"
@@ -783,7 +780,7 @@ data FlatRanger a where
       flat'new'range'array :: EdhProgState
         -> Int -> Int -> Int -> (FlatArray a -> STM ()) -> STM ()
     , flat'new'nonzero'array :: EdhProgState
-        -> FlatArray VecBool -> ((FlatArray a, Int) -> STM ()) -> STM ()
+        -> FlatArray YesNo -> ((FlatArray a, Int) -> STM ()) -> STM ()
     }-> FlatRanger a
  deriving Typeable
 flatRanger

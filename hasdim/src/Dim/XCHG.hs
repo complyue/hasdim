@@ -31,13 +31,13 @@ class EdhXchg t where
   fromEdh :: EdhProgState  -> EdhValue -> (t -> STM ()) -> STM ()
 
 
-newtype VecBool = VecBool Int8
+newtype YesNo = YesNo Int8
   deriving (Eq, Ord, Storable, Num, Bits, Typeable)
 
-instance {-# OVERLAPPABLE #-} EdhXchg VecBool where
-  toEdh _pgs (VecBool !b) !exit = exit $ EdhBool $ b /= 0
+instance {-# OVERLAPPABLE #-} EdhXchg YesNo where
+  toEdh _pgs (YesNo !b) !exit = exit $ EdhBool $ b /= 0
   fromEdh !pgs !v !exit =
-    edhValueNull pgs v $ \ !b -> exit $ VecBool $ if b then 0 else 1
+    edhValueNull pgs v $ \ !b -> exit $ YesNo $ if b then 0 else 1
 
 
 instance {-# OVERLAPPABLE #-} EdhXchg Text where
