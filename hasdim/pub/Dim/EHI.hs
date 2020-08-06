@@ -5,6 +5,7 @@ module Dim.EHI
   , module Dim.XCHG
   , module Dim.DataType
   , module Dim.Table
+  , module Dim.Array
   )
 where
 

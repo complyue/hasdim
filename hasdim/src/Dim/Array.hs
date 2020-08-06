@@ -30,6 +30,7 @@ import           Data.Coerce
 import           Data.Dynamic
 
 import           Data.Vector.Storable           ( Vector )
+import           Data.Vector.Storable.Mutable   ( IOVector )
 
 import qualified Data.Lossless.Decimal         as D
 import           Language.Edh.EHI
@@ -311,6 +312,11 @@ mmapDbArray !asVar !dataDir !dataPath (DataType _dti (dts :: FlatStorable a)) =
 unwrapDbArrayObject :: Object -> STM (Maybe DbArray)
 unwrapDbArrayObject = castObjectStore
 
+dbArrayShape :: DbArray -> STM ArrayShape 
+dbArrayShape (DbArray _ _ _ !das) = readTMVar das >>= \case 
+  Left !err -> throwSTM err 
+  Right (!shape, _ , _) -> return shape 
+
 castDbArrayData
   :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (Vector a)
 castDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das) =
@@ -320,6 +326,18 @@ castDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das) =
       !vlen <- readDbArrayLength hdrPtr
       return
         $ unsafeFlatArrayAsVector
+        $ unsafeSliceFlatArray fa 0
+        $ fromIntegral vlen
+
+castMutDbArrayData
+  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (IOVector a)
+castMutDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das) =
+  atomically (readTMVar das) >>= \case
+    Left  !err              -> throwIO err
+    Right (_, !hdrPtr, !fa) -> do
+      !vlen <- readDbArrayLength hdrPtr
+      return
+        $ unsafeFlatArrayAsMVector
         $ unsafeSliceFlatArray fa 0
         $ fromIntegral vlen
 

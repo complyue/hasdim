@@ -9,4 +9,7 @@ conf_forward:
     - -XBangPatterns
     - -XTupleSections
     - -XScopedTypeVariables
+    - -XGADTs
+    - -XFlexibleContexts
+    - -XRankNTypes
     - -XTypeApplications
