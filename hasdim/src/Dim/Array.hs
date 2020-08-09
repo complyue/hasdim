@@ -5,6 +5,8 @@ module Dim.Array where
 import           Prelude
 -- import           Debug.Trace
 
+import           GHC.Conc                       ( unsafeIOToSTM )
+
 import           Foreign.ForeignPtr.Unsafe
 import           Foreign                 hiding ( void )
 import qualified Data.ByteString               as B
@@ -312,10 +314,10 @@ mmapDbArray !asVar !dataDir !dataPath (DataType _dti (dts :: FlatStorable a)) =
 unwrapDbArrayObject :: Object -> STM (Maybe DbArray)
 unwrapDbArrayObject = castObjectStore
 
-dbArrayShape :: DbArray -> STM ArrayShape 
-dbArrayShape (DbArray _ _ _ !das) = readTMVar das >>= \case 
-  Left !err -> throwSTM err 
-  Right (!shape, _ , _) -> return shape 
+dbArrayShape :: DbArray -> STM ArrayShape
+dbArrayShape (DbArray _ _ _ !das) = readTMVar das >>= \case
+  Left  !err           -> throwSTM err
+  Right (!shape, _, _) -> return shape
 
 castDbArrayData
   :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (Vector a)
@@ -331,8 +333,8 @@ castDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das) =
 
 castMutDbArrayData
   :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (IOVector a)
-castMutDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das) =
-  atomically (readTMVar das) >>= \case
+castMutDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das)
+  = atomically (readTMVar das) >>= \case
     Left  !err              -> throwIO err
     Right (_, !hdrPtr, !fa) -> do
       !vlen <- readDbArrayLength hdrPtr
@@ -452,10 +454,10 @@ aryMethods !classUniq !pgsModule =
     withEntityOfClass classUniq $ \ !pgs (DbArray _ _ _ !das) ->
       readTMVar das >>= \case
         Right (_, !hdrPtr, _) ->
-          edhPerformIO pgs (readDbArrayLength hdrPtr)
-            $ exitEdhProc exit
-            . EdhDecimal
-            . fromIntegral
+          unsafeIOToSTM (readDbArrayLength hdrPtr)
+            >>= exitEdhSTM pgs exit
+            .   EdhDecimal
+            .   fromIntegral
         Left !err -> throwSTM err
 
   aryLen1dSetter :: EdhProcedure
@@ -466,7 +468,7 @@ aryMethods !classUniq !pgsModule =
           withEntityOfClass classUniq $ \ !pgs (DbArray _ _ _ !das) ->
             readTMVar das >>= \case
               Right (_, !hdrPtr, _) -> do
-                edhContIO pgs (writeDbArrayLength hdrPtr $ fromIntegral vlen)
+                unsafeIOToSTM (writeDbArrayLength hdrPtr $ fromIntegral vlen)
                 exitEdhSTM pgs exit vlenV
               Left !err -> throwSTM err
         Nothing ->
