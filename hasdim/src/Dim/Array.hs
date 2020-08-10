@@ -343,6 +343,20 @@ castMutDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das)
         $ unsafeSliceFlatArray fa 0
         $ fromIntegral vlen
 
+castFullDbArrayData
+  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (Vector a)
+castFullDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das)
+  = atomically (readTMVar das) >>= \case
+    Left  !err        -> throwIO err
+    Right (_, _, !fa) -> return $ unsafeFlatArrayAsVector fa
+
+castMutFullDbArrayData
+  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (IOVector a)
+castMutFullDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das)
+  = atomically (readTMVar das) >>= \case
+    Left  !err        -> throwIO err
+    Right (_, _, !fa) -> return $ unsafeFlatArrayAsMVector fa
+
 
 -- | host constructor DbArray(dataDir, dataPath, dtype=float64, shape=None)
 aryCtor :: EdhValue -> EdhHostCtor
