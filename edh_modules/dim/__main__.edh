@@ -1,7 +1,7 @@
 
 # TODO selectively import artifacts into top level, leaving others
 #      to be addressed via the `hd` module reference
-case import * 'dim' of { hd } -> { pass }
+hd = { import * 'dim' }
 effect import * 'dim/effects'
 
 
@@ -20,13 +20,13 @@ while true { # this is the *Loop* in so-called REPL
 } $=> { # catch exceptions
 
   { { IOError:exc } } -> {
-    console.fatal <| 'IO error - ' ++ exc
+    console.fatal <| 'IO error - ' ++ desc( exc )
     rethrow # escalate it to the program loop of the
     # host interpreter, let it decide what to do.
   }
 
   { cmdExc } -> {
-    console.print( 'Recovered from error', exception=cmdExc )
+    console.print( 'Recovered from error: ' ++ desc( cmdExc ) )
   }
 
 }

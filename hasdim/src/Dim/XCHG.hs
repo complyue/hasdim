@@ -27,91 +27,95 @@ import           Language.Edh.EHI
 
 
 class EdhXchg t where
-  toEdh :: EdhProgState -> t -> (EdhValue -> STM ()) -> STM ()
-  fromEdh :: EdhProgState  -> EdhValue -> (t -> STM ()) -> STM ()
+  toEdh :: EdhThreadState -> t -> (EdhValue -> STM ()) -> STM ()
+  fromEdh :: EdhThreadState  -> EdhValue -> (t -> STM ()) -> STM ()
 
 
 newtype YesNo = YesNo Int8
   deriving (Eq, Ord, Storable, Num, Bits, Typeable)
 
 instance {-# OVERLAPPABLE #-} EdhXchg YesNo where
-  toEdh _pgs (YesNo !b) !exit = exit $ EdhBool $ b /= 0
-  fromEdh !pgs !v !exit =
-    edhValueNull pgs v $ \ !b -> exit $ YesNo $ if b then 0 else 1
+  toEdh _ets (YesNo !b) !exit = exit $ EdhBool $ b /= 0
+  fromEdh !ets !v !exit =
+    edhValueNull ets v $ \ !b -> exit $ YesNo $ if b then 0 else 1
 
 
 instance {-# OVERLAPPABLE #-} EdhXchg Text where
-  toEdh _pgs !s !exit = exit $ EdhString s
-  fromEdh _pgs (EdhString !s) !exit = exit s
-  fromEdh !pgs !v             !exit = edhValueReprSTM pgs v exit
+  toEdh _ets !s !exit = exit $ EdhString s
+  fromEdh _ets (EdhString !s) !exit = exit s
+  fromEdh !ets !v             !exit = edhValueRepr ets v exit
 
 
 instance {-# OVERLAPPABLE #-} EdhXchg Char where
-  toEdh _pgs !s !exit = exit $ EdhString $ T.singleton s
-  fromEdh _pgs (EdhString !s) !exit = case T.uncons s of
+  toEdh _ets !s !exit = exit $ EdhString $ T.singleton s
+  fromEdh _ets (EdhString !s) !exit = case T.uncons s of
     Just (!c, _) -> exit c
     Nothing      -> exit '\0'
-  fromEdh !pgs !v !exit = edhValueReprSTM pgs v $ \ !s -> case T.uncons s of
+  fromEdh !ets !v !exit = edhValueRepr ets v $ \ !s -> case T.uncons s of
     Just (!c, _) -> exit c
     Nothing      -> exit '\0'
 
 
 instance {-# OVERLAPPABLE #-} EdhXchg Double where
-  toEdh _pgs !n !exit = exit $ EdhDecimal $ if isNaN n
+  toEdh _ets !n !exit = exit $ EdhDecimal $ if isNaN n
     then D.nan
     else if isInfinite n
       then D.Decimal 0 0 $ if n < 0 then -1 else 1
       else D.decimalFromScientific $ fromFloatDigits n
-  fromEdh !pgs !v !exit = coerceEdhToFloat pgs v exit
+  fromEdh !ets !v !exit = coerceEdhToFloat ets v exit
 
 instance {-# OVERLAPPABLE #-} EdhXchg Float where
-  toEdh _pgs !n !exit = exit $ EdhDecimal $ if isNaN n
+  toEdh _ets !n !exit = exit $ EdhDecimal $ if isNaN n
     then D.nan
     else if isInfinite n
       then D.Decimal 0 0 $ if n < 0 then -1 else 1
       else D.decimalFromScientific $ fromFloatDigits n
-  fromEdh !pgs !v !exit = coerceEdhToFloat pgs v exit
+  fromEdh !ets !v !exit = coerceEdhToFloat ets v exit
 
 
 instance {-# OVERLAPPABLE #-} (Integral a) => EdhXchg a where
-  toEdh _pgs !n !exit = exit $ EdhDecimal $ fromIntegral n
-  fromEdh !pgs !v !exit = coerceEdhToIntegral pgs v exit
+  toEdh _ets !n !exit = exit $ EdhDecimal $ fromIntegral n
+  fromEdh !ets !v !exit = coerceEdhToIntegral ets v exit
 
 
 coerceEdhToFloat
-  :: (RealFloat a) => EdhProgState -> EdhValue -> (a -> STM ()) -> STM ()
-coerceEdhToFloat !pgs !v =
-  coerceEdhToFloat' pgs v $ edhValueReprSTM pgs v $ \ !r ->
-    throwEdhSTM pgs UsageError
-      $  "Float expected but given a "
+  :: (RealFloat a) => EdhThreadState -> EdhValue -> (a -> STM ()) -> STM ()
+coerceEdhToFloat !ets !v =
+  coerceEdhToFloat' ets v $ edhValueRepr ets v $ \ !r ->
+    throwEdh ets UsageError
+      $  "float expected but given a "
       <> T.pack (edhTypeNameOf v)
       <> ": "
       <> r
 coerceEdhToFloat'
   :: (RealFloat a)
-  => EdhProgState
+  => EdhThreadState
   -> EdhValue
   -> STM ()
   -> (a -> STM ())
   -> STM ()
-coerceEdhToFloat' !pgs !v !naExit !exit = case edhUltimate v of
-  EdhDecimal !n -> exitWith n
-  EdhObject  !o -> lookupEdhObjAttr pgs o (AttrByName "__float__") >>= \case
-    EdhNil -> naExit
-    EdhMethod !mth ->
-      runEdhProc pgs
-        $ callEdhMethod o mth (ArgsPack [] odEmpty) id
-        $ \(OriginalValue !rtn _ _) -> case edhUltimate rtn of
-            EdhDecimal !n -> contEdhSTM $ exitWith n
-            !badVal ->
-              throwEdh UsageError
-                $  "bug: bad value returned from __float__ magic: "
-                <> T.pack (edhTypeNameOf badVal)
-    !badMagic ->
-      throwEdhSTM pgs UsageError $ "Malformed __float__ magic: " <> T.pack
-        (edhTypeNameOf badMagic)
+coerceEdhToFloat' !ets !v !naExit !exit = case edhUltimate v of
+  EdhDecimal !d -> exitWith d
+  EdhObject  !o -> lookupEdhObjAttr o (AttrByName "__float__") >>= \case
+    (_     , EdhNil                         ) -> naExit
+    (_     , EdhDecimal !d                  ) -> exitWith d
+    (!this', EdhProcedure (EdhMethod !mth) _) -> runEdhTx ets
+      $ callEdhMethod this' o mth (ArgsPack [] odEmpty) id exitWithMagicResult
+    (_, EdhBoundProc (EdhMethod !mth) !this !that _) ->
+      runEdhTx ets $ callEdhMethod this
+                                   that
+                                   mth
+                                   (ArgsPack [] odEmpty)
+                                   id
+                                   exitWithMagicResult
+    (_, !badMagic) -> edhValueDesc ets badMagic $ \ !badDesc ->
+      throwEdh ets UsageError $ "malformed __float__ magic: " <> badDesc
   _ -> naExit
  where
+  exitWithMagicResult :: EdhTxExit
+  exitWithMagicResult (EdhDecimal !d) _ets = exitWith d
+  exitWithMagicResult !badVal _ets = edhValueDesc ets badVal $ \ !badDesc ->
+    throwEdh ets UsageError $ "bad value returned from __float__(): " <> badDesc
   exitWith :: Decimal -> STM ()
   exitWith !d | D.decimalIsNaN d = exit (0 / 0)
   exitWith !d | D.decimalIsInf d = exit (if d < 0 then -1 else 1 / 0)
@@ -119,43 +123,45 @@ coerceEdhToFloat' !pgs !v !naExit !exit = case edhUltimate v of
 
 
 coerceEdhToIntegral
-  :: (Integral a) => EdhProgState -> EdhValue -> (a -> STM ()) -> STM ()
-coerceEdhToIntegral !pgs !v =
-  coerceEdhToIntegral' pgs v $ edhValueReprSTM pgs v $ \ !r ->
-    throwEdhSTM pgs UsageError
-      $  "Integer expected but given a "
+  :: (Integral a) => EdhThreadState -> EdhValue -> (a -> STM ()) -> STM ()
+coerceEdhToIntegral !ets !v =
+  coerceEdhToIntegral' ets v $ edhValueRepr ets v $ \ !r ->
+    throwEdh ets UsageError
+      $  "integer expected but given a "
       <> T.pack (edhTypeNameOf v)
       <> ": "
       <> r
 coerceEdhToIntegral'
   :: (Integral a)
-  => EdhProgState
+  => EdhThreadState
   -> EdhValue
   -> STM ()
   -> (a -> STM ())
   -> STM ()
-coerceEdhToIntegral' !pgs !v !naExit !exit = case edhUltimate v of
-  EdhDecimal !n -> case D.decimalToInteger n of
+coerceEdhToIntegral' !ets !v !naExit !exit = case edhUltimate v of
+  EdhDecimal !d -> exitWith d
+  EdhObject  !o -> lookupEdhObjAttr o (AttrByName "__int__") >>= \case
+    (_     , EdhNil                         ) -> naExit
+    (_     , EdhDecimal !d                  ) -> exitWith d
+    (!this', EdhProcedure (EdhMethod !mth) _) -> runEdhTx ets
+      $ callEdhMethod this' o mth (ArgsPack [] odEmpty) id exitWithMagicResult
+    (_, EdhBoundProc (EdhMethod !mth) !this !that _) ->
+      runEdhTx ets $ callEdhMethod this
+                                   that
+                                   mth
+                                   (ArgsPack [] odEmpty)
+                                   id
+                                   exitWithMagicResult
+    (_, !badMagic) -> edhValueDesc ets badMagic $ \ !badDesc ->
+      throwEdh ets UsageError $ "malformed __int__ magic: " <> badDesc
+  _ -> naExit
+ where
+  exitWithMagicResult :: EdhTxExit
+  exitWithMagicResult (EdhDecimal !d) _ets = exitWith d
+  exitWithMagicResult !badVal _ets = edhValueDesc ets badVal $ \ !badDesc ->
+    throwEdh ets UsageError $ "bad value returned from __int__(): " <> badDesc
+  exitWith :: Decimal -> STM ()
+  exitWith !d = case D.decimalToInteger d of
     Just !i -> exit $ fromInteger i
     Nothing -> naExit
-  EdhObject !o -> lookupEdhObjAttr pgs o (AttrByName "__int__") >>= \case
-    EdhNil -> naExit
-    EdhMethod !mth ->
-      runEdhProc pgs
-        $ callEdhMethod o mth (ArgsPack [] odEmpty) id
-        $ \(OriginalValue !rtn _ _) -> case edhUltimate rtn of
-            EdhDecimal !n -> contEdhSTM $ case D.decimalToInteger n of
-              Just !i -> exit $ fromInteger i
-              Nothing ->
-                throwEdhSTM pgs EvalError
-                  $  "bug: __int__ magin returned non-integer: "
-                  <> T.pack (show n)
-            !badVal ->
-              throwEdh UsageError
-                $  "bug: bad value returned from __int__ magic: "
-                <> T.pack (edhTypeNameOf badVal)
-    !badMagic ->
-      throwEdhSTM pgs UsageError $ "Malformed __int__ magic: " <> T.pack
-        (edhTypeNameOf badMagic)
-  _ -> naExit
 

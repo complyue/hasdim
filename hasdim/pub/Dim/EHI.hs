@@ -18,7 +18,7 @@ import           Control.Concurrent.STM
 
 import           Control.Monad.Reader
 
-import           Data.Foldable
+import           Data.Maybe
 import           Data.Dynamic
 
 import           Language.Edh.EHI
@@ -30,73 +30,36 @@ import           Dim.Table
 import           Dim.Array
 
 
-builtinDataTypes :: Object -> ([(DataTypeIdent, Object)] -> STM ()) -> STM ()
-builtinDataTypes !dtTmplObj !exit =
-  flip id []
-    $ mkDtAlias @Double "float64" ["f8"]
-    $ mkDtAlias @Float "float32" ["f4"]
-    $ mkDtAlias @Int64 "int64" ["i8"]
-    $ mkDtAlias @Int32 "int32" ["i4"]
-    $ mkDtAlias @Int8 "int8" ["byte"]
-    $ mkDtAlias @Int "intp" []
-    $ mkDtAlias @YesNo "yesno" []
-    $ exit
+builtinDataTypes :: Object -> STM [(DataTypeIdent, Object)]
+builtinDataTypes !dtClass = concat <$> sequence
+  [ mkDtAlias @Double "float64" ["f8"]
+  , mkDtAlias @Float "float32" ["f4"]
+  , mkDtAlias @Int64 "int64" ["i8"]
+  , mkDtAlias @Int32 "int32" ["i4"]
+  , mkDtAlias @Int8 "int8" ["byte"]
+  , mkDtAlias @Int "intp" []
+  , mkDtAlias @YesNo "yesno" []
+  ]
  where
   mkDtAlias
     :: forall a
      . (EdhXchg a, Storable a, Typeable a)
     => DataTypeIdent
     -> [DataTypeIdent]
-    -> ([(DataTypeIdent, Object)] -> STM ())
-    -> [(DataTypeIdent, Object)]
-    -> STM ()
-  mkDtAlias !dti !alias !exit' !dts =
-    cloneEdhObject
-        dtTmplObj
-        (\_ !cloneExit -> do
-          let !dt = makeDataType @a dti
-          cloneExit $ toDyn dt
-        )
-      $ \ !dto -> exit'
-          $ foldl' (\ !dts' !n -> (n, dto) : dts') ((dti, dto) : dts) alias
+    -> STM [(DataTypeIdent, Object)]
+  mkDtAlias !dti !alias =
+    let !dt = makeDataType @a dti
+    in  edhCreateHostObj dtClass (toDyn dt) []
+          >>= \ !dto -> return $ ((dti, dto) :) $ (, dto) <$> alias
 
 
 installDimBatteries :: EdhWorld -> IO ()
 installDimBatteries !world = do
 
 
-  !moduDtypes <- installEdhModule world "dim/dtypes" $ \ !pgs !exit -> do
+  void $ installEdhModule world "dim/symbols" $ \ !ets !exit -> do
 
-    let !moduScope = contextScope $ edh'context pgs
-        !modu      = thisObject moduScope
-
-    !dtTmplObj <- do
-      !em     <- createSideEntityManipulater True =<< dtypeMethods pgs
-      !clsVal <- mkHostClass moduScope "dtype" dtypeCtor em
-      !cls    <- case clsVal of
-        EdhClass !cls -> return cls
-        _             -> error "bug: mkHostClass returned non-class"
-      !ent <- createSideEntity em $ toDyn nil
-      viewAsEdhObject ent cls []
-
-    builtinDataTypes dtTmplObj $ \ !dtAlias -> do
-
-      let !moduArts =
-            ("dtype", EdhClass (objClass dtTmplObj))
-              : [ (k, EdhObject dto) | (k, dto) <- dtAlias ]
-      !artsDict <- EdhDict
-        <$> createEdhDict [ (EdhString k, v) | (k, v) <- moduArts ]
-      updateEntityAttrs pgs (objEntity modu)
-        $  [ (AttrByName k, v) | (k, v) <- moduArts ]
-        ++ [(AttrByName "__exports__", artsDict)]
-
-      exit
-
-
-  void $ installEdhModule world "dim/symbols" $ \ !pgs !exit -> do
-
-    let !moduScope = contextScope $ edh'context pgs
-        !modu      = thisObject moduScope
+    let !moduScope = contextScope $ edh'context ets
 
     let
       !moduArts =
@@ -112,72 +75,68 @@ installDimBatteries !world = do
         ]
     !artsDict <- EdhDict
       <$> createEdhDict [ (EdhString k, v) | (k, v) <- moduArts ]
-    updateEntityAttrs pgs (objEntity modu)
+    flip iopdUpdate (edh'scope'entity moduScope)
       $  [ (AttrByName k, v) | (k, v) <- moduArts ]
       ++ [(AttrByName "__exports__", artsDict)]
 
     exit
 
 
-  void $ installEdhModule world "dim/RT" $ \ !pgs !exit -> do
+  !moduDtypes <- installEdhModule world "dim/dtypes" $ \ !ets !exit -> do
 
-    defaultDataType <- lookupEntityAttr pgs
-                                        (objEntity moduDtypes)
-                                        (AttrByName "float64")
-    defaultRangeDataType <- lookupEntityAttr pgs
-                                             (objEntity moduDtypes)
-                                             (AttrByName "intp")
+    let !moduScope = contextScope $ edh'context ets
 
-    let !moduScope = contextScope $ edh'context pgs
-        !modu      = thisObject moduScope
+    !dtClass <- createDataTypeClass moduScope
+    !dtAlias <- builtinDataTypes dtClass
 
-    !dmrpTmplObj <- do
-      !em     <- createSideEntityManipulater True =<< dmrpMethods pgs
-      !clsVal <- mkHostClass moduScope "dmrp" dmrpCtor em
-      !cls    <- case clsVal of
-        EdhClass !cls -> return cls
-        _             -> error "bug: mkHostClass returned non-class"
-      !ent <- createSideEntity em $ toDyn nil
-      viewAsEdhObject ent cls []
+    let !moduArts =
+          ("dtype", EdhObject dtClass)
+            : [ (k, EdhObject dto) | (k, dto) <- dtAlias ]
+    !artsDict <- EdhDict
+      <$> createEdhDict [ (EdhString k, v) | (k, v) <- moduArts ]
+    flip iopdUpdate (edh'scope'entity moduScope)
+      $  [ (AttrByName k, v) | (k, v) <- moduArts ]
+      ++ [(AttrByName "__exports__", artsDict)]
 
-    !numdtTmplObj <- do
-      !em     <- createSideEntityManipulater True =<< numdtMethods pgs
-      !clsVal <- mkHostClass moduScope "numdt" numdtCtor em
-      !cls    <- case clsVal of
-        EdhClass !cls -> return cls
-        _             -> error "bug: mkHostClass returned non-class"
-      !ent <- createSideEntity em $ toDyn nil
-      viewAsEdhObject ent cls []
+    exit
 
-    !emColumn     <- createSideEntityManipulater True =<< colMethods pgs
-    !clsColumnVal <- mkHostClass moduScope
-                                 "Column"
-                                 (colCtor defaultDataType)
-                                 emColumn
-    !clsColumn <- case clsColumnVal of
-      EdhClass !clsColumn -> return clsColumn
-      _                   -> error "bug: mkHostClass returned non-class"
-    !colTmplObj <- do
-      !ent <- createSideEntity emColumn $ toDyn nil
-      viewAsEdhObject ent clsColumn []
 
-    !moduArts0 <-
+  void $ installEdhModule world "dim/RT" $ \ !ets !exit -> do
+
+    let !dtypesModuStore = case edh'obj'store moduDtypes of
+          HashStore !hs -> hs
+          _             -> error "bug: module not bearing hash store"
+
+    !defaultDataType <-
+      fromJust <$> iopdLookup (AttrByName "float64") dtypesModuStore
+    !defaultRangeDataType <-
+      fromJust <$> iopdLookup (AttrByName "intp") dtypesModuStore
+
+    let !moduScope = contextScope $ edh'context ets
+
+    !dbArrayClass <- createDbArrayClass defaultDataType moduScope
+    !dmrpClass    <- createDMRPClass moduScope
+    !numdtClass   <- createNumDataTypeClass moduScope
+    !columnClass  <- createColumnClass defaultDataType moduScope
+    !tableClass   <- createTableClass columnClass moduScope
+
+    !moduArts0    <-
       sequence
       $  [ (AttrBySym sym, ) <$> mkSymbolicHostProc moduScope mc sym hp args
          | (mc, sym, hp, args) <-
            [ ( EdhMethod
              , resolveDataComparatorEffId
-             , resolveDataComparatorProc dmrpTmplObj
+             , resolveDataComparatorProc dmrpClass
              , PackReceiver [mandatoryArg "dti"]
              )
            , ( EdhMethod
              , resolveDataOperatorEffId
-             , resolveDataOperatorProc dmrpTmplObj
+             , resolveDataOperatorProc dmrpClass
              , PackReceiver [mandatoryArg "dti"]
              )
            , ( EdhMethod
              , resolveNumDataTypeEffId
-             , resolveNumDataTypeProc numdtTmplObj
+             , resolveNumDataTypeProc numdtClass
              , PackReceiver [mandatoryArg "dti"]
              )
            ]
@@ -186,7 +145,7 @@ installDimBatteries !world = do
          | (mc, nm, hp, args) <-
            [ ( EdhMethod
              , "arange"
-             , arangeProc defaultRangeDataType colTmplObj
+             , arangeProc defaultRangeDataType columnClass
              , PackReceiver [mandatoryArg "rangeSpec"]
              )
            , ( EdhMethod
@@ -200,26 +159,17 @@ installDimBatteries !world = do
              )
            ]
          ]
-      ++ [ ((AttrByName nm, ) <$>)
-           $ mkExtHostClass moduScope nm hc
-           $ \ !classUniq ->
-               createSideEntityManipulater True =<< mths classUniq pgs
-         | (nm, hc, mths) <-
-           [ ("Table"  , tabCtor                , tabMethods colTmplObj)
-           , ("DbArray", aryCtor defaultDataType, aryMethods)
-           ]
-         ]
 
     let !moduArts =
           moduArts0
-            ++ [ (AttrByName "dmrpt" , EdhObject dmrpTmplObj)
-               , (AttrByName "numdtt", EdhObject numdtTmplObj)
-               , (AttrByName "colt"  , EdhObject colTmplObj)
-               , (AttrByName "Column", clsColumnVal)
+            ++ [ (AttrByName "DbArray", EdhObject dbArrayClass)
+               , (AttrByName "Column" , EdhObject columnClass)
+               , (AttrByName "Table"  , EdhObject tableClass)
                ]
+
     !artsDict <- EdhDict
       <$> createEdhDict [ (attrKeyValue k, v) | (k, v) <- moduArts ]
-    updateEntityAttrs pgs (objEntity modu)
+    flip iopdUpdate (edh'scope'entity moduScope)
       $  [ (k, v) | (k, v) <- moduArts ]
       ++ [(AttrByName "__exports__", artsDict)]
 
