@@ -2,27 +2,53 @@
 hd = { import * 'dim' }
 effect import * 'dim/effects'
 
-# %%
-i = arange( 10, dtype=f8 )
-i|show
+# %% issue a dir command to see what's in scope
+# note a command will only get interpreted when it's the final value of a piece
+# of code submitted to the repl, it has no effect when being in middle
+dir
+
+# Column objects are 1-d arrays per se
 
 # %%
 c = Column( 10, dtype=f8 )
-c[] = i*3
 c|show
 
-# %% # repr
+# %%
+# note we have no implicit dtype convertion
+c[] = arange( 10 ) * 3 # this'll fail
+
+# %%
+# make sure to specify desired dtype on creation of a column
+i = arange( 10:20, dtype=f8 )
+i|show
+
+# %%
+c[] = i*3 # this'll work
+c|show
+
+# various display methods supported for column object
+
+# %% # repr, following forms are all equivalent
 repr( c )
 c|repr
 repr$c
 c
 
-# %% # more verbose than repr
+# %% # show is more verbose than repr, following forms are all equivalent
 show( c )
 show$c
 c|show
 
-# %% # statistical description
+# %% # statistical description, following forms are all equivalent
 desc( c )
 desc$c
 c|desc
+
+
+# %% capacity can be grown
+grow( c, 20 )
+c|show
+
+# %% valid length can be marked
+mark( c, 15 )
+c|show
