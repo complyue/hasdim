@@ -1,0 +1,28 @@
+# %%
+hd = { import * 'dim' }
+effect import * 'dim/effects'
+
+# %%
+i = arange( 10, dtype=f8 )
+i|show
+
+# %%
+c = Column( 10, dtype=f8 )
+c[] = i*3
+c|show
+
+# %% # repr
+repr( c )
+c|repr
+repr$c
+c
+
+# %% # more verbose than repr
+show( c )
+show$c
+c|show
+
+# %% # statistical description
+desc( c )
+desc$c
+c|desc

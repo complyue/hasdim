@@ -1,0 +1,6 @@
+{
+  "edh.terminal.cmdl": [
+    "cabal run hasdim:hasdim",
+    "stack run hasdim"
+  ]
+}

@@ -944,7 +944,7 @@ createColumnClass !defaultDt !clsOuterScope =
           !cs <- readTVar csv
           exitEdh ets exit
             $  EdhString
-            $  "column("
+            $  "Column("
             <> T.pack (show $ flatArrayCapacity cs)
             <> ", length="
             <> T.pack (show cl)
@@ -954,19 +954,25 @@ createColumnClass !defaultDt !clsOuterScope =
 
   colShowProc :: EdhHostProc
   colShowProc _ !exit !ets =
-    withThisHostObj ets $ \_hsv (Column (DataType _ !dtStorable) !clv !csv) ->
-      do
-        !cl <- readTMVar clv
-        !cs <- readTVar csv
-        showData cl $ flat'array'read dtStorable ets (coerce cs)
+    withHostObject ets colObj
+      $ \_hsv (Column (DataType _ !dtStorable) !clv !csv) -> do
+          !cl <- readTMVar clv
+          !cs <- readTVar csv
+          showData cl $ flat'array'read dtStorable ets (coerce cs)
    where
+    !colObj = edh'scope'this $ contextScope $ edh'context ets
+
+    exitWithDetails :: Text -> STM ()
+    exitWithDetails !details = edhValueRepr ets (EdhObject colObj)
+      $ \ !repr -> exitEdh ets exit $ EdhString $ repr <> "\n" <> details
+
     showData :: Int -> (Int -> (EdhValue -> STM ()) -> STM ()) -> STM ()
     showData !len !readElem = go 0 [] 0 ""
      where
       go :: Int -> [Text] -> Int -> Text -> STM ()
       -- TODO don't generate all lines for large columns
       go !i !cumLines !lineIdx !line | i >= len =
-        exitEdh ets exit $ EdhString $ if T.null line && null cumLines
+        exitWithDetails $ if T.null line && null cumLines
           then "Zero-Length Column"
           else if null cumLines
             then line
@@ -1071,13 +1077,13 @@ createColumnClass !defaultDt !clsOuterScope =
               throwEdh ets UsageError
               $  "assigning column of dtype="
               <> dtiOther
-              <> " to "
+              <> " to dtype="
               <> dti
               <> " not supported."
             else castObjectStore' idxVal >>= \case
               Just !idxCol ->
                 case data'type'identifier $ column'data'type idxCol of
-                  "yesno" -> -- yesno index 
+                  "yesno" -> -- yesno index
                     elemInpMaskedColumn ets
                                         idxCol
                                         assignOp
@@ -1086,7 +1092,7 @@ createColumnClass !defaultDt !clsOuterScope =
                                         (exitEdh ets exit edhNA)
                       $ exitEdh ets exit
                       $ EdhObject colObj
-                  "intp" -> -- fancy index 
+                  "intp" -> -- fancy index
                     elemInpFancyColumn ets
                                        idxCol
                                        assignOp
@@ -1151,7 +1157,7 @@ createColumnClass !defaultDt !clsOuterScope =
         Nothing -> castObjectStore' idxVal >>= \case
           Just idxCol@(Column (DataType !dtiIdx _) _clvIdx _csvIdx) ->
             case dtiIdx of
-              "yesno" -> -- yesno index 
+              "yesno" -> -- yesno index
                 vecInpMaskedColumn ets
                                    idxCol
                                    assignOp
