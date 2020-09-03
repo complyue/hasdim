@@ -22,9 +22,9 @@ import           Repl
 
 main :: IO ()
 main = getArgs >>= \case
-  []        -> runModu "net"
+  []        -> runModu "dim"
   [edhModu] -> runModu edhModu
-  _         -> hPutStrLn stderr "Usage: nedh [ <.edh-file> ]" >> exitFailure
+  _         -> hPutStrLn stderr "Usage: hasdim [ <edh-module> ]" >> exitFailure
  where
   runModu :: FilePath -> IO ()
   runModu !moduSpec = do
@@ -41,7 +41,7 @@ main = getArgs >>= \case
 
 
     atomically $ do
-      consoleOut ">> Haskell Dimension <<\n"
+      consoleOut ">> Dimensional Modeling in Haskell <<\n"
       consoleOut
         "* Blank Screen Syndrome ? Take the Tour as your companion, checkout:\n"
       consoleOut "  https://github.com/e-wrks/hasdim/tree/master/Tour\n"
