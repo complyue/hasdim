@@ -1057,9 +1057,8 @@ createColumnClass !defaultDt !clsOuterScope =
     !colObj = edh'scope'that $ contextScope $ edh'context ets
     !that   = edh'scope'that $ contextScope $ edh'context ets
     exitWithNewClone !colResult =
-      edhCloneHostObj colObj that (toDyn colResult)
-        >>= exitEdh ets exit
-        .   EdhObject
+      edhCloneHostObj ets colObj that (toDyn colResult)
+        $ \ !thatObjClone -> exitEdh ets exit $ EdhObject thatObjClone
   colIdxReadProc !apk _ !ets =
     throwEdh ets UsageError $ "invalid indexing syntax for a Column: " <> T.pack
       (show apk)
@@ -1254,9 +1253,8 @@ createColumnClass !defaultDt !clsOuterScope =
     !colObj = edh'scope'that $ contextScope $ edh'context ets
     !that   = edh'scope'that $ contextScope $ edh'context ets
     exitWithNewClone !colResult =
-      edhCloneHostObj colObj that (toDyn colResult)
-        >>= exitEdh ets exit
-        .   EdhObject
+      edhCloneHostObj ets colObj that (toDyn colResult)
+        $ \ !thatObjClone -> exitEdh ets exit $ EdhObject thatObjClone
   colOpProc _ !apk _ !ets =
     throwEdh ets UsageError $ "invalid args for a Column operator: " <> T.pack
       (show apk)
