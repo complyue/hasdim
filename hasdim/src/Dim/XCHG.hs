@@ -31,6 +31,11 @@ class EdhXchg t where
   fromEdh :: EdhThreadState  -> EdhValue -> (t -> STM ()) -> STM ()
 
 
+instance EdhXchg EdhValue where
+  toEdh _ets !v !exit = exit v
+  fromEdh _ets !v !exit = exit v
+
+
 newtype YesNo = YesNo Int8
   deriving (Eq, Ord, Storable, Num, Bits, Typeable)
 
