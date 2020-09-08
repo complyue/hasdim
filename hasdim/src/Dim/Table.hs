@@ -17,7 +17,6 @@ import           Control.Concurrent.STM
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 
-import           Data.Coerce
 import           Data.Dynamic
 
 import           Data.Lossless.Decimal         as D
@@ -83,10 +82,10 @@ growTable _ets !newRowCnt (Table !trcv !tcols) !exit =
     exit
  where
   growCol :: Column -> STM ()
-  growCol (Column (DataType _dti !dtStorable) _ !csv) = do
+  growCol (Column !dt _ !csv) = do
     !cs  <- readTVar csv
-    !cs' <- flat'grow'array dtStorable (coerce cs) newRowCnt
-    writeTVar csv (coerce cs')
+    !cs' <- flat'grow'array dt cs newRowCnt
+    writeTVar csv cs'
 
 
 createTableClass :: Object -> Scope -> STM Object
@@ -199,15 +198,16 @@ createTableClass !colClass !clsOuterScope =
 
     copyCol :: Column -> Int -> TMVar Int -> (Column -> STM ()) -> STM ()
     copyCol (Column !dti !clvSrc !csvSrc) !cap !clv !exit = do
-      !clSrc                  <- readTMVar clvSrc
-      (FlatArray _capSrc !fp) <- readTVar csvSrc
-      !cs'                    <- unsafeIOToSTM $ do
-        !p'  <- callocArray cap
-        !fp' <- newForeignPtr finalizerFree p'
-        withForeignPtr fp $ \ !p -> copyArray p' p $ min cap clSrc
-        return $ FlatArray cap fp'
-      !csv' <- newTVar cs'
-      exit $ Column dti clv csv'
+      !clSrc <- readTMVar clvSrc
+      readTVar csvSrc >>= \case
+        DeviceArray _capSrc !fp -> do
+          !cs' <- unsafeIOToSTM $ do
+            !p'  <- callocArray cap
+            !fp' <- newForeignPtr finalizerFree p'
+            withForeignPtr fp $ \ !p -> copyArray p' p $ min cap clSrc
+            return $ DeviceArray cap fp'
+          !csv' <- newTVar cs'
+          exit $ Column dti clv csv'
 
 
   tabGrowProc :: EdhHostProc
@@ -299,7 +299,7 @@ createTableClass !colClass !clsOuterScope =
                   else do
                     !tcap <- tableRowCapacity tab
                     !ca   <- readTVar csv
-                    !tca  <- unsafeIOToSTM $ copyFlatArray ca cl tcap
+                    !tca  <- unsafeIOToSTM $ dupFlatArray ca cl tcap
                     !tcol <- Column dt trcv <$> newTVar tca
                     edhValueAsAttrKey ets attrKey $ \ !key -> do
                       iopdInsert key tcol tcols

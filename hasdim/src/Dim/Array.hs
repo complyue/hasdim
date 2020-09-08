@@ -27,11 +27,12 @@ import qualified Data.List.NonEmpty            as NE
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 import qualified Data.HashMap.Strict           as Map
-import           Data.Coerce
 import           Data.Dynamic
 
-import           Data.Vector.Storable           ( Vector )
-import           Data.Vector.Storable.Mutable   ( IOVector )
+import qualified Data.Vector.Mutable           as MV
+import qualified Data.Vector.Storable          as VS
+import qualified Data.Vector.Storable.Mutable  as MVS
+
 
 import qualified Data.Lossless.Decimal         as D
 import           Language.Edh.EHI
@@ -176,134 +177,130 @@ writeDbArrayLength :: Ptr DbArrayHeader -> Int64 -> IO ()
 writeDbArrayLength !ptr !vlen = pokeByteOff ptr 16 vlen
 
 
-dbArrayHeaderV0 :: forall a . (Storable a) => DbArrayHeader
-dbArrayHeaderV0 = DbArrayHeader
+dbArrayHeaderV0 :: DataType -> DbArrayHeader
+dbArrayHeaderV0 !dt = DbArrayHeader
   { array'layout'version = 0
   , array'data'offset    = fromIntegral
                            $ dbArrayHeaderAlign
                            * (1 + div dbArrayHeaderSize dbArrayHeaderAlign)
-  , array'item'size      = fromIntegral $ sizeOf (undefined :: a)
-  , array'item'align     = fromIntegral $ alignment (undefined :: a)
+  , array'item'size      = fromIntegral $ flat'element'size dt
+  , array'item'align     = fromIntegral $ flat'element'align dt
   , array'data'length    = 0
   }
 
 
 -- | Disk backed array
 data DbArray where
-  DbArray ::(Storable a, EdhXchg a) => {
+  DbArray ::{
       db'array'dir   :: !Text  -- ^ root dir for data files
     , db'array'path  :: !Text  -- ^ data file path relative to root
     , db'array'dtype :: !DataType  -- ^ dtype
       -- | flat storage, armed after current tx in an IO action
-    , db'array'store :: !(TMVar (Either SomeException (ArrayShape, Ptr DbArrayHeader, FlatArray a)))
+    , db'array'store :: !(TMVar (Either SomeException (ArrayShape, Ptr DbArrayHeader, FlatArray)))
     } -> DbArray
 
 mmapDbArray
-  :: TMVar (Either SomeException (ArrayShape, Ptr DbArrayHeader, FlatArray a))
+  :: forall a
+   . (EdhXchg a, Storable a)
+  => TMVar (Either SomeException (ArrayShape, Ptr DbArrayHeader, FlatArray))
   -> Text
   -> Text
   -> DataType
   -> Maybe ArrayShape
   -> IO ()
-mmapDbArray !asVar !dataDir !dataPath (DataType _dti (dts :: FlatStorable a)) =
-  \case
+mmapDbArray !asVar !dataDir !dataPath !dt = \case
 
     -- create if not exists, or load existing file with truncation
-    Just !shape -> handle (atomically . void . tryPutTMVar asVar . Left) $ do
-      let !cap = dbArraySize shape
-      createDirectoryIfMissing True dataFileDir
-      withFile dataFilePath ReadWriteMode $ \ !dfh ->
-        B.hGetNonBlocking dfh dbArrayHeaderSize >>= \case
+  Just !shape -> handle (atomically . void . tryPutTMVar asVar . Left) $ do
+    let !cap = dbArraySize shape
+    createDirectoryIfMissing True dataFileDir
+    withFile dataFilePath ReadWriteMode $ \ !dfh ->
+      B.hGetNonBlocking dfh dbArrayHeaderSize >>= \case
 
-          -- existing and with a header long enough
-          !headerPayload | B.length headerPayload == dbArrayHeaderSize -> do
-            let (!fpHdr, !fpOffHdr, _) = B.toForeignPtr headerPayload
-            withForeignPtr (plusForeignPtr fpHdr fpOffHdr) $ \ !pHdr' -> do
-              let (pHdr :: Ptr DbArrayHeader) = castPtr pHdr'
-              !hdr <- peek pHdr
-              let
-                !mmap'size =
-                  fromIntegral (array'data'offset hdr)
-                    + cap
-                    * flat'element'size dts
-              when (fromIntegral (dbArraySize1d shape) < array'data'length hdr)
-                $  throwIO
-                $  userError
-                $  "len1d of shape "
-                <> show (dbArraySize1d shape)
-                <> " too small to cover valid data in data file: "
-                <> show (array'data'length hdr)
-              -- mind to avoid truncating file shorter, i.e. possible data loss
-              (fp, _, _) <- mmapFileForeignPtr @a dataFilePath ReadWriteEx
-                $ Just (0, mmap'size)
-              let !hdrLongLive = unsafeForeignPtrToPtr $ castForeignPtr fp
-              void $ atomically $ tryPutTMVar asVar $ Right
-                ( shape
-                , hdrLongLive
-                , FlatArray cap
-                $ coerce
-                $ plusForeignPtr fp
-                $ fromIntegral
-                $ array'data'offset hdr
-                )
-
-          -- don't have a header long enough, most prolly not existing
-          -- todo more care for abnormal situations
-          _ -> do
+        -- existing and with a header long enough
+        !headerPayload | B.length headerPayload == dbArrayHeaderSize -> do
+          let (!fpHdr, !fpOffHdr, _) = B.toForeignPtr headerPayload
+          withForeignPtr (plusForeignPtr fpHdr fpOffHdr) $ \ !pHdr' -> do
+            let (pHdr :: Ptr DbArrayHeader) = castPtr pHdr'
+            !hdr <- peek pHdr
             let
-              !hdr = dbArrayHeaderV0 @a
               !mmap'size =
                 fromIntegral (array'data'offset hdr)
                   + cap
-                  * flat'element'size dts
-            (fp, _, _) <- mmapFileForeignPtr @a dataFilePath ReadWriteEx
+                  * flat'element'size dt
+            when (fromIntegral (dbArraySize1d shape) < array'data'length hdr)
+              $  throwIO
+              $  userError
+              $  "len1d of shape "
+              <> show (dbArraySize1d shape)
+              <> " too small to cover valid data in data file: "
+              <> show (array'data'length hdr)
+            -- mind to avoid truncating file shorter, i.e. possible data loss
+            (fp, _, _) <- mmapFileForeignPtr dataFilePath ReadWriteEx
               $ Just (0, mmap'size)
-            let !hdrLongLive = unsafeForeignPtrToPtr $ castForeignPtr fp
-            poke hdrLongLive hdr
+            let
+              !hdrLongLive = unsafeForeignPtrToPtr $ castForeignPtr fp
+              !fa =
+                DeviceArray @a cap
+                  $ plusForeignPtr fp
+                  $ fromIntegral
+                  $ array'data'offset hdr
             void $ atomically $ tryPutTMVar asVar $ Right
-              ( shape
+              (shape, hdrLongLive, fa)
+
+        -- don't have a header long enough, most prolly not existing
+        -- todo more care for abnormal situations
+        _ -> do
+          let
+            !hdr = dbArrayHeaderV0 dt
+            !mmap'size =
+              fromIntegral (array'data'offset hdr) + cap * flat'element'size dt
+          (fp, _, _) <- mmapFileForeignPtr dataFilePath ReadWriteEx
+            $ Just (0, mmap'size)
+          let !hdrLongLive = unsafeForeignPtrToPtr $ castForeignPtr fp
+          poke hdrLongLive hdr
+          void $ atomically $ tryPutTMVar asVar $ Right
+            ( shape
+            , hdrLongLive
+            , DeviceArray @a cap
+            $ plusForeignPtr fp
+            $ fromIntegral
+            $ array'data'offset hdr
+            )
+
+  -- load existing array file, use header and file length to calculate shape,
+  -- assuming 1d
+  Nothing ->
+    handle (atomically . void . tryPutTMVar asVar . Left)
+      $ withFile dataFilePath ReadWriteMode
+      $ \ !dfh -> hFileSize dfh >>= \case
+
+          -- existing and with a header long enough
+          !fileSize | fileSize >= fromIntegral dbArrayHeaderSize -> do
+            (fp, _, _) <- mmapFileForeignPtr dataFilePath ReadWriteEx
+              $ Just (0, fromIntegral fileSize)
+            let !hdrLongLive = unsafeForeignPtrToPtr $ castForeignPtr fp
+            !hdr <- peek hdrLongLive
+            let data'bytes'len :: Int64 =
+                  fromIntegral fileSize - fromIntegral (array'data'offset hdr)
+                cap :: Int = fromIntegral data'bytes'len
+                  `div` fromIntegral (flat'element'size dt)
+            void $ atomically $ tryPutTMVar asVar $ Right
+              ( ArrayShape (("", cap) :| [])
               , hdrLongLive
-              , FlatArray cap
-              $ coerce
+              , DeviceArray @a cap
               $ plusForeignPtr fp
               $ fromIntegral
               $ array'data'offset hdr
               )
 
-    -- load existing array file, use header and file length to calculate shape,
-    -- assuming 1d
-    Nothing ->
-      handle (atomically . void . tryPutTMVar asVar . Left)
-        $ withFile dataFilePath ReadWriteMode
-        $ \ !dfh -> hFileSize dfh >>= \case
-
-            -- existing and with a header long enough
-            !fileSize | fileSize >= fromIntegral dbArrayHeaderSize -> do
-              (fp, _, _) <- mmapFileForeignPtr @a dataFilePath ReadWriteEx
-                $ Just (0, fromIntegral fileSize)
-              let !hdrLongLive = unsafeForeignPtrToPtr $ castForeignPtr fp
-              !hdr <- peek hdrLongLive
-              let data'bytes'len :: Int64 =
-                    fromIntegral fileSize - fromIntegral (array'data'offset hdr)
-                  cap :: Int = fromIntegral data'bytes'len
-                    `div` fromIntegral (flat'element'size dts)
-              void $ atomically $ tryPutTMVar asVar $ Right
-                ( ArrayShape (("", cap) :| [])
-                , hdrLongLive
-                , FlatArray cap
-                $ coerce
-                $ plusForeignPtr fp
-                $ fromIntegral
-                $ array'data'offset hdr
-                )
-
-            -- don't have a header long enough, most prolly not existing
-            -- todo more care of abnormal situations
-            _ ->
-              throwIO
-                $  userError
-                $  "invalid disk file for array: "
-                <> dataFilePath
+          -- don't have a header long enough, most prolly not existing
+          -- todo more care of abnormal situations
+          _ ->
+            throwIO
+              $  userError
+              $  "invalid disk file for array: "
+              <> dataFilePath
 
  where
   !dataFilePath = T.unpack dataDir </> T.unpack (dataPath <> ".dba")
@@ -320,40 +317,33 @@ dbArrayShape (DbArray _ _ _ !das) = readTMVar das >>= \case
   Right (!shape, _, _) -> return shape
 
 castDbArrayData
-  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (Vector a)
-castDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das) =
-  atomically (readTMVar das) >>= \case
-    Left  !err              -> throwIO err
-    Right (_, !hdrPtr, !fa) -> do
-      !vlen <- readDbArrayLength hdrPtr
-      return
-        $ unsafeFlatArrayAsVector
-        $ unsafeSliceFlatArray fa 0
-        $ fromIntegral vlen
+  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (VS.Vector a)
+castDbArrayData (DbArray _ _ _ !das) = atomically (readTMVar das) >>= \case
+  Left  !err              -> throwIO err
+  Right (_, !hdrPtr, !fa) -> do
+    !vlen <- readDbArrayLength hdrPtr
+    return $ unsafeFlatArrayAsVector $ unsafeSliceFlatArray fa 0 $ fromIntegral
+      vlen
 
 castMutDbArrayData
-  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (IOVector a)
-castMutDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das)
-  = atomically (readTMVar das) >>= \case
-    Left  !err              -> throwIO err
-    Right (_, !hdrPtr, !fa) -> do
-      !vlen <- readDbArrayLength hdrPtr
-      return
-        $ unsafeFlatArrayAsMVector
-        $ unsafeSliceFlatArray fa 0
-        $ fromIntegral vlen
+  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (MVS.IOVector a)
+castMutDbArrayData (DbArray _ _ _ !das) = atomically (readTMVar das) >>= \case
+  Left  !err              -> throwIO err
+  Right (_, !hdrPtr, !fa) -> do
+    !vlen <- readDbArrayLength hdrPtr
+    return $ unsafeFlatArrayAsMVector $ unsafeSliceFlatArray fa 0 $ fromIntegral
+      vlen
 
 castFullDbArrayData
-  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (Vector a)
-castFullDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das)
-  = atomically (readTMVar das) >>= \case
-    Left  !err        -> throwIO err
-    Right (_, _, !fa) -> return $ unsafeFlatArrayAsVector fa
+  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (VS.Vector a)
+castFullDbArrayData (DbArray _ _ _ !das) = atomically (readTMVar das) >>= \case
+  Left  !err        -> throwIO err
+  Right (_, _, !fa) -> return $ unsafeFlatArrayAsVector fa
 
 castMutFullDbArrayData
-  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (IOVector a)
-castMutFullDbArrayData (DbArray _ _ (DataType _dti (_dts :: FlatStorable a1)) !das)
-  = atomically (readTMVar das) >>= \case
+  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (MVS.IOVector a)
+castMutFullDbArrayData (DbArray _ _ _ !das) =
+  atomically (readTMVar das) >>= \case
     Left  !err        -> throwIO err
     Right (_, _, !fa) -> return $ unsafeFlatArrayAsMVector fa
 
@@ -398,20 +388,22 @@ createDbArrayClass !defaultDt !clsOuterScope =
       Left !err -> throwEdh etsCtor UsageError err
       Right (!dataDir, !dataPath, !dtv, !shapeVal) ->
         castObjectStore' dtv >>= \case
-          Nothing -> throwEdh etsCtor UsageError "invalid dtype"
-          Just dt@(DataType _dti (_dts :: FlatStorable a)) ->
-            if dataDir == "" || dataPath == ""
-              then throwEdh etsCtor UsageError "missing dataDir/dataPath"
-              else newEmptyTMVar >>= \ !asVar -> if shapeVal == EdhNil
-                then runEdhTx etsCtor $ edhContIO $ do
-                  mmapDbArray @a asVar dataDir dataPath dt Nothing
-                  atomically $ ctorExit =<< HostStore <$> newTVar
-                    (toDyn $ DbArray @a dataDir dataPath dt asVar)
-                else parseArrayShape etsCtor shapeVal $ \ !shape ->
-                  runEdhTx etsCtor $ edhContIO $ do
-                    mmapDbArray @a asVar dataDir dataPath dt $ Just shape
-                    atomically $ ctorExit . HostStore =<< newTVar
-                      (toDyn $ DbArray @a dataDir dataPath dt asVar)
+          Nothing  -> throwEdh etsCtor UsageError "invalid dtype"
+          Just !dt -> flat'new'array dt 0 >>= \case
+            DeviceArray _ (_ :: ForeignPtr a) ->
+              if dataDir == "" || dataPath == ""
+                then throwEdh etsCtor UsageError "missing dataDir/dataPath"
+                else newEmptyTMVar >>= \ !asVar -> if shapeVal == EdhNil
+                  then runEdhTx etsCtor $ edhContIO $ do
+                    mmapDbArray @a asVar dataDir dataPath dt Nothing
+                    atomically $ ctorExit =<< HostStore <$> newTVar
+                      (toDyn $ DbArray dataDir dataPath dt asVar)
+                  else parseArrayShape etsCtor shapeVal $ \ !shape ->
+                    runEdhTx etsCtor $ edhContIO $ do
+                      mmapDbArray @a asVar dataDir dataPath dt $ Just shape
+                      atomically $ ctorExit . HostStore =<< newTVar
+                        (toDyn $ DbArray dataDir dataPath dt asVar)
+            HostArray _ (_ :: MV.IOVector a) -> undefined -- xxx 
    where
     ctorArgsParser =
       ArgsPackParser
@@ -494,7 +486,7 @@ createDbArrayClass !defaultDt !clsOuterScope =
 
   aryReprProc :: EdhHostProc
   aryReprProc _ !exit !ets =
-    withThisHostObj ets $ \_hsv (DbArray !dir !path (DataType !dti _) !das) ->
+    withThisHostObj ets $ \_hsv (DbArray !dir !path !dt !das) ->
       readTMVar das >>= \case
         Left !err -> throwSTM err
         Right (!shape, _, _) ->
@@ -505,7 +497,7 @@ createDbArrayClass !defaultDt !clsOuterScope =
             <> ", "
             <> T.pack (show path)
             <> ", dtype="
-            <> dti
+            <> (data'type'identifier dt)
             <> ", shape="
             <> T.pack (show shape)
             <> ")"
@@ -513,7 +505,7 @@ createDbArrayClass !defaultDt !clsOuterScope =
 
   aryIdxReadProc :: EdhHostProc
   aryIdxReadProc (ArgsPack !args _) !exit !ets =
-    withThisHostObj ets $ \_hsv (DbArray _ _ (DataType _dti !dts) !das) ->
+    withThisHostObj ets $ \_hsv (DbArray _ _ !dt !das) ->
       readTMVar das >>= \case
         Left  !err             -> throwSTM err
         Right (!shape, _, !fa) -> case args of
@@ -521,16 +513,14 @@ createDbArrayClass !defaultDt !clsOuterScope =
             --      an element index first
           [EdhArgsPack (ArgsPack !idxs _)] ->
             flatIndexInShape ets idxs shape $ \ !flatIdx ->
-              flat'array'read dts ets (coerce fa) flatIdx
-                $ \ !rv -> exitEdh ets exit rv
+              flat'array'read dt ets fa flatIdx $ \ !rv -> exitEdh ets exit rv
           idxs -> flatIndexInShape ets idxs shape $ \ !flatIdx ->
-            flat'array'read dts ets (coerce fa) flatIdx
-              $ \ !rv -> exitEdh ets exit rv
+            flat'array'read dt ets fa flatIdx $ \ !rv -> exitEdh ets exit rv
 
 
   aryIdxWriteProc :: EdhHostProc
   aryIdxWriteProc (ArgsPack !args _) !exit !ets =
-    withThisHostObj ets $ \_hsv (DbArray _ _ (DataType _dti !dts) !das) ->
+    withThisHostObj ets $ \_hsv (DbArray _ _ !dt !das) ->
       readTMVar das >>= \case
         Left  !err            -> throwSTM err
         Right (!shape, _, fa) -> case args of
@@ -538,11 +528,10 @@ createDbArrayClass !defaultDt !clsOuterScope =
                   --      from an element index first
           [EdhArgsPack (ArgsPack !idxs _), !dv] ->
             flatIndexInShape ets idxs shape $ \ !flatIdx ->
-              flat'array'write dts ets (coerce fa) flatIdx dv
+              flat'array'write dt ets fa flatIdx dv
                 $ \ !rv -> exitEdh ets exit rv
           [idx, !dv] -> flatIndexInShape ets [idx] shape $ \ !flatIdx ->
-            flat'array'write dts ets (coerce fa) flatIdx dv
-              $ \ !rv -> exitEdh ets exit rv
+            flat'array'write dt ets fa flatIdx dv $ \ !rv -> exitEdh ets exit rv
           -- TODO more friendly error msg
           _ -> throwEdh ets UsageError "invalid index assign args"
 

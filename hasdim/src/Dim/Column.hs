@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 
 module Dim.Column where
 
@@ -33,7 +34,7 @@ import           Dim.DataType
 -- | A column is a 1-dimensional array with pre-allocated storage capacity,
 -- safely typed for data manipulation.
 data Column where
-  Column ::(Storable a, Typeable a, EdhXchg a) => {
+  Column ::{
       -- | Data type
       column'data'type :: !DataType
 
@@ -51,13 +52,13 @@ data Column where
       -- changer attribute to a thread's identity before modifiying a column,
       -- and check such a attribute to be `frozen` valued before allowing the
       -- STM tx to commit
-    , column'storage :: !(TVar (FlatArray a))
+    , column'storage :: !(TVar FlatArray)
     } -> Column
  deriving Typeable
 instance Eq Column where
-  (Column (DataType x'dti _) _ x'cs) == (Column (DataType y'dti _) _ y'cs) =
+  (Column !x'dt _ x'cs) == (Column !y'dt _ y'cs) =
     -- note coerce is safe only when dti matches
-    x'dti == y'dti && x'cs == coerce y'cs
+    data'type'identifier x'dt == data'type'identifier y'dt && x'cs == y'cs
 
 columnCapacity :: Column -> STM Int
 columnCapacity (Column _ _ !csv) = flatArrayCapacity <$> readTVar csv
@@ -77,24 +78,27 @@ createColumn
   -> TMVar Int
   -> (Column -> STM ())
   -> STM ()
-createColumn _ets dt@(DataType _ !dtStorable) !cap !clv !exit = do
-  !cs  <- flat'new'array dtStorable cap
-  !csv <- newTVar cs
-  exit $ Column dt clv csv
+createColumn _ets !dt !cap !clv !exit = case dt of
+  DataType {..} -> do
+    !cs  <- flat'new'array cap
+    !csv <- newTVar cs
+    exit $ Column dt clv csv
 
 growColumn :: EdhThreadState -> Int -> Column -> STM () -> STM ()
-growColumn _ets !newCap (Column (DataType _ !dtStorable) !clv !csv) !exit = do
-  !cl  <- takeTMVar clv
-  !cs  <- readTVar csv
-  !cs' <- flat'grow'array dtStorable (coerce cs) newCap
-  writeTVar csv (coerce cs')
-  putTMVar clv $ min newCap cl
-  exit
+growColumn _ets !newCap (Column !dt !clv !csv) !exit = case dt of
+  DataType {..} -> do
+    !cl  <- takeTMVar clv
+    !cs  <- readTVar csv
+    !cs' <- flat'grow'array (coerce cs) newCap
+    writeTVar csv (coerce cs')
+    putTMVar clv $ min newCap cl
+    exit
 
 unsafeReadColumnCell
   :: EdhThreadState -> Column -> Int -> (EdhValue -> STM ()) -> STM ()
-unsafeReadColumnCell !ets (Column (DataType _ !dtStorable) _ !csv) !idx !exit =
-  readTVar csv >>= \ !cs -> flat'array'read dtStorable ets (coerce cs) idx exit
+unsafeReadColumnCell !ets (Column !dt _ !csv) !idx !exit = case dt of
+  DataType {..} ->
+    readTVar csv >>= \ !cs -> flat'array'read ets (coerce cs) idx exit
 
 unsafeWriteColumnCell
   :: EdhThreadState
@@ -103,51 +107,53 @@ unsafeWriteColumnCell
   -> EdhValue
   -> (EdhValue -> STM ())
   -> STM ()
-unsafeWriteColumnCell !ets (Column (DataType _ !dtStorable) _ !csv) !idx !val !exit
-  = readTVar csv
-    >>= \ !cs -> flat'array'write dtStorable ets (coerce cs) idx val exit
+unsafeWriteColumnCell !ets (Column !dt _ !csv) !idx !val !exit = case dt of
+  DataType {..} ->
+    readTVar csv >>= \ !cs -> flat'array'write ets (coerce cs) idx val exit
 
 unsafeFillColumn
   :: EdhThreadState -> Column -> EdhValue -> [Int] -> STM () -> STM ()
-unsafeFillColumn !ets (Column (DataType _ !dtStorable) _ !csv) !val !idxs !exit
-  = fromEdh ets val $ \ !sv -> readTVar csv >>= \ !cs ->
-    flat'array'update dtStorable ets [ (i, sv) | i <- idxs ] (coerce cs) exit
+unsafeFillColumn !ets (Column !dt _ !csv) !val !idxs !exit = case dt of
+  DataType {..} -> fromEdh ets val $ \ !sv -> readTVar csv >>= \ !cs ->
+    flat'array'update ets [ (i, sv) | i <- idxs ] (coerce cs) exit
 
 unsafeSliceColumn :: Column -> Int -> Int -> Int -> (Column -> STM ()) -> STM ()
-unsafeSliceColumn (Column !dt !clv (csv :: TVar (FlatArray a))) !start !stop !step !exit
-  = do
-    !cl                     <- readTMVar clv
-    cs@(FlatArray !cap !fp) <- readTVar csv
-    if start >= cap || stop == start
-      then do
-        !clv' <- newTMVar 0
-        !csv' <- newTVar (emptyFlatArray @a)
-        exit $ Column dt clv' csv'
-      else if step == 1
-        then do
-          let !len = max 0 $ min cl stop - start
-              !cs' = unsafeSliceFlatArray cs start (cap - start)
-          !clv' <- newTMVar len
-          !csv' <- newTVar cs'
-          exit $ Column dt clv' csv'
-        else do
-          let (q, r) = quotRem (stop - start) step
-              !len   = if r == 0 then abs q else 1 + abs q
-          !fp' <- unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
-            !p'  <- callocArray @a len
-            !fp' <- newForeignPtr finalizerFree p'
-            let fillRng :: Int -> Int -> IO ()
-                fillRng !n !i = if i >= len
-                  then return ()
-                  else do
-                    peekElemOff p n >>= pokeElemOff p' i
-                    fillRng (n + step) (i + 1)
-            fillRng start 0
-            return fp'
-          let !cs' = FlatArray len fp'
-          !csv' <- newTVar cs'
-          !clv' <- newTMVar len
-          exit $ Column dt clv' csv'
+unsafeSliceColumn (Column !dt !clv (csv :: TVar FlatArray)) !start !stop !step !exit
+  = case dt of
+    DataType {..} -> do
+      !cl <- readTMVar clv
+      readTVar csv >>= \case
+        cs@(DeviceArray !cap (fp :: ForeignPtr a)) ->
+          if start >= cap || stop == start
+            then do
+              !clv' <- newTMVar 0
+              !csv' <- newTVar (emptyDeviceArray @a)
+              exit $ Column dt clv' csv'
+            else if step == 1
+              then do
+                let !len = max 0 $ min cl stop - start
+                    !cs' = unsafeSliceFlatArray cs start (cap - start)
+                !clv' <- newTMVar len
+                !csv' <- newTVar cs'
+                exit $ Column dt clv' csv'
+              else do
+                let (q, r) = quotRem (stop - start) step
+                    !len   = if r == 0 then abs q else 1 + abs q
+                !fp' <- unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
+                  !p'  <- callocArray len
+                  !fp' <- newForeignPtr finalizerFree p'
+                  let fillRng :: Int -> Int -> IO ()
+                      fillRng !n !i = if i >= len
+                        then return ()
+                        else do
+                          peekElemOff p n >>= pokeElemOff p' i
+                          fillRng (n + step) (i + 1)
+                  fillRng start 0
+                  return fp'
+                let !cs' = DeviceArray len fp'
+                !csv' <- newTVar cs'
+                !clv' <- newTMVar len
+                exit $ Column dt clv' csv'
 
 
 extractColumnBool
@@ -157,28 +163,29 @@ extractColumnBool
   -> STM ()
   -> (Column -> STM ())
   -> STM ()
-extractColumnBool !ets (Column _mdt !mclv !mcsv) (Column dt@(DataType !dti _) !clv !csv) !naExit !exit
+extractColumnBool !ets (Column _mdt !mclv !mcsv) (Column !dt !clv !csv) !naExit !exit
   = do
     !cl <- readTMVar clv
     !cs <- readTVar csv
-    resolveDataOperator' ets dti cs naExit $ \ !dtOp -> do
-      let !fa = unsafeSliceFlatArray cs 0 cl
-      !mcl <- readTMVar mclv
-      if mcl /= cl
-        then
-          throwEdh ets UsageError
-          $  "index length mismatch: "
-          <> T.pack (show mcl)
-          <> " vs "
-          <> T.pack (show cl)
-        else do
-          !mcs <- readTVar mcsv
-          let !ma = unsafeSliceFlatArray mcs 0 mcl
-          flat'extract'yesno dtOp ets (unsafeCoerce ma) fa $ \(!rfa, !rlen) ->
-            do
-              !clvRtn <- newTMVar rlen
-              !csvRtn <- newTVar rfa
-              exit $ Column dt clvRtn csvRtn
+    resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp ->
+      case dtOp of
+        FlatOp {..} -> do
+          let !fa = unsafeSliceFlatArray cs 0 cl
+          !mcl <- readTMVar mclv
+          if mcl /= cl
+            then
+              throwEdh ets UsageError
+              $  "index length mismatch: "
+              <> T.pack (show mcl)
+              <> " vs "
+              <> T.pack (show cl)
+            else do
+              !mcs <- readTVar mcsv
+              let !ma = unsafeSliceFlatArray mcs 0 mcl
+              flat'extract'yesno ets ma fa $ \(!rfa, !rlen) -> do
+                !clvRtn <- newTMVar rlen
+                !csvRtn <- newTVar rfa
+                exit $ Column dt clvRtn csvRtn
 
 
 extractColumnFancy
@@ -188,13 +195,13 @@ extractColumnFancy
   -> STM ()
   -> (Column -> STM ())
   -> STM ()
-extractColumnFancy !ets (Column _idti !iclv !icsv) (Column dt@(DataType !dti _) !clv !csv) !naExit !exit
+extractColumnFancy !ets (Column _idti !iclv !icsv) (Column !dt !clv !csv) !naExit !exit
   = do
     !icl <- readTMVar iclv
     !ics <- readTVar icsv
     !cl  <- readTMVar clv
     !cs  <- readTVar csv
-    resolveDataOperator' ets dti cs naExit $ \ !dtOp -> do
+    resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp -> do
       let !ifa = unsafeSliceFlatArray (coerce ics) 0 icl
           !fa  = unsafeSliceFlatArray cs 0 cl
       flat'extract'fancy dtOp ets ifa fa $ \ !rfa -> do
@@ -211,16 +218,17 @@ vecCmpColumn
   -> EdhValue
   -> (Column -> STM ())
   -> STM ()
-vecCmpColumn !dtYesNo !ets !cmp (Column (DataType !dti _) !clv !csv) !v !exit =
-  do
-    !cl <- readTMVar clv
-    !cs <- readTVar csv
-    resolveDataComparator ets dti cs $ \ !dtOrd -> do
-      let !fa = unsafeSliceFlatArray cs 0 cl
-      flat'cmp'vectorized dtOrd ets fa cmp v $ \ !bifa -> do
-        !biclv <- newTMVar cl
-        !bicsv <- newTVar bifa
-        exit $ Column dtYesNo biclv bicsv
+vecCmpColumn !dtYesNo !ets !cmp (Column !dt !clv !csv) !v !exit = do
+  !cl <- readTMVar clv
+  !cs <- readTVar csv
+  resolveDataComparator ets (data'type'identifier dt) cs $ \ !dtOrd ->
+    case dtOrd of
+      FlatOrd {..} -> do
+        let !fa = unsafeSliceFlatArray cs 0 cl
+        flat'cmp'vectorized ets fa cmp v $ \ !bifa -> do
+          !biclv <- newTMVar cl
+          !bicsv <- newTVar bifa
+          exit $ Column dtYesNo biclv bicsv
 
 elemCmpColumn
   :: DataType
@@ -230,14 +238,14 @@ elemCmpColumn
   -> Column
   -> (Column -> STM ())
   -> STM ()
-elemCmpColumn !dtYesNo !ets !cmp (Column (DataType !dti1 _) !clv1 !csv1) (Column (DataType !dti2 _) !clv2 !csv2) !exit
-  = if dti1 /= dti2
+elemCmpColumn !dtYesNo !ets !cmp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !csv2) !exit
+  = if data'type'identifier dt1 /= data'type'identifier dt2
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> dti1
+      <> (data'type'identifier dt1)
       <> " vs "
-      <> dti2
+      <> (data'type'identifier dt2)
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -251,14 +259,16 @@ elemCmpColumn !dtYesNo !ets !cmp (Column (DataType !dti1 _) !clv1 !csv1) (Column
         else do
           !cs1 <- readTVar csv1
           !cs2 <- readTVar csv2
-          resolveDataComparator ets dti1 cs1 $ \ !dtOrd -> do
-            let !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                !fa2 = unsafeSliceFlatArray cs2 0 cl2
-            flat'cmp'element'wise dtOrd ets fa1 cmp (unsafeCoerce fa2)
-              $ \ !bifa -> do
-                  !biclv <- newTMVar cl1
-                  !bicsv <- newTVar bifa
-                  exit $ Column dtYesNo biclv bicsv
+          resolveDataComparator ets (data'type'identifier dt1) cs1
+            $ \ !dtOrd -> case dtOrd of
+                FlatOrd {..} -> do
+                  let !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                      !fa2 = unsafeSliceFlatArray cs2 0 cl2
+                  flat'cmp'element'wise ets fa1 cmp (unsafeCoerce fa2)
+                    $ \ !bifa -> do
+                        !biclv <- newTMVar cl1
+                        !bicsv <- newTVar bifa
+                        exit $ Column dtYesNo biclv bicsv
 
 vecOpColumn
   :: EdhThreadState
@@ -268,19 +278,20 @@ vecOpColumn
   -> STM ()
   -> (Column -> STM ())
   -> STM ()
-vecOpColumn !ets !getOp (Column dt@(DataType !dti _) !clv !csv) !v !naExit !exit
-  = do
-    !cl <- readTMVar clv
-    !cs <- readTVar csv
-    resolveDataOperator' ets dti cs naExit $ \ !dtOp -> do
-      let !fa  = unsafeSliceFlatArray cs 0 cl
-      let !dop = getOp dti
-      case fromDynamic dop of
-        Just EdhNil -> naExit
-        _           -> flat'op'vectorized dtOp ets fa dop v $ \ !bifa -> do
-          !biclv <- newTMVar cl
-          !bicsv <- newTVar bifa
-          exit $ Column dt biclv bicsv
+vecOpColumn !ets !getOp (Column !dt !clv !csv) !v !naExit !exit = do
+  !cl <- readTMVar clv
+  !cs <- readTVar csv
+  resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp ->
+    case dtOp of
+      FlatOp {..} -> do
+        let !fa  = unsafeSliceFlatArray cs 0 cl
+        let !dop = getOp (data'type'identifier dt)
+        case fromDynamic dop of
+          Just EdhNil -> naExit
+          _           -> flat'op'vectorized ets fa dop v $ \ !bifa -> do
+            !biclv <- newTMVar cl
+            !bicsv <- newTVar bifa
+            exit $ Column dt biclv bicsv
 
 elemOpColumn
   :: EdhThreadState
@@ -290,14 +301,14 @@ elemOpColumn
   -> STM ()
   -> (Column -> STM ())
   -> STM ()
-elemOpColumn !ets !getOp (Column dt1@(DataType !dti1 _) !clv1 !csv1) (Column (DataType !dti2 _) !clv2 !csv2) !naExit !exit
-  = if dti1 /= dti2
+elemOpColumn !ets !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !csv2) !naExit !exit
+  = if data'type'identifier dt1 /= data'type'identifier dt2
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> dti1
+      <> (data'type'identifier dt1)
       <> " vs "
-      <> dti2
+      <> (data'type'identifier dt2)
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -311,18 +322,20 @@ elemOpColumn !ets !getOp (Column dt1@(DataType !dti1 _) !clv1 !csv1) (Column (Da
         else do
           !cs1 <- readTVar csv1
           !cs2 <- readTVar csv2
-          resolveDataOperator' ets dti1 cs1 naExit $ \ !dtOp -> do
-            let !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                !fa2 = unsafeSliceFlatArray cs2 0 cl2
-            let !dop = getOp dti1
-            case fromDynamic dop of
-              Just EdhNil -> naExit
-              _ ->
-                flat'op'element'wise dtOp ets fa1 dop (unsafeCoerce fa2)
-                  $ \ !bifa -> do
-                      !biclv <- newTMVar cl1
-                      !bicsv <- newTVar bifa
-                      exit $ Column dt1 biclv bicsv
+          resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit
+            $ \ !dtOp -> case dtOp of
+                FlatOp {..} -> do
+                  let !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                      !fa2 = unsafeSliceFlatArray cs2 0 cl2
+                  let !dop = getOp (data'type'identifier dt1)
+                  case fromDynamic dop of
+                    Just EdhNil -> naExit
+                    _ ->
+                      flat'op'element'wise ets fa1 dop (unsafeCoerce fa2)
+                        $ \ !bifa -> do
+                            !biclv <- newTMVar cl1
+                            !bicsv <- newTVar bifa
+                            exit $ Column dt1 biclv bicsv
 
 vecInpColumn
   :: EdhThreadState
@@ -332,16 +345,17 @@ vecInpColumn
   -> STM ()
   -> STM ()
   -> STM ()
-vecInpColumn !ets !getOp (Column (DataType !dti _) !clv !csv) !v !naExit !exit
-  = do
-    !cl <- readTMVar clv
-    !cs <- readTVar csv
-    resolveDataOperator' ets dti cs naExit $ \ !dtOp -> do
-      let !fa  = unsafeSliceFlatArray cs 0 cl
-      let !dop = getOp dti
-      case fromDynamic dop of
-        Just EdhNil -> naExit
-        _           -> flat'inp'vectorized dtOp ets fa dop v exit
+vecInpColumn !ets !getOp (Column !dt !clv !csv) !v !naExit !exit = do
+  !cl <- readTMVar clv
+  !cs <- readTVar csv
+  resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp ->
+    case dtOp of
+      FlatOp {..} -> do
+        let !fa  = unsafeSliceFlatArray cs 0 cl
+        let !dop = getOp (data'type'identifier dt)
+        case fromDynamic dop of
+          Just EdhNil -> naExit
+          _           -> flat'inp'vectorized ets fa dop v exit
 
 vecInpSliceColumn
   :: EdhThreadState
@@ -352,16 +366,18 @@ vecInpSliceColumn
   -> STM ()
   -> STM ()
   -> STM ()
-vecInpSliceColumn !ets !slice !getOp (Column (DataType !dti _) !clv !csv) !v !naExit !exit
-  = do
+vecInpSliceColumn !ets !slice !getOp (Column !dt !clv !csv) !v !naExit !exit =
+  do
     !cl <- readTMVar clv
     !cs <- readTVar csv
-    resolveDataOperator' ets dti cs naExit $ \ !dtOp -> do
-      let !fa  = unsafeSliceFlatArray cs 0 cl
-      let !dop = getOp dti
-      case fromDynamic dop of
-        Just EdhNil -> naExit
-        _           -> flat'inp'vectorized'slice dtOp ets slice fa dop v exit
+    resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp ->
+      case dtOp of
+        FlatOp {..} -> do
+          let !fa  = unsafeSliceFlatArray cs 0 cl
+          let !dop = getOp (data'type'identifier dt)
+          case fromDynamic dop of
+            Just EdhNil -> naExit
+            _           -> flat'inp'vectorized'slice ets slice fa dop v exit
 
 vecInpMaskedColumn
   :: EdhThreadState
@@ -372,34 +388,30 @@ vecInpMaskedColumn
   -> STM ()
   -> STM ()
   -> STM ()
-vecInpMaskedColumn !ets (Column _ !mclv !mcsv) !getOp (Column (DataType !dti _) !clv !csv) !v !naExit !exit
+vecInpMaskedColumn !ets (Column _ !mclv !mcsv) !getOp (Column !dt !clv !csv) !v !naExit !exit
   = do
     !cl <- readTMVar clv
     !cs <- readTVar csv
-    resolveDataOperator' ets dti cs naExit $ \ !dtOp -> do
-      let !fa  = unsafeSliceFlatArray cs 0 cl
-      let !dop = getOp dti
-      case fromDynamic dop of
-        Just EdhNil -> naExit
-        _           -> do
-          !mcl <- readTMVar mclv
-          if mcl /= cl
-            then
-              throwEdh ets UsageError
-              $  "index length mismatch: "
-              <> T.pack (show mcl)
-              <> " vs "
-              <> T.pack (show cl)
-            else do
-              !mcs <- readTVar mcsv
-              let !ma = unsafeSliceFlatArray mcs 0 mcl
-              flat'inp'vectorized'masked dtOp
-                                         ets
-                                         (unsafeCoerce ma)
-                                         fa
-                                         dop
-                                         v
-                                         exit
+    resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp ->
+      case dtOp of
+        FlatOp {..} -> do
+          let !fa  = unsafeSliceFlatArray cs 0 cl
+          let !dop = getOp (data'type'identifier dt)
+          case fromDynamic dop of
+            Just EdhNil -> naExit
+            _           -> do
+              !mcl <- readTMVar mclv
+              if mcl /= cl
+                then
+                  throwEdh ets UsageError
+                  $  "index length mismatch: "
+                  <> T.pack (show mcl)
+                  <> " vs "
+                  <> T.pack (show cl)
+                else do
+                  !mcs <- readTVar mcsv
+                  let !ma = unsafeSliceFlatArray mcs 0 mcl
+                  flat'inp'vectorized'masked ets (unsafeCoerce ma) fa dop v exit
 
 vecInpFancyColumn
   :: EdhThreadState
@@ -410,20 +422,22 @@ vecInpFancyColumn
   -> STM ()
   -> STM ()
   -> STM ()
-vecInpFancyColumn !ets (Column _ !iclv !icsv) !getOp (Column (DataType !dti _) !clv !csv) !v !naExit !exit
+vecInpFancyColumn !ets (Column _ !iclv !icsv) !getOp (Column !dt !clv !csv) !v !naExit !exit
   = do
     !cl <- readTMVar clv
     !cs <- readTVar csv
-    resolveDataOperator' ets dti cs naExit $ \ !dtOp -> do
-      let !fa  = unsafeSliceFlatArray cs 0 cl
-      let !dop = getOp dti
-      case fromDynamic dop of
-        Just EdhNil -> naExit
-        _           -> do
-          !icl <- readTMVar iclv
-          !ics <- readTVar icsv
-          let !ia = unsafeSliceFlatArray ics 0 icl
-          flat'inp'vectorized'fancy dtOp ets (unsafeCoerce ia) fa dop v exit
+    resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp ->
+      case dtOp of
+        FlatOp {..} -> do
+          let !fa  = unsafeSliceFlatArray cs 0 cl
+          let !dop = getOp (data'type'identifier dt)
+          case fromDynamic dop of
+            Just EdhNil -> naExit
+            _           -> do
+              !icl <- readTMVar iclv
+              !ics <- readTVar icsv
+              let !ia = unsafeSliceFlatArray ics 0 icl
+              flat'inp'vectorized'fancy ets (unsafeCoerce ia) fa dop v exit
 
 elemInpColumn
   :: EdhThreadState
@@ -433,14 +447,14 @@ elemInpColumn
   -> STM ()
   -> STM ()
   -> STM ()
-elemInpColumn !ets !getOp (Column (DataType !dti1 _) !clv1 !csv1) (Column (DataType !dti2 _) !clv2 !csv2) !naExit !exit
-  = if dti1 /= dti2
+elemInpColumn !ets !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !csv2) !naExit !exit
+  = if data'type'identifier dt1 /= data'type'identifier dt2
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> dti1
+      <> (data'type'identifier dt1)
       <> " vs "
-      <> dti2
+      <> (data'type'identifier dt2)
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -454,14 +468,16 @@ elemInpColumn !ets !getOp (Column (DataType !dti1 _) !clv1 !csv1) (Column (DataT
         else do
           !cs1 <- readTVar csv1
           !cs2 <- readTVar csv2
-          resolveDataOperator' ets dti1 cs1 naExit $ \ !dtOp -> do
-            let !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                !fa2 = unsafeSliceFlatArray cs2 0 cl2
-            let !dop = getOp dti1
-            case fromDynamic dop of
-              Just EdhNil -> naExit
-              _ ->
-                flat'inp'element'wise dtOp ets fa1 dop (unsafeCoerce fa2) exit
+          resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit
+            $ \ !dtOp -> case dtOp of
+                FlatOp {..} -> do
+                  let !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                      !fa2 = unsafeSliceFlatArray cs2 0 cl2
+                  let !dop = getOp (data'type'identifier dt1)
+                  case fromDynamic dop of
+                    Just EdhNil -> naExit
+                    _ ->
+                      flat'inp'element'wise ets fa1 dop (unsafeCoerce fa2) exit
 
 elemInpSliceColumn
   :: EdhThreadState
@@ -472,32 +488,33 @@ elemInpSliceColumn
   -> STM ()
   -> STM ()
   -> STM ()
-elemInpSliceColumn !ets !slice !getOp (Column (DataType !dti1 _) !clv1 !csv1) (Column (DataType !dti2 _) !clv2 !csv2) !naExit !exit
-  = if dti1 /= dti2
+elemInpSliceColumn !ets !slice !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !csv2) !naExit !exit
+  = if data'type'identifier dt1 /= data'type'identifier dt2
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> dti1
+      <> (data'type'identifier dt1)
       <> " vs "
-      <> dti2
+      <> (data'type'identifier dt2)
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
       !cs1 <- readTVar csv1
       !cs2 <- readTVar csv2
-      resolveDataOperator' ets dti1 cs1 naExit $ \ !dtOp -> do
-        let !fa1 = unsafeSliceFlatArray cs1 0 cl1
-            !fa2 = unsafeSliceFlatArray cs2 0 cl2
-        let !dop = getOp dti1
-        case fromDynamic dop of
-          Just EdhNil -> naExit
-          _           -> flat'inp'element'wise'slice dtOp
-                                                     ets
-                                                     slice
-                                                     fa1
-                                                     dop
-                                                     (unsafeCoerce fa2)
-                                                     exit
+      resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit
+        $ \ !dtOp -> case dtOp of
+            FlatOp {..} -> do
+              let !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                  !fa2 = unsafeSliceFlatArray cs2 0 cl2
+              let !dop = getOp (data'type'identifier dt1)
+              case fromDynamic dop of
+                Just EdhNil -> naExit
+                _           -> flat'inp'element'wise'slice ets
+                                                           slice
+                                                           fa1
+                                                           dop
+                                                           (unsafeCoerce fa2)
+                                                           exit
 
 elemInpMaskedColumn
   :: EdhThreadState
@@ -508,14 +525,14 @@ elemInpMaskedColumn
   -> STM ()
   -> STM ()
   -> STM ()
-elemInpMaskedColumn !ets (Column _ !mclv !mcsv) !getOp (Column (DataType !dti1 _) !clv1 !csv1) (Column (DataType !dti2 _) !clv2 !csv2) !naExit !exit
-  = if dti1 /= dti2
+elemInpMaskedColumn !ets (Column _ !mclv !mcsv) !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !csv2) !naExit !exit
+  = if data'type'identifier dt1 /= data'type'identifier dt2
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> dti1
+      <> (data'type'identifier dt1)
       <> " vs "
-      <> dti2
+      <> (data'type'identifier dt2)
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -531,20 +548,21 @@ elemInpMaskedColumn !ets (Column _ !mclv !mcsv) !getOp (Column (DataType !dti1 _
           !mcs <- readTVar mcsv
           !cs1 <- readTVar csv1
           !cs2 <- readTVar csv2
-          resolveDataOperator' ets dti1 cs1 naExit $ \ !dtOp -> do
-            let !ma  = unsafeSliceFlatArray mcs 0 mcl
-                !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                !fa2 = unsafeSliceFlatArray cs2 0 cl2
-            let !dop = getOp dti1
-            case fromDynamic dop of
-              Just EdhNil -> naExit
-              _           -> flat'inp'element'wise'masked dtOp
-                                                          ets
-                                                          (unsafeCoerce ma)
-                                                          fa1
-                                                          dop
-                                                          (unsafeCoerce fa2)
-                                                          exit
+          resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit
+            $ \ !dtOp -> case dtOp of
+                FlatOp {..} -> do
+                  let !ma  = unsafeSliceFlatArray mcs 0 mcl
+                      !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                      !fa2 = unsafeSliceFlatArray cs2 0 cl2
+                  let !dop = getOp (data'type'identifier dt1)
+                  case fromDynamic dop of
+                    Just EdhNil -> naExit
+                    _ -> flat'inp'element'wise'masked ets
+                                                      (unsafeCoerce ma)
+                                                      fa1
+                                                      dop
+                                                      (unsafeCoerce fa2)
+                                                      exit
 
 elemInpFancyColumn
   :: EdhThreadState
@@ -555,14 +573,14 @@ elemInpFancyColumn
   -> STM ()
   -> STM ()
   -> STM ()
-elemInpFancyColumn !ets (Column _ !iclv !icsv) !getOp (Column (DataType !dti1 _) !clv1 !csv1) (Column (DataType !dti2 _) !clv2 !csv2) !naExit !exit
-  = if dti1 /= dti2
+elemInpFancyColumn !ets (Column _ !iclv !icsv) !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !csv2) !naExit !exit
+  = if data'type'identifier dt1 /= data'type'identifier dt2
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> dti1
+      <> (data'type'identifier dt1)
       <> " vs "
-      <> dti2
+      <> (data'type'identifier dt2)
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -578,20 +596,21 @@ elemInpFancyColumn !ets (Column _ !iclv !icsv) !getOp (Column (DataType !dti1 _)
           !ics <- readTVar icsv
           !cs1 <- readTVar csv1
           !cs2 <- readTVar csv2
-          resolveDataOperator' ets dti1 cs1 naExit $ \ !dtOp -> do
-            let !ia  = unsafeSliceFlatArray ics 0 icl
-                !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                !fa2 = unsafeSliceFlatArray cs2 0 cl2
-            let !dop = getOp dti1
-            case fromDynamic dop of
-              Just EdhNil -> naExit
-              _           -> flat'inp'element'wise'fancy dtOp
-                                                         ets
-                                                         (unsafeCoerce ia)
-                                                         fa1
-                                                         dop
-                                                         (unsafeCoerce fa2)
-                                                         exit
+          resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit
+            $ \ !dtOp -> case dtOp of
+                FlatOp {..} -> do
+                  let !ia  = unsafeSliceFlatArray ics 0 icl
+                      !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                      !fa2 = unsafeSliceFlatArray cs2 0 cl2
+                  let !dop = getOp (data'type'identifier dt1)
+                  case fromDynamic dop of
+                    Just EdhNil -> naExit
+                    _ -> flat'inp'element'wise'fancy ets
+                                                     (unsafeCoerce ia)
+                                                     fa1
+                                                     dop
+                                                     (unsafeCoerce fa2)
+                                                     exit
 
 
 nonzeroIdxColumn :: EdhThreadState -> Column -> (Column -> STM ()) -> STM ()
@@ -606,7 +625,7 @@ nonzeroIdxColumn !ets (Column _mdti !mclv !mcsv) !exit =
               !clvRtn <- newTMVar rlen
               !csvRtn <- newTVar rfa
               exit $ Column dtIntp clvRtn csvRtn
-  where dtIntp = makeDataType @Int "intp"
+  where dtIntp = makeStorableDataType @Int "intp"
 
 -- obtain valid column data as an immutable Storable Vector
 -- this is unsafe in both memory/type regards and thread regard
@@ -894,7 +913,7 @@ createColumnClass !defaultDt !clsOuterScope =
               )
             ]
 
-  dtYesNo = makeDataType @YesNo "yesno"
+  dtYesNo = makeStorableDataType @YesNo "yesno"
 
   colGrowProc :: EdhHostProc
   colGrowProc (ArgsPack [EdhDecimal !newCapNum] !kwargs) !exit | odNull kwargs =
@@ -933,13 +952,13 @@ createColumnClass !defaultDt !clsOuterScope =
     throwEdh ets UsageError "invalid args to Column.markLength()"
 
   colDtypeProc :: EdhHostProc
-  colDtypeProc _ !exit !ets = withThisHostObj ets
-    $ \_hsv (Column (DataType !dti _) _ _) -> exitEdh ets exit $ EdhString dti
+  colDtypeProc _ !exit !ets = withThisHostObj ets $ \_hsv (Column !dt _ _) ->
+    exitEdh ets exit $ EdhString $ data'type'identifier dt
 
   colReprProc :: EdhHostProc
   colReprProc _ !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Column>")
-      $ \_hsv (Column (DataType !dti _) !clv !csv) -> do
+      $ \_hsv (Column !dt !clv !csv) -> do
           !cl <- readTMVar clv
           !cs <- readTVar csv
           exitEdh ets exit
@@ -949,16 +968,16 @@ createColumnClass !defaultDt !clsOuterScope =
             <> ", length="
             <> T.pack (show cl)
             <> ", dtype="
-            <> dti -- assuming the identifier is available as attr
+            <> (data'type'identifier dt) -- assuming the identifier is available as attr
             <> ")"
 
   colShowProc :: EdhHostProc
   colShowProc _ !exit !ets =
-    withHostObject ets colObj
-      $ \_hsv (Column (DataType _ !dtStorable) !clv !csv) -> do
-          !cl <- readTMVar clv
-          !cs <- readTVar csv
-          showData cl $ flat'array'read dtStorable ets (coerce cs)
+    withHostObject ets colObj $ \_hsv (Column !dt !clv !csv) -> case dt of
+      DataType {..} -> do
+        !cl <- readTMVar clv
+        !cs <- readTVar csv
+        showData cl $ flat'array'read ets (coerce cs)
    where
     !colObj = edh'scope'this $ contextScope $ edh'context ets
 
@@ -1065,19 +1084,18 @@ createColumnClass !defaultDt !clsOuterScope =
 
   colIdxWriteProc :: EdhHostProc
   colIdxWriteProc (ArgsPack [!idxVal, !other] !kwargs) !exit !ets
-    | odNull kwargs
-    = withThisHostObj ets $ \_hsv col@(Column (DataType !dti _) !clv _csv) -> do
-      let colObj = edh'scope'that $ contextScope $ edh'context ets
-      castObjectStore' (edhUltimate other) >>= \case
-        -- assign column to column
-        Just colOther@(Column (DataType !dtiOther _) !clvOther _) ->
-          if dtiOther /= dti
+    | odNull kwargs = withThisHostObj ets $ \_hsv col@(Column !dt !clv _csv) ->
+      do
+        let colObj = edh'scope'that $ contextScope $ edh'context ets
+        castObjectStore' (edhUltimate other) >>= \case
+          -- assign column to column
+          Just colOther@(Column !dtOther !clvOther _) -> if dtOther /= dt
             then
               throwEdh ets UsageError
               $  "assigning column of dtype="
-              <> dtiOther
+              <> (data'type'identifier dtOther)
               <> " to dtype="
-              <> dti
+              <> (data'type'identifier dt)
               <> " not supported."
             else castObjectStore' idxVal >>= \case
               Just !idxCol ->
@@ -1115,13 +1133,13 @@ createColumnClass !defaultDt !clsOuterScope =
                   ets
                   UsageError
                   "can not assign a column to every element of another column"
-                Right EdhAll -> if dtiOther /= dti
+                Right EdhAll -> if dtOther /= dt
                   then
                     throwEdh ets UsageError
                     $  "assigning column of dtype="
-                    <> dtiOther
+                    <> (data'type'identifier dtOther)
                     <> " to "
-                    <> dti
+                    <> (data'type'identifier dt)
                     <> " not supported."
                   else do
                     !cl      <- readTMVar clv
@@ -1152,60 +1170,60 @@ createColumnClass !defaultDt !clsOuterScope =
                                        (exitEdh ets exit edhNA)
                       $ exitEdh ets exit other
 
-        -- assign scalar to column
-        Nothing -> castObjectStore' idxVal >>= \case
-          Just idxCol@(Column (DataType !dtiIdx _) _clvIdx _csvIdx) ->
-            case dtiIdx of
-              "yesno" -> -- yesno index
-                vecInpMaskedColumn ets
-                                   idxCol
-                                   assignOp
-                                   col
-                                   (edhUltimate other)
-                                   (exitEdh ets exit edhNA)
+          -- assign scalar to column
+          Nothing -> castObjectStore' idxVal >>= \case
+            Just idxCol@(Column !dtIdx _clvIdx _csvIdx) ->
+              case data'type'identifier dtIdx of
+                "yesno" -> -- yesno index
+                  vecInpMaskedColumn ets
+                                     idxCol
+                                     assignOp
+                                     col
+                                     (edhUltimate other)
+                                     (exitEdh ets exit edhNA)
+                    $ exitEdh ets exit
+                    $ EdhObject colObj
+                "intp" -> -- fancy index
+                  vecInpFancyColumn ets
+                                    idxCol
+                                    assignOp
+                                    col
+                                    (edhUltimate other)
+                                    (exitEdh ets exit edhNA)
+                    $ exitEdh ets exit
+                    $ EdhObject colObj
+                !badDti ->
+                  throwEdh ets UsageError
+                    $  "invalid dtype="
+                    <> badDti
+                    <> " for a column as an index to another column"
+            Nothing -> parseEdhIndex ets idxVal $ \case
+              Left !err -> throwEdh ets UsageError err
+              Right (EdhIndex !i) ->
+                unsafeWriteColumnCell ets col i (edhUltimate other)
+                  $ exitEdh ets exit
+              Right EdhAny -> do
+                !cl <- columnLength col
+                unsafeFillColumn ets col (edhUltimate other) [0 .. cl - 1]
                   $ exitEdh ets exit
                   $ EdhObject colObj
-              "intp" -> -- fancy index
-                vecInpFancyColumn ets
-                                  idxCol
-                                  assignOp
-                                  col
-                                  (edhUltimate other)
-                                  (exitEdh ets exit edhNA)
+              Right EdhAll -> do
+                !cl <- columnLength col
+                unsafeFillColumn ets col (edhUltimate other) [0 .. cl - 1]
                   $ exitEdh ets exit
                   $ EdhObject colObj
-              !badDti ->
-                throwEdh ets UsageError
-                  $  "invalid dtype="
-                  <> badDti
-                  <> " for a column as an index to another column"
-          Nothing -> parseEdhIndex ets idxVal $ \case
-            Left !err -> throwEdh ets UsageError err
-            Right (EdhIndex !i) ->
-              unsafeWriteColumnCell ets col i (edhUltimate other)
-                $ exitEdh ets exit
-            Right EdhAny -> do
-              !cl <- columnLength col
-              unsafeFillColumn ets col (edhUltimate other) [0 .. cl - 1]
-                $ exitEdh ets exit
-                $ EdhObject colObj
-            Right EdhAll -> do
-              !cl <- columnLength col
-              unsafeFillColumn ets col (edhUltimate other) [0 .. cl - 1]
-                $ exitEdh ets exit
-                $ EdhObject colObj
-            Right (EdhSlice !start !stop !step) -> do
-              !cl <- columnLength col
-              edhRegulateSlice ets cl (start, stop, step)
-                $ \(!iStart, !iStop, !iStep) ->
-                    vecInpSliceColumn ets
-                                      (iStart, iStop, iStep)
-                                      assignOp
-                                      col
-                                      (edhUltimate other)
-                                      (exitEdh ets exit edhNA)
-                      $ exitEdh ets exit
-                      $ EdhObject colObj
+              Right (EdhSlice !start !stop !step) -> do
+                !cl <- columnLength col
+                edhRegulateSlice ets cl (start, stop, step)
+                  $ \(!iStart, !iStop, !iStep) ->
+                      vecInpSliceColumn ets
+                                        (iStart, iStop, iStep)
+                                        assignOp
+                                        col
+                                        (edhUltimate other)
+                                        (exitEdh ets exit edhNA)
+                        $ exitEdh ets exit
+                        $ EdhObject colObj
 
   colIdxWriteProc !apk _ !ets =
     throwEdh ets UsageError
@@ -1480,11 +1498,11 @@ whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit !ets
       ets
       UsageError
       "invalid index object, need to be a column with dtype=yesno"
-    Just mcol@(Column (DataType !dti _) _ _) -> if dti /= "yesno"
+    Just mcol@(Column !dt _ _) -> if data'type'identifier dt /= "yesno"
       then
         throwEdh ets UsageError
         $  "invalid dtype="
-        <> dti
+        <> (data'type'identifier dt)
         <> " for where(), need to be yesno"
       else nonzeroIdxColumn ets mcol $ \ !colResult ->
         edhCreateHostObj (edh'obj'class colBoolIdx) (toDyn colResult) []

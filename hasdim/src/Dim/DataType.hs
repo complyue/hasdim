@@ -11,7 +11,7 @@ import           Prelude
 import           System.IO.Unsafe               ( unsafePerformIO )
 import           GHC.Conc                       ( unsafeIOToSTM )
 
-import           Foreign
+import           Foreign                       as F
 
 import           Control.Monad.Reader
 
@@ -19,82 +19,131 @@ import           Control.Concurrent.STM
 
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
-import           Data.Coerce
 import           Data.Dynamic
 
-import           Data.Vector.Storable           ( Vector )
-import qualified Data.Vector.Storable          as V
-import           Data.Vector.Storable.Mutable   ( IOVector )
-import qualified Data.Vector.Storable.Mutable  as MV
+import qualified Data.Vector.Mutable           as MV
+import qualified Data.Vector.Storable          as VS
+import qualified Data.Vector.Storable.Mutable  as MVS
 
 import           Language.Edh.EHI
 
 import           Dim.XCHG
 
 
-data FlatArray a = FlatArray
-    {-# UNPACK #-} !Int            -- ^ capacity
-    {-# UNPACK #-} !(ForeignPtr a) -- ^ mem ref
+data FlatArray where
+  DeviceArray ::(EdhXchg a, Storable a) => {
+      device'array'cap :: !Int
+    , device'array'ref :: !(ForeignPtr a)
+    } -> FlatArray
+  HostArray ::(EdhXchg a) => {
+      host'array'cap :: !Int
+    , host'array'ref :: !(MV.IOVector a)
+    } -> FlatArray
 
-emptyFlatArray :: FlatArray a
-emptyFlatArray = unsafePerformIO $ do
+
+emptyDeviceArray :: forall a . (EdhXchg a, Storable a) => FlatArray
+emptyDeviceArray = unsafePerformIO $ do
   !np <- newForeignPtr_ nullPtr
-  return $ FlatArray 0 np
-{-# NOINLINE emptyFlatArray #-}
+  return $ DeviceArray @a 0 np
+{-# NOINLINE emptyDeviceArray #-}
 
-newFlatArray :: forall a . Storable a => Int -> IO (FlatArray a)
-newFlatArray !cap = do
-  !p  <- callocArray cap
+emptyHostArray :: forall a . (EdhXchg a) => FlatArray
+emptyHostArray = unsafePerformIO $ do
+  !ha <- MV.new 0
+  return $ HostArray @a 0 ha
+{-# NOINLINE emptyHostArray #-}
+
+
+newDeviceArray :: forall a . (EdhXchg a, Storable a) => Int -> IO FlatArray
+newDeviceArray !cap = do
+  !p  <- callocArray @a cap
   !fp <- newForeignPtr finalizerFree p
-  return $ FlatArray cap fp
+  return $ DeviceArray @a cap fp
 
-copyFlatArray
-  :: forall a . Storable a => FlatArray a -> Int -> Int -> IO (FlatArray a)
-copyFlatArray (FlatArray !capSrc !fpSrc) !lenSrc !capNew = do
+newHostArray :: forall a . (EdhXchg a) => Int -> IO FlatArray
+newHostArray !cap = do
+  !ha <- MV.new cap
+  return $ HostArray @a cap ha
+
+
+dupFlatArray :: FlatArray -> Int -> Int -> IO FlatArray
+dupFlatArray (DeviceArray !capSrc !fpSrc) !lenSrc !capNew = do
   !p'  <- callocArray capNew
   !fp' <- newForeignPtr finalizerFree p'
   withForeignPtr fpSrc $ \ !p -> copyArray p' p $ min capNew (min lenSrc capSrc)
-  return $ FlatArray capNew fp'
+  return $ DeviceArray capNew fp'
+dupFlatArray (HostArray _capSrc !haSrc) !lenSrc !capNew = do
+  !ha' <- MV.new capNew
+  let !cpLen = min lenSrc capNew
+  when (cpLen > 0)
+    $ let !tgt = MV.unsafeSlice 0 cpLen ha'
+          !src = MV.unsafeSlice 0 cpLen haSrc
+      in  MV.copy tgt src
+  return $ HostArray capNew ha'
 
-flatArrayCapacity :: FlatArray a -> Int
-flatArrayCapacity (FlatArray !cap _) = cap
 
-flatArrayNumBytes :: forall a . Storable a => FlatArray a -> Int
-flatArrayNumBytes (FlatArray !cap _) = cap * sizeOf (undefined :: a)
+flatArrayCapacity :: FlatArray -> Int
+flatArrayCapacity (DeviceArray !cap _) = cap
+flatArrayCapacity (HostArray   !cap _) = cap
 
-unsafeSliceFlatArray
-  :: forall a . (Storable a) => FlatArray a -> Int -> Int -> FlatArray a
-unsafeSliceFlatArray (FlatArray _ !fp) !offset !len =
-  FlatArray len $ plusForeignPtr fp $ offset * sizeOf (undefined :: a)
 
-unsafeFlatArrayAsVector
-  :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => FlatArray a -> Vector b
-unsafeFlatArrayAsVector (FlatArray !cap !fp) =
-  V.unsafeFromForeignPtr0 (castForeignPtr fp) cap
+flatArrayNumBytes :: FlatArray -> Int
+flatArrayNumBytes (DeviceArray !cap (_fp :: ForeignPtr a)) =
+  cap * sizeOf (undefined :: a)
+flatArrayNumBytes (HostArray !cap _) = cap * 8
+
+
+unsafeSliceFlatArray :: FlatArray -> Int -> Int -> FlatArray
+unsafeSliceFlatArray (DeviceArray _ (fp :: ForeignPtr a)) !offset !len =
+  DeviceArray @a len $ plusForeignPtr fp $ offset * sizeOf (undefined :: a)
+unsafeSliceFlatArray (HostArray _ !ha) !offset !len =
+  let !ha' = MV.slice offset len ha in HostArray len ha'
+
+
+unsafeFlatArrayAsVector :: forall a . (Storable a) => FlatArray -> VS.Vector a
+unsafeFlatArrayAsVector (DeviceArray !cap fp) =
+  VS.unsafeFromForeignPtr0 (castForeignPtr fp) cap
 
 unsafeFlatArrayFromVector
-  :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => Vector a -> FlatArray b
-unsafeFlatArrayFromVector !vec = case V.unsafeToForeignPtr0 vec of
-  (!fp, !cap) -> FlatArray cap (castForeignPtr fp)
+  :: forall a . (EdhXchg a, Storable a) => VS.Vector a -> FlatArray
+unsafeFlatArrayFromVector !vec = case VS.unsafeToForeignPtr0 vec of
+  (!fp, !cap) -> DeviceArray @a cap (castForeignPtr fp)
 
 unsafeFlatArrayAsMVector
-  :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => FlatArray a -> IOVector b
-unsafeFlatArrayAsMVector (FlatArray !cap !fp) =
-  MV.unsafeFromForeignPtr0 (castForeignPtr fp) cap
+  :: forall a . (Storable a, EdhXchg a) => FlatArray -> MVS.IOVector a
+unsafeFlatArrayAsMVector (DeviceArray !cap !fp) =
+  MVS.unsafeFromForeignPtr0 (castForeignPtr fp) cap
 
 unsafeFlatArrayFromMVector
-  :: (Storable a, EdhXchg a, Storable b, EdhXchg b) => IOVector a -> FlatArray b
-unsafeFlatArrayFromMVector !mvec = case MV.unsafeToForeignPtr0 mvec of
-  (!fp, !cap) -> FlatArray cap (castForeignPtr fp)
+  :: forall a . (Storable a, EdhXchg a) => MVS.IOVector a -> FlatArray
+unsafeFlatArrayFromMVector !mvec = case MVS.unsafeToForeignPtr0 mvec of
+  (!fp, !cap) -> DeviceArray @a cap (castForeignPtr fp)
 
 
 type DataTypeIdent = Text
 
+-- | DataType facilitates the basic support of a data type to be managable
+-- by HasDim, i.e. array allocation, element read/write, array bulk update.
+--
+-- More sophisticated, vectorized operations are supported by other collections
+-- of routines, as they tends to have more demanding premises than required
+-- here.
 data DataType where
-  DataType ::(EdhXchg a, Storable a, Typeable a) => {
-      data'type'identifier :: DataTypeIdent
-    , data'type'storable :: FlatStorable a
+  DataType ::{
+      data'type'identifier :: !DataTypeIdent
+    , flat'element'size :: !Int
+    , flat'element'align :: !Int
+    , flat'new'array :: Int -> STM FlatArray
+    , flat'grow'array :: FlatArray  -> Int -> STM FlatArray
+    , flat'array'read :: EdhThreadState -> FlatArray
+        -> Int -> (EdhValue -> STM ()) -> STM ()
+    , flat'array'write :: EdhThreadState -> FlatArray
+        -> Int -> EdhValue -> (EdhValue -> STM ()) -> STM ()
+    , flat'array'update :: EdhThreadState
+        -> [(Int, EdhValue)]  -> FlatArray   -> STM () -> STM ()
     } -> DataType
+instance Eq DataType where
+  x == y = data'type'identifier x == data'type'identifier y
 
 
 createDataTypeClass :: Scope -> STM Object
@@ -128,77 +177,89 @@ createDataTypeClass !clsOuterScope =
 
   dtypeEqProc :: EdhHostProc
   dtypeEqProc (ArgsPack [EdhObject !dtoOther] _) !exit !ets =
-    withThisHostObj ets $ \_hsv (DataType !ident _) ->
+    withThisHostObj ets $ \_hsv !dt ->
       withHostObject' dtoOther (exitEdh ets exit $ EdhBool False)
-        $ \_hsv (DataType !identOther _) ->
-            exitEdh ets exit $ EdhBool $ identOther == ident
+        $ \_hsv !dtOther ->
+            exitEdh ets exit
+              $  EdhBool
+              $  data'type'identifier dtOther
+              == data'type'identifier dt
   dtypeEqProc _ !exit !ets = exitEdh ets exit $ EdhBool False
 
   dtypeIdentProc :: EdhHostProc
   dtypeIdentProc _ !exit !ets = withThisHostObj ets
-    $ \_hsv (DataType !ident _) -> exitEdh ets exit $ EdhString ident
+    $ \_hsv !dt -> exitEdh ets exit $ EdhString $ data'type'identifier dt
 
 
-makeDataType
+makeStorableDataType
   :: forall a
    . (EdhXchg a, Storable a, Typeable a)
   => DataTypeIdent
   -> DataType
-makeDataType !dti = DataType dti (flatStorable :: FlatStorable a)
-
--- | FlatStorable facilitates the basic support of a data type to be managable
--- by HasDim, i.e. array allocation, element read/write, array bulk update.
---
--- More sophisticated, vectorized operations are supported by other collections
--- of routines, as they tends to have more demanding premises than required
--- here.
-data FlatStorable a where
-  FlatStorable ::(EdhXchg a, Storable a, Typeable a) => {
-      coerce'flat'array :: FlatArray b -> FlatArray a
-    , flat'element'size :: Int
-    , flat'element'align :: Int
-    , flat'new'array :: Int -> STM (FlatArray a)
-    , flat'grow'array :: FlatArray a -> Int -> STM (FlatArray a)
-    , flat'array'read :: EdhThreadState -> FlatArray a
-        -> Int -> (EdhValue -> STM ()) -> STM ()
-    , flat'array'write :: EdhThreadState -> FlatArray a
-        -> Int -> EdhValue -> (EdhValue -> STM ()) -> STM ()
-    , flat'array'update :: EdhThreadState
-        -> [(Int,a)]  -> FlatArray a  -> STM () -> STM ()
-  }-> FlatStorable a
- deriving Typeable
-flatStorable
-  :: forall a . (EdhXchg a, Storable a, Typeable a) => FlatStorable a
-flatStorable = FlatStorable coerceArray
-                            (sizeOf (undefined :: a))
-                            (alignment (undefined :: a))
-                            createArray
-                            growArray
-                            readArrayCell
-                            writeArrayCell
-                            updateArray
+makeStorableDataType !dti = DataType dti
+                                     (sizeOf (undefined :: a))
+                                     (alignment (undefined :: a))
+                                     createArray
+                                     growArray
+                                     readArrayCell
+                                     writeArrayCell
+                                     updateArray
  where
-  coerceArray = coerce
-  createArray !cap = unsafeIOToSTM (newFlatArray cap)
-  growArray (FlatArray !cap !fp) !newCap = unsafeIOToSTM $ do
+  createArray !cap = unsafeIOToSTM (newDeviceArray @a cap)
+  growArray (DeviceArray !cap !fp) !newCap = unsafeIOToSTM $ do
     !p'  <- callocArray newCap
     !fp' <- newForeignPtr finalizerFree p'
     withForeignPtr fp $ \ !p -> copyArray p' p $ min newCap cap
-    return $ FlatArray newCap fp'
-  readArrayCell !ets (FlatArray !cap !fp) !idx !exit =
+    return $ DeviceArray newCap fp'
+  readArrayCell !ets (DeviceArray !cap !fp) !idx !exit =
     edhRegulateIndex ets cap idx $ \ !posIdx -> do
       sv <- unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr ->
         peekElemOff vPtr posIdx
       toEdh ets sv $ \ !val -> exit val
-  writeArrayCell !ets (FlatArray !cap !fp) !idx !val !exit =
+  writeArrayCell !ets (DeviceArray !cap !fp) !idx !val !exit =
     edhRegulateIndex ets cap idx $ \ !posIdx -> fromEdh ets val $ \ !sv -> do
       unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
       toEdh ets sv $ \ !val' -> exit val'
   updateArray _ [] _ !exit = exit
-  updateArray !ets ((!idx, !sv) : rest'upds) ary@(FlatArray !cap !fp) !exit =
-    edhRegulateIndex ets cap idx $ \ !posIdx -> do
-      unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
-      updateArray ets rest'upds ary exit
+  updateArray !ets ((!idx, !val) : rest'upds) ary@(DeviceArray !cap !fp) !exit
+    = edhRegulateIndex ets cap idx $ \ !posIdx ->
+      fromEdh @a ets val $ \ !sv -> do
+        unsafeIOToSTM $ withForeignPtr (castForeignPtr fp) $ \ !vPtr ->
+          pokeElemOff vPtr posIdx sv
+        updateArray ets rest'upds ary exit
+
+
+-- makeHostDataType
+--   :: forall a . (EdhXchg a, Typeable a) => DataTypeIdent -> DataType
+-- makeHostDataType !dti = DataType dti 
+--                                  (sizeOf (undefined :: a))
+--                                  (alignment (undefined :: a))
+--                                  createArray
+--                                  growArray
+--                                  readArrayCell
+--                                  writeArrayCell
+--                                  updateArray
+--  where
+--   createArray !cap = unsafeIOToSTM (newHostArray cap)
+--   growArray (HostArray !cap !fp) !newCap = unsafeIOToSTM $ do
+--     !p'  <- callocArray newCap
+--     !fp' <- newForeignPtr finalizerFree p'
+--     withForeignPtr fp $ \ !p -> copyArray p' p $ min newCap cap
+--     return $ HostArray newCap fp'
+--   readArrayCell !ets (HostArray !cap !fp) !idx !exit =
+--     edhRegulateIndex ets cap idx $ \ !posIdx -> do
+--       sv <- unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr ->
+--         peekElemOff vPtr posIdx
+--       toEdh ets sv $ \ !val -> exit val
+--   writeArrayCell !ets (HostArray !cap !fp) !idx !val !exit =
+--     edhRegulateIndex ets cap idx $ \ !posIdx -> fromEdh ets val $ \ !sv -> do
+--       unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
+--       toEdh ets sv $ \ !val' -> exit val'
+--   updateArray _ [] _ !exit = exit
+--   updateArray !ets ((!idx, !sv) : rest'upds) ary@(HostArray !cap !fp) !exit =
+--     edhRegulateIndex ets cap idx $ \ !posIdx -> do
+--       unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
+--       updateArray ets rest'upds ary exit
 
 
 -- | A pack of data manipulation routines, per operational category, per data
@@ -235,49 +296,54 @@ createDMRPClass !clsOuterScope =
           exitEdh ets exit $ EdhString $ "<dmrp/" <> ident <> "#" <> cate <> ">"
 
 
-data FlatOrd a where
-  FlatOrd ::(Ord a, Storable a, Typeable a, EdhXchg a) => {
-      flat'cmp'vectorized :: EdhThreadState -> FlatArray a
-        -> (Ordering -> Bool) -> EdhValue -> (FlatArray YesNo -> STM ()) -> STM ()
-    , flat'cmp'element'wise :: EdhThreadState -> FlatArray a
-        -> (Ordering -> Bool) -> FlatArray a -> (FlatArray YesNo -> STM ()) -> STM ()
-  }-> FlatOrd a
+data FlatOrd where
+  FlatOrd ::{
+      flat'cmp'vectorized :: EdhThreadState -> FlatArray
+        -> (Ordering -> Bool) -> EdhValue -> (FlatArray -> STM ()) -> STM ()
+    , flat'cmp'element'wise :: EdhThreadState -> FlatArray
+        -> (Ordering -> Bool) -> FlatArray  -> (FlatArray -> STM ()) -> STM ()
+  }-> FlatOrd
  deriving Typeable
-flatOrd :: (Ord a, Storable a, Typeable a, EdhXchg a) => FlatOrd a
+flatOrd :: forall a . (Ord a, Storable a, Typeable a, EdhXchg a) => FlatOrd
 flatOrd = FlatOrd vecCmp elemCmp
  where
   -- vectorized comparation, yielding a new YesNo array
-  vecCmp !ets (FlatArray !cap !fp) !cmp !v !exit = fromEdh ets v $ \ !sv ->
-    (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
-      !rp  <- callocArray cap
-      !rfp <- newForeignPtr finalizerFree rp
-      let go i | i >= cap = return $ FlatArray cap rfp
-          go i            = do
-            ev <- peekElemOff p i
-            pokeElemOff rp i $ if cmp $ compare ev sv then 1 else 0
-            go (i + 1)
-      go 0
+  vecCmp !ets (DeviceArray !cap !fp) !cmp !v !exit =
+    fromEdh @a ets v $ \ !sv ->
+      (exit =<<) $ unsafeIOToSTM $ withForeignPtr (castForeignPtr fp) $ \ !p ->
+        do
+          !rp  <- callocArray @YesNo cap
+          !rfp <- newForeignPtr finalizerFree rp
+          let go i | i >= cap = return $ DeviceArray cap rfp
+              go i            = do
+                ev <- peekElemOff p i
+                pokeElemOff rp i $ if cmp $ compare @a ev sv then 1 else 0
+                go (i + 1)
+          go 0
   -- element-wise comparation, yielding a new YesNo array
-  elemCmp _ets (FlatArray !cap1 !fp1) !cmp (FlatArray _cap2 !fp2) !exit =
-    (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp1 $ \ !p1 ->
-      withForeignPtr fp2 $ \ !p2 -> do
-        !rp  <- callocArray cap1
-        !rfp <- newForeignPtr finalizerFree rp
-        let go i | i >= cap1 = return $ FlatArray cap1 rfp
-            go i             = do
-              ev1 <- peekElemOff p1 i
-              ev2 <- peekElemOff p2 i
-              pokeElemOff rp i $ if cmp $ compare ev1 ev2 then 1 else 0
-              go (i + 1)
-        go 0
+  elemCmp _ets (DeviceArray !cap1 !fp1) !cmp (DeviceArray _cap2 !fp2) !exit =
+    (exit =<<)
+      $ unsafeIOToSTM
+      $ withForeignPtr (castForeignPtr fp1)
+      $ \(p1 :: Ptr a) ->
+          withForeignPtr (castForeignPtr fp2) $ \(p2 :: Ptr a) -> do
+            !rp  <- callocArray @YesNo cap1
+            !rfp <- newForeignPtr finalizerFree rp
+            let go i | i >= cap1 = return $ DeviceArray cap1 rfp
+                go i             = do
+                  ev1 <- peekElemOff p1 i
+                  ev2 <- peekElemOff p2 i
+                  pokeElemOff rp i $ if cmp $ compare ev1 ev2 then 1 else 0
+                  go (i + 1)
+            go 0
 
 resolveDataComparator
   :: forall a
-   . (Typeable (FlatOrd a))
+   . (Typeable FlatOrd)
   => EdhThreadState
   -> DataTypeIdent
-  -> FlatArray a
-  -> (FlatOrd a -> STM ())
+  -> FlatArray
+  -> (FlatOrd -> STM ())
   -> STM ()
 resolveDataComparator !ets !dti !fa =
   resolveDataComparator' ets dti fa
@@ -286,12 +352,12 @@ resolveDataComparator !ets !dti !fa =
     <> dti
 resolveDataComparator'
   :: forall a
-   . (Typeable (FlatOrd a))
+   . (Typeable FlatOrd)
   => EdhThreadState
   -> DataTypeIdent
-  -> FlatArray a
+  -> FlatArray
   -> STM ()
-  -> (FlatOrd a -> STM ())
+  -> (FlatOrd -> STM ())
   -> STM ()
 resolveDataComparator' !ets !dti _ !naExit !exit =
   runEdhTx ets
@@ -317,14 +383,14 @@ resolveDataComparatorProc :: Object -> EdhHostProc
 resolveDataComparatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
   | odNull kwargs
   = case dti of
-    "float64" -> exitWith $ toDyn (flatOrd :: FlatOrd Double)
-    "float32" -> exitWith $ toDyn (flatOrd :: FlatOrd Float)
-    "int64"   -> exitWith $ toDyn (flatOrd :: FlatOrd Int64)
-    "int32"   -> exitWith $ toDyn (flatOrd :: FlatOrd Int32)
-    "int8"    -> exitWith $ toDyn (flatOrd :: FlatOrd Int8)
-    "byte"    -> exitWith $ toDyn (flatOrd :: FlatOrd Int8)
-    "intp"    -> exitWith $ toDyn (flatOrd :: FlatOrd Int)
-    "yesno"   -> exitWith $ toDyn (flatOrd :: FlatOrd YesNo)
+    "float64" -> exitWith $ toDyn (flatOrd @Double)
+    "float32" -> exitWith $ toDyn (flatOrd @Float)
+    "int64"   -> exitWith $ toDyn (flatOrd @Int64)
+    "int32"   -> exitWith $ toDyn (flatOrd @Int32)
+    "int8"    -> exitWith $ toDyn (flatOrd @Int8)
+    "byte"    -> exitWith $ toDyn (flatOrd @Int8)
+    "intp"    -> exitWith $ toDyn (flatOrd @Int)
+    "yesno"   -> exitWith $ toDyn (flatOrd @YesNo)
     _ ->
       throwEdh ets UsageError
         $  "a non-trivial data type requested,"
@@ -340,38 +406,38 @@ resolveDataComparatorProc _ _ _ !ets =
   throwEdh ets UsageError "invalid args to @resolveDataComparator(dti)"
 
 
-data FlatOp a where
-  FlatOp ::(EdhXchg a, Storable a, Typeable a) => {
-      flat'extract'yesno :: EdhThreadState -> FlatArray YesNo -> FlatArray a
-        -> ((FlatArray a, Int) -> STM ()) -> STM ()
-    , flat'extract'fancy :: EdhThreadState -> FlatArray Int -> FlatArray a
-        -> (FlatArray a -> STM ()) -> STM ()
+data FlatOp where
+  FlatOp ::{
+      flat'extract'yesno :: EdhThreadState -> FlatArray -> FlatArray
+        -> ((FlatArray , Int) -> STM ()) -> STM ()
+    , flat'extract'fancy :: EdhThreadState -> FlatArray -> FlatArray
+        -> (FlatArray  -> STM ()) -> STM ()
 
-    , flat'op'vectorized :: EdhThreadState -> FlatArray a
-        -> Dynamic -> EdhValue -> (FlatArray a -> STM ()) -> STM ()
-    , flat'op'element'wise :: EdhThreadState -> FlatArray a
-        -> Dynamic -> FlatArray a -> (FlatArray a -> STM ()) -> STM ()
+    , flat'op'vectorized :: EdhThreadState -> FlatArray
+        -> Dynamic -> EdhValue -> (FlatArray  -> STM ()) -> STM ()
+    , flat'op'element'wise :: EdhThreadState -> FlatArray
+        -> Dynamic -> FlatArray  -> (FlatArray  -> STM ()) -> STM ()
 
-    , flat'inp'vectorized :: EdhThreadState -> FlatArray a
+    , flat'inp'vectorized :: EdhThreadState -> FlatArray
         -> Dynamic -> EdhValue -> STM () -> STM ()
-    , flat'inp'vectorized'slice :: EdhThreadState -> (Int,Int,Int) -> FlatArray a
+    , flat'inp'vectorized'slice :: EdhThreadState -> (Int,Int,Int) -> FlatArray
         -> Dynamic -> EdhValue -> STM () -> STM ()
-    , flat'inp'vectorized'masked :: EdhThreadState -> FlatArray YesNo -> FlatArray a
+    , flat'inp'vectorized'masked :: EdhThreadState -> FlatArray -> FlatArray
         -> Dynamic -> EdhValue -> STM () -> STM ()
-    , flat'inp'vectorized'fancy :: EdhThreadState -> FlatArray Int -> FlatArray a
+    , flat'inp'vectorized'fancy :: EdhThreadState -> FlatArray -> FlatArray
         -> Dynamic -> EdhValue -> STM () -> STM ()
 
-    , flat'inp'element'wise :: EdhThreadState -> FlatArray a
-        -> Dynamic -> FlatArray a -> STM () -> STM ()
-    , flat'inp'element'wise'slice :: EdhThreadState -> (Int,Int,Int) -> FlatArray a
-        -> Dynamic -> FlatArray a -> STM () -> STM ()
-    , flat'inp'element'wise'masked :: EdhThreadState -> FlatArray YesNo -> FlatArray a
-        -> Dynamic -> FlatArray a -> STM () -> STM ()
-    , flat'inp'element'wise'fancy :: EdhThreadState -> FlatArray Int -> FlatArray a
-        -> Dynamic -> FlatArray a -> STM () -> STM ()
-  }-> FlatOp a
+    , flat'inp'element'wise :: EdhThreadState -> FlatArray
+        -> Dynamic -> FlatArray  -> STM () -> STM ()
+    , flat'inp'element'wise'slice :: EdhThreadState -> (Int,Int,Int) -> FlatArray
+        -> Dynamic -> FlatArray  -> STM () -> STM ()
+    , flat'inp'element'wise'masked :: EdhThreadState -> FlatArray -> FlatArray
+        -> Dynamic -> FlatArray  -> STM () -> STM ()
+    , flat'inp'element'wise'fancy :: EdhThreadState -> FlatArray -> FlatArray
+        -> Dynamic -> FlatArray  -> STM () -> STM ()
+  }-> FlatOp
  deriving Typeable
-flatOp :: (EdhXchg a, Storable a, Typeable a) => FlatOp a
+flatOp :: forall a . (EdhXchg a, Storable a, Typeable a) => FlatOp
 flatOp = FlatOp vecExtractBool
                 vecExtractFancy
                 vecOp
@@ -386,127 +452,150 @@ flatOp = FlatOp vecExtractBool
                 elemInpFancy
  where
   -- vectorized data extraction with a yesno index, yielding a new array
-  vecExtractBool _ets (FlatArray !mcap !mfp) (FlatArray _cap !fp) !exit =
-    (exit =<<) $ unsafeIOToSTM $ withForeignPtr mfp $ \ !mp ->
-      withForeignPtr fp $ \ !p -> do
-        !rp  <- callocArray mcap
-        !rfp <- newForeignPtr finalizerFree rp
-        let go i ri | i >= mcap = return (FlatArray mcap rfp, ri)
-            go i ri             = do
-              mv <- peekElemOff mp i
-              if mv /= 0
-                then do
-                  peekElemOff p i >>= pokeElemOff rp ri
-                  go (i + 1) (ri + 1)
-                else go (i + 1) ri
-        go 0 0
+  vecExtractBool _ets (DeviceArray !mcap !mfp) (DeviceArray _cap !fp) !exit =
+    (exit =<<)
+      $ unsafeIOToSTM
+      $ withForeignPtr (castForeignPtr mfp)
+      $ \(mp :: Ptr YesNo) ->
+          withForeignPtr (castForeignPtr fp) $ \(p :: Ptr a) -> do
+            !rp  <- callocArray mcap
+            !rfp <- newForeignPtr finalizerFree rp
+            let go i ri | i >= mcap = return (DeviceArray mcap rfp, ri)
+                go i ri             = do
+                  mv <- peekElemOff mp i
+                  if mv /= 0
+                    then do
+                      peekElemOff p i >>= pokeElemOff rp ri
+                      go (i + 1) (ri + 1)
+                    else go (i + 1) ri
+            go 0 0
   -- vectorized data extraction with a fancy index, yielding a new array
-  vecExtractFancy !ets (FlatArray !icap !ifp) (FlatArray !cap !fp) !exit = do
-    !result <- unsafeIOToSTM $ withForeignPtr fp $ \ !p ->
-      withForeignPtr ifp $ \ !ip -> do
-        !rp  <- callocArray icap
-        !rfp <- newForeignPtr finalizerFree rp
-        let go i | i >= icap = return $ Right $ FlatArray icap rfp
-            go i             = do
-              idx <- peekElemOff ip i
-              if idx < 0 || idx >= cap
-                then return $ Left idx
-                else do
-                  peekElemOff p idx >>= pokeElemOff rp i
-                  go (i + 1)
-        go 0
-    case result of
-      Left !badIdx ->
-        throwEdh ets EvalError
-          $  "fancy index out of bounds: "
-          <> T.pack (show badIdx)
-          <> " vs "
-          <> T.pack (show cap)
-      Right !rtnAry -> exit rtnAry
+  vecExtractFancy !ets (DeviceArray !icap !ifp) (DeviceArray !cap !fp) !exit =
+    do
+      !result <- unsafeIOToSTM $ withForeignPtr fp $ \ !p ->
+        withForeignPtr (castForeignPtr ifp) $ \(ip :: Ptr Int) -> do
+          !rp  <- callocArray icap
+          !rfp <- newForeignPtr finalizerFree rp
+          let go i | i >= icap = return $ Right $ DeviceArray icap rfp
+              go i             = do
+                idx <- peekElemOff ip i
+                if idx < 0 || idx >= cap
+                  then return $ Left idx
+                  else do
+                    peekElemOff p idx >>= pokeElemOff rp i
+                    go (i + 1)
+          go 0
+      case result of
+        Left !badIdx ->
+          throwEdh ets EvalError
+            $  "fancy index out of bounds: "
+            <> T.pack (show badIdx)
+            <> " vs "
+            <> T.pack (show cap)
+        Right !rtnAry -> exit rtnAry
   -- vectorized operation, yielding a new array
-  vecOp !ets (FlatArray !cap !fp) !dop !v !exit = case fromDynamic dop of
+  vecOp !ets (DeviceArray !cap !fp) !dop !v !exit = case fromDynamic dop of
     Nothing                  -> error "bug: dtype op type mismatch"
     Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
-      (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
-        !rp  <- callocArray cap
-        !rfp <- newForeignPtr finalizerFree rp
-        let go i | i >= cap = return $ FlatArray cap rfp
-            go i            = do
-              ev <- peekElemOff p i
-              pokeElemOff rp i $ op ev sv
-              go (i + 1)
-        go 0
+      (exit =<<)
+        $ unsafeIOToSTM
+        $ withForeignPtr (castForeignPtr fp)
+        $ \(p :: Ptr a) -> do
+            !rp  <- callocArray cap
+            !rfp <- newForeignPtr finalizerFree rp
+            let go i | i >= cap = return $ DeviceArray cap rfp
+                go i            = do
+                  ev <- peekElemOff p i
+                  pokeElemOff rp i $ op ev sv
+                  go (i + 1)
+            go 0
   -- element-wise operation, yielding a new array
-  elemOp _ets (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit =
+  elemOp _ets (DeviceArray !cap1 !fp1) !dop (DeviceArray _cap2 !fp2) !exit =
     case fromDynamic dop of
       Nothing -> error "bug: dtype op type mismatch"
       Just (op :: a -> a -> a) ->
-        (exit =<<) $ unsafeIOToSTM $ withForeignPtr fp1 $ \ !p1 ->
-          withForeignPtr fp2 $ \ !p2 -> do
-            !rp  <- callocArray cap1
-            !rfp <- newForeignPtr finalizerFree rp
-            let go i | i >= cap1 = return $ FlatArray cap1 rfp
-                go i             = do
-                  ev1 <- peekElemOff p1 i
-                  ev2 <- peekElemOff p2 i
-                  pokeElemOff rp i $ op ev1 ev2
-                  go (i + 1)
-            go 0
+        (exit =<<)
+          $ unsafeIOToSTM
+          $ withForeignPtr (castForeignPtr fp1)
+          $ \(p1 :: Ptr a) ->
+              withForeignPtr (castForeignPtr fp2) $ \(p2 :: Ptr a) -> do
+                !rp  <- callocArray cap1
+                !rfp <- newForeignPtr finalizerFree rp
+                let go i | i >= cap1 = return $ DeviceArray cap1 rfp
+                    go i             = do
+                      ev1 <- peekElemOff p1 i
+                      ev2 <- peekElemOff p2 i
+                      pokeElemOff rp i $ op ev1 ev2
+                      go (i + 1)
+                go 0
   -- vectorized operation, inplace modifying the array
-  vecInp !ets (FlatArray !cap !fp) !dop !v !exit = case fromDynamic dop of
+  vecInp !ets (DeviceArray !cap !fp) !dop !v !exit = case fromDynamic dop of
     Nothing                  -> error "bug: dtype op type mismatch"
     Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
-      (>> exit) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
-        let go i | i >= cap = return ()
-            go i            = do
-              ev <- peekElemOff p i
-              pokeElemOff p i $ op ev sv
-              go (i + 1)
-        go 0
-  -- vectorized operation, inplace modifying the array, with a slice spec
-  vecInpSlice !ets (!start, !stop, !step) (FlatArray _cap !fp) !dop !v !exit =
-    case fromDynamic dop of
-      Nothing                  -> error "bug: dtype op type mismatch"
-      Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
-        (>> exit) $ unsafeIOToSTM $ withForeignPtr fp $ \ !p -> do
-          let (q, r) = quotRem (stop - start) step
-              !len   = if r == 0 then abs q else 1 + abs q
-          let go _ i | i >= len = return ()
-              go n i            = do
-                ev <- peekElemOff p n
-                pokeElemOff p n $ op ev sv
-                go (n + step) (i + 1)
-          go start 0
-  -- vectorized operation, inplace modifying the array, with a yesno mask
-  vecInpMasked !ets (FlatArray _cap !mfp) (FlatArray !cap !fp) !dop !v !exit =
-    case fromDynamic dop of
-      Nothing                  -> error "bug: dtype op type mismatch"
-      Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
-        (>> exit) $ unsafeIOToSTM $ withForeignPtr mfp $ \ !mp ->
-          withForeignPtr fp $ \ !p -> do
+      (>> exit)
+        $ unsafeIOToSTM
+        $ withForeignPtr (castForeignPtr fp)
+        $ \(p :: Ptr a) -> do
             let go i | i >= cap = return ()
                 go i            = do
-                  mv <- peekElemOff mp i
-                  when (mv /= 0) $ do
-                    ev <- peekElemOff p i
-                    pokeElemOff p i $ op ev sv
+                  ev <- peekElemOff p i
+                  pokeElemOff p i $ op ev sv
                   go (i + 1)
             go 0
+  -- vectorized operation, inplace modifying the array, with a slice spec
+  vecInpSlice !ets (!start, !stop, !step) (DeviceArray _cap !fp) !dop !v !exit
+    = case fromDynamic dop of
+      Nothing                  -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
+        (>> exit)
+          $ unsafeIOToSTM
+          $ withForeignPtr (castForeignPtr fp)
+          $ \(p :: Ptr a) -> do
+              let (q, r) = quotRem (stop - start) step
+                  !len   = if r == 0 then abs q else 1 + abs q
+              let go _ i | i >= len = return ()
+                  go n i            = do
+                    ev <- peekElemOff p n
+                    pokeElemOff p n $ op ev sv
+                    go (n + step) (i + 1)
+              go start 0
+  -- vectorized operation, inplace modifying the array, with a yesno mask
+  vecInpMasked !ets (DeviceArray _cap !mfp) (DeviceArray !cap !fp) !dop !v !exit
+    = case fromDynamic dop of
+      Nothing                  -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
+        (>> exit)
+          $ unsafeIOToSTM
+          $ withForeignPtr (castForeignPtr mfp)
+          $ \(mp :: Ptr YesNo) ->
+              withForeignPtr (castForeignPtr fp) $ \(p :: Ptr a) -> do
+                let go i | i >= cap = return ()
+                    go i            = do
+                      mv <- peekElemOff mp i
+                      when (mv /= 0) $ do
+                        ev <- peekElemOff p i
+                        pokeElemOff p i $ op ev sv
+                      go (i + 1)
+                go 0
   -- vectorized operation, inplace modifying the array, with a fancy index
-  vecInpFancy !ets (FlatArray !icap !ifp) (FlatArray !cap !fp) !dop !v !exit =
-    case fromDynamic dop of
+  vecInpFancy !ets (DeviceArray !icap !ifp) (DeviceArray !cap !fp) !dop !v !exit
+    = case fromDynamic dop of
       Nothing                  -> error "bug: dtype op type mismatch"
       Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv -> do
-        !badIdx <- unsafeIOToSTM $ withForeignPtr ifp $ \ !ip ->
-          withForeignPtr fp $ \ !p -> do
-            let go i | i >= icap = return 0
-                go i = peekElemOff ip i >>= \ !idx -> if idx < 0 || idx >= cap
-                  then return idx
-                  else do
-                    ev <- peekElemOff p idx
-                    pokeElemOff p idx $ op ev sv
-                    go (i + 1)
-            go 0
+        !badIdx <-
+          unsafeIOToSTM
+          $ withForeignPtr (castForeignPtr ifp)
+          $ \(ip :: Ptr Int) ->
+              withForeignPtr (castForeignPtr fp) $ \(p :: Ptr a) -> do
+                let go i | i >= icap = return 0
+                    go i             = peekElemOff ip i >>= \ !idx ->
+                      if idx < 0 || idx >= cap
+                        then return idx
+                        else do
+                          ev <- peekElemOff p idx
+                          pokeElemOff p idx $ op ev sv
+                          go (i + 1)
+                go 0
         if badIdx == 0
           then exit
           else
@@ -516,75 +605,83 @@ flatOp = FlatOp vecExtractBool
             <> " vs "
             <> T.pack (show cap)
   -- element-wise operation, inplace modifying array
-  elemInp _ets (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit =
+  elemInp _ets (DeviceArray !cap1 !fp1) !dop (DeviceArray _cap2 !fp2) !exit =
     case fromDynamic dop of
       Nothing -> error "bug: dtype op type mismatch"
       Just (op :: a -> a -> a) ->
-        (>> exit) $ unsafeIOToSTM $ withForeignPtr fp1 $ \ !p1 ->
-          withForeignPtr fp2 $ \ !p2 -> do
-            let go i | i >= cap1 = return ()
-                go i             = do
-                  ev1 <- peekElemOff p1 i
-                  ev2 <- peekElemOff p2 i
-                  pokeElemOff p1 i $ op ev1 ev2
-                  go (i + 1)
-            go 0
+        (>> exit)
+          $ unsafeIOToSTM
+          $ withForeignPtr (castForeignPtr fp1)
+          $ \(p1 :: Ptr a) ->
+              withForeignPtr (castForeignPtr fp2) $ \(p2 :: Ptr a) -> do
+                let go i | i >= cap1 = return ()
+                    go i             = do
+                      ev1 <- peekElemOff p1 i
+                      ev2 <- peekElemOff p2 i
+                      pokeElemOff p1 i $ op ev1 ev2
+                      go (i + 1)
+                go 0
   -- element-wise operation, inplace modifying array, with a slice spec
-  elemInpSlice _ets (!start, !stop, !step) (FlatArray _cap1 !fp1) !dop (FlatArray !cap2 !fp2) !exit
-    = case fromDynamic dop of
-      Nothing -> error "bug: dtype op type mismatch"
-      Just (op :: a -> a -> a) ->
-        (>> exit) $ unsafeIOToSTM $ withForeignPtr fp1 $ \ !p1 ->
-          withForeignPtr fp2 $ \ !p2 -> do
-            let (q, r) = quotRem (stop - start) step
-                !len   = min cap2 $ if r == 0 then abs q else 1 + abs q
-            let go _ i | i >= len = return ()
-                go n i            = do
-                  ev1 <- peekElemOff p1 n
-                  ev2 <- peekElemOff p2 i
-                  pokeElemOff p1 n $ op ev1 ev2
-                  go (n + step) (i + 1)
-            go start 0
-  -- element-wise operation, inplace modifying array, with a yesno mask
-  elemInpMasked _ets (FlatArray _cap !mfp) (FlatArray !cap1 !fp1) !dop (FlatArray _cap2 !fp2) !exit
+  elemInpSlice _ets (!start, !stop, !step) (DeviceArray _cap1 !fp1) !dop (DeviceArray !cap2 !fp2) !exit
     = case fromDynamic dop of
       Nothing -> error "bug: dtype op type mismatch"
       Just (op :: a -> a -> a) ->
         (>> exit)
           $ unsafeIOToSTM
-          $ withForeignPtr mfp
-          $ \ !mp -> withForeignPtr fp1 $ \ !p1 ->
-              withForeignPtr fp2 $ \ !p2 -> do
-                let go i | i >= cap1 = return ()
-                    go i             = do
-                      mv <- peekElemOff mp i
-                      when (mv /= 0) $ do
-                        ev1 <- peekElemOff p1 i
-                        ev2 <- peekElemOff p2 i
-                        pokeElemOff p1 i $ op ev1 ev2
-                      go (i + 1)
-                go 0
+          $ withForeignPtr (castForeignPtr fp1)
+          $ \(p1 :: Ptr a) ->
+              withForeignPtr (castForeignPtr fp2) $ \(p2 :: Ptr a) -> do
+                let (q, r) = quotRem (stop - start) step
+                    !len   = min cap2 $ if r == 0 then abs q else 1 + abs q
+                let go _ i | i >= len = return ()
+                    go n i            = do
+                      ev1 <- peekElemOff p1 n
+                      ev2 <- peekElemOff p2 i
+                      pokeElemOff p1 n $ op ev1 ev2
+                      go (n + step) (i + 1)
+                go start 0
+  -- element-wise operation, inplace modifying array, with a yesno mask
+  elemInpMasked _ets (DeviceArray _cap !mfp) (DeviceArray !cap1 !fp1) !dop (DeviceArray _cap2 !fp2) !exit
+    = case fromDynamic dop of
+      Nothing -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) ->
+        (>> exit)
+          $ unsafeIOToSTM
+          $ withForeignPtr (castForeignPtr mfp)
+          $ \(mp :: Ptr YesNo) ->
+              withForeignPtr (castForeignPtr fp1) $ \(p1 :: Ptr a) ->
+                withForeignPtr (castForeignPtr fp2) $ \(p2 :: Ptr a) -> do
+                  let go i | i >= cap1 = return ()
+                      go i             = do
+                        mv <- peekElemOff mp i
+                        when (mv /= 0) $ do
+                          ev1 <- peekElemOff p1 i
+                          ev2 <- peekElemOff p2 i
+                          pokeElemOff p1 i $ op ev1 ev2
+                        go (i + 1)
+                  go 0
   -- element-wise operation, inplace modifying array, with a fancy index
-  elemInpFancy !ets (FlatArray !icap !ifp) (FlatArray !cap1 !fp1) !dop (FlatArray !cap2 !fp2) !exit
+  elemInpFancy !ets (DeviceArray !icap !ifp) (DeviceArray !cap1 !fp1) !dop (DeviceArray !cap2 !fp2) !exit
     = case fromDynamic dop of
       Nothing                  -> error "bug: dtype op type mismatch"
       Just (op :: a -> a -> a) -> do
         !badIdx <-
           unsafeIOToSTM
-          $ withForeignPtr ifp
-          $ \ !ip -> withForeignPtr fp1 $ \ !p1 ->
-              withForeignPtr fp2 $ \ !p2 -> do
-                let len = min icap cap2
-                let go i | i >= len = return 0
-                    go i            = peekElemOff ip i >>= \ !idx ->
-                      if idx < 0 || idx >= cap1
-                        then return idx
-                        else do
-                          ev1 <- peekElemOff p1 idx
-                          ev2 <- peekElemOff p2 i
-                          pokeElemOff p1 idx $ op ev1 ev2
-                          go (i + 1)
-                go 0
+          $ withForeignPtr (castForeignPtr ifp)
+          $ \(ip :: Ptr Int) ->
+              withForeignPtr (castForeignPtr fp1) $ \(p1 :: Ptr a) ->
+                withForeignPtr (castForeignPtr fp2) $ \(p2 :: Ptr a) -> do
+                  let len = min icap cap2
+                  let go i | i >= len = return 0
+                      go i            = peekElemOff ip i >>= \ !idx ->
+                        if idx < 0 || idx >= cap1
+                          then return idx
+                          else do
+                            ev1 <- peekElemOff p1 idx
+                            ev2 <- peekElemOff p2 i
+                            pokeElemOff p1 idx $ op ev1 ev2
+                            go (i + 1)
+                  go 0
         if badIdx == 0
           then exit
           else
@@ -595,12 +692,10 @@ flatOp = FlatOp vecExtractBool
             <> T.pack (show cap1)
 
 resolveDataOperator
-  :: forall a
-   . (Typeable (FlatOp a))
-  => EdhThreadState
+  :: EdhThreadState
   -> DataTypeIdent
-  -> FlatArray a
-  -> (FlatOp a -> STM ())
+  -> FlatArray
+  -> (FlatOp -> STM ())
   -> STM ()
 resolveDataOperator !ets !dti !fa =
   resolveDataOperator' ets dti fa
@@ -608,13 +703,11 @@ resolveDataOperator !ets !dti !fa =
     $  "operation not supported by dtype: "
     <> dti
 resolveDataOperator'
-  :: forall a
-   . (Typeable (FlatOp a))
-  => EdhThreadState
+  :: EdhThreadState
   -> DataTypeIdent
-  -> FlatArray a
+  -> FlatArray
   -> STM ()
-  -> (FlatOp a -> STM ())
+  -> (FlatOp -> STM ())
   -> STM ()
 resolveDataOperator' !ets !dti _ !naExit !exit =
   runEdhTx ets
@@ -644,14 +737,14 @@ resolveDataOperatorProc :: Object -> EdhHostProc
 resolveDataOperatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
   | odNull kwargs
   = case dti of
-    "float64" -> exitWith $ toDyn (flatOp :: FlatOp Double)
-    "float32" -> exitWith $ toDyn (flatOp :: FlatOp Float)
-    "int64"   -> exitWith $ toDyn (flatOp :: FlatOp Int64)
-    "int32"   -> exitWith $ toDyn (flatOp :: FlatOp Int32)
-    "int8"    -> exitWith $ toDyn (flatOp :: FlatOp Int8)
-    "byte"    -> exitWith $ toDyn (flatOp :: FlatOp Int8)
-    "intp"    -> exitWith $ toDyn (flatOp :: FlatOp Int)
-    "yesno"   -> exitWith $ toDyn (flatOp :: FlatOp YesNo)
+    "float64" -> exitWith $ toDyn (flatOp @Double)
+    "float32" -> exitWith $ toDyn (flatOp @Float)
+    "int64"   -> exitWith $ toDyn (flatOp @Int64)
+    "int32"   -> exitWith $ toDyn (flatOp @Int32)
+    "int8"    -> exitWith $ toDyn (flatOp @Int8)
+    "byte"    -> exitWith $ toDyn (flatOp @Int8)
+    "intp"    -> exitWith $ toDyn (flatOp @Int)
+    "yesno"   -> exitWith $ toDyn (flatOp @YesNo)
     _ ->
       throwEdh ets UsageError
         $  "a non-trivial data type requested,"
@@ -774,16 +867,17 @@ data NumDataType where
 data FlatRanger a where
   FlatRanger ::(Num a, EdhXchg a, Storable a, Typeable a) => {
       flat'new'range'array :: EdhThreadState
-        -> Int -> Int -> Int -> (FlatArray a -> STM ()) -> STM ()
+        -> Int -> Int -> Int -> (FlatArray  -> STM ()) -> STM ()
     , flat'new'nonzero'array :: EdhThreadState
-        -> FlatArray YesNo -> ((FlatArray a, Int) -> STM ()) -> STM ()
+        -> FlatArray -> ((FlatArray , Int) -> STM ()) -> STM ()
     }-> FlatRanger a
  deriving Typeable
 flatRanger
   :: forall a . (Num a, EdhXchg a, Storable a, Typeable a) => FlatRanger a
 flatRanger = FlatRanger rangeCreator nonzeroCreator
  where
-  rangeCreator _ !start !stop _ !exit | stop == start = exit (emptyFlatArray @a)
+  rangeCreator _ !start !stop _ !exit | stop == start =
+    exit (emptyDeviceArray @a)
   rangeCreator !ets !start !stop !step !exit =
     if (stop > start && step <= 0) || (stop < start && step >= 0)
       then throwEdh ets UsageError "range is not converging"
@@ -799,17 +893,20 @@ flatRanger = FlatRanger rangeCreator nonzeroCreator
                 pokeElemOff p i $ fromIntegral n
                 fillRng (n + step) (i + 1)
         fillRng start 0
-        return $ FlatArray len fp
-  nonzeroCreator _ (FlatArray !mcap !mfp) !exit =
-    (exit =<<) $ unsafeIOToSTM $ withForeignPtr mfp $ \ !mp -> do
-      !rp  <- callocArray @a mcap
-      !rfp <- newForeignPtr finalizerFree rp
-      let go i ri | i >= mcap = return (FlatArray mcap rfp, ri)
-          go i ri             = do
-            mv <- peekElemOff mp i
-            if mv /= 0
-              then do
-                pokeElemOff rp ri $ fromIntegral i
-                go (i + 1) (ri + 1)
-              else go (i + 1) ri
-      go 0 0
+        return $ DeviceArray len fp
+  nonzeroCreator _ (DeviceArray !mcap !mfp) !exit =
+    (exit =<<)
+      $ unsafeIOToSTM
+      $ withForeignPtr (castForeignPtr mfp)
+      $ \(mp :: Ptr YesNo) -> do
+          !rp  <- callocArray @YesNo mcap
+          !rfp <- newForeignPtr finalizerFree rp
+          let go i ri | i >= mcap = return (DeviceArray mcap rfp, ri)
+              go i ri             = do
+                mv <- peekElemOff mp i
+                if mv /= 0
+                  then do
+                    pokeElemOff rp ri $ fromIntegral i
+                    go (i + 1) (ri + 1)
+                  else go (i + 1) ri
+          go 0 0

@@ -48,7 +48,7 @@ builtinDataTypes !dtClass = concat <$> sequence
     -> [DataTypeIdent]
     -> STM [(DataTypeIdent, Object)]
   mkDtAlias !dti !alias =
-    let !dt = makeDataType @a dti
+    let !dt = makeStorableDataType @a dti
     in  edhCreateHostObj dtClass (toDyn dt) []
           >>= \ !dto -> return $ ((dti, dto) :) $ (, dto) <$> alias
 
