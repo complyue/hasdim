@@ -48,6 +48,14 @@ newFlatArray !cap = do
   !fp <- newForeignPtr finalizerFree p
   return $ FlatArray cap fp
 
+copyFlatArray
+  :: forall a . Storable a => FlatArray a -> Int -> Int -> IO (FlatArray a)
+copyFlatArray (FlatArray !capSrc !fpSrc) !lenSrc !capNew = do
+  !p'  <- callocArray capNew
+  !fp' <- newForeignPtr finalizerFree p'
+  withForeignPtr fpSrc $ \ !p -> copyArray p' p $ min capNew (min lenSrc capSrc)
+  return $ FlatArray capNew fp'
+
 flatArrayCapacity :: FlatArray a -> Int
 flatArrayCapacity (FlatArray !cap _) = cap
 

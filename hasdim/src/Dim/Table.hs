@@ -50,9 +50,10 @@ tableRowCapacity (Table _ !cols _ _) = iopdNull cols >>= \case
     iopdValues cols
       >>= foldM (\ !cap !col -> min cap <$> columnCapacity col) maxBound
 
+-- | the new row count must not be negative, and must not exceed the cap,
+-- but it's not checked here, thus unsafe
 unsafeMarkTableRowCount :: Int -> Table -> STM ()
 unsafeMarkTableRowCount !rc (Table !trcv _ _ _) = do
-  -- TODO check rc not exceeding cap of any column ?
   void $ tryTakeTMVar trcv
   void $ tryPutTMVar trcv rc
 
@@ -270,8 +271,8 @@ createTableClass !colClass !clsOuterScope =
     withThisHostObj ets $ \_hsv (Table _ !tcols _ _) -> case attrKey of
       EdhString !attrName -> iopdLookup (AttrByName attrName) tcols >>= \case
         Nothing -> exitEdh ets exit nil
-        Just !col ->
-          edhCreateHostObj colClass (toDyn col) []
+        Just !tcol ->
+          edhCreateHostObj colClass (toDyn tcol) []
             >>= exitEdh ets exit
             .   EdhObject
       !badColId ->
@@ -282,12 +283,40 @@ createTableClass !colClass !clsOuterScope =
       (show apk)
 
   tabAttrWriteProc :: EdhHostProc
-  tabAttrWriteProc (ArgsPack [!attrKey, !attrVal] _) !exit !ets =
-    -- TODO impl. 
-    exitEdh ets exit $ EdhString "<not impl.>"
-  tabAttrWriteProc !apk _ !ets =
-    throwEdh ets EvalError $ "bad args to set column(s) to a table" <> T.pack
-      (show apk)
+  tabAttrWriteProc apk@(ArgsPack !args _) !exit !ets =
+    withThisHostObj ets $ \_hsv tab@(Table !trcv !tcols _ _) -> case args of
+      [!attrKey] ->
+        edhValueAsAttrKey ets attrKey $ \ !key -> iopdDelete key tcols
+      [!attrKey, !attrVal] -> case edhUltimate attrVal of
+        EdhObject !colObj ->
+          withHostObject' colObj (badCol attrVal)
+            $ \_hsv (Column !dt !clv !csv) -> do
+                !cl  <- readTMVar clv
+                !trc <- readTMVar trcv
+                if cl < trc
+                  then
+                    throwEdh ets UsageError
+                    $  "no enough data in column: column length "
+                    <> T.pack (show cl)
+                    <> " vs table row count "
+                    <> T.pack (show trc)
+                  else do
+                    !tcap <- tableRowCapacity tab
+                    !ca   <- readTVar csv
+                    !tca  <- unsafeIOToSTM $ copyFlatArray ca cl tcap
+                    !tcol <- Column dt trcv <$> newTVar tca
+                    edhValueAsAttrKey ets attrKey $ \ !key -> do
+                      iopdInsert key tcol tcols
+                      edhCreateHostObj colClass (toDyn tcol) []
+                        >>= exitEdh ets exit
+                        .   EdhObject
+        _ -> badCol attrVal
+      _ -> badCol $ EdhArgsPack apk
+   where
+    badCol !badVal = edhValueDesc ets badVal $ \ !badValDesc ->
+      throwEdh ets UsageError
+        $  "can only set column(s) to a table, not "
+        <> badValDesc
 
 
   tabReprProc :: EdhHostProc

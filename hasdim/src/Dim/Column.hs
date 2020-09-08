@@ -1209,7 +1209,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
   colIdxWriteProc !apk _ !ets =
     throwEdh ets UsageError
-      $  "invalid assigning indexing syntax for a Column: "
+      $  "invalid indexing assign syntax for a Column: "
       <> T.pack (show apk)
 
 
