@@ -34,17 +34,13 @@ data Table = Table {
     table'row'count :: !(TMVar Int)
     -- underlying table storage, represented as columns, those sharing 
   , table'columns :: !(IOPD AttrKey Column)
-    -- optional labels associated with each row
-  , table'row'labels :: !(Maybe EdhVector)
-    -- labels associated with each column, default to their respective index
-  , table'column'labels :: !(Maybe EdhVector)
   } deriving (Typeable)
 
 tableRowCount :: Table -> STM Int
-tableRowCount (Table !trcv _ _ _) = readTMVar trcv
+tableRowCount (Table !trcv _) = readTMVar trcv
 
 tableRowCapacity :: Table -> STM Int
-tableRowCapacity (Table _ !cols _ _) = iopdNull cols >>= \case
+tableRowCapacity (Table _ !cols) = iopdNull cols >>= \case
   True -> return 0
   _ ->
     iopdValues cols
@@ -53,7 +49,7 @@ tableRowCapacity (Table _ !cols _ _) = iopdNull cols >>= \case
 -- | the new row count must not be negative, and must not exceed the cap,
 -- but it's not checked here, thus unsafe
 unsafeMarkTableRowCount :: Int -> Table -> STM ()
-unsafeMarkTableRowCount !rc (Table !trcv _ _ _) = do
+unsafeMarkTableRowCount !rc (Table !trcv _) = do
   void $ tryTakeTMVar trcv
   void $ tryPutTMVar trcv rc
 
@@ -72,11 +68,11 @@ createTable _ets !cap !rowCnt !colCreators !exit = do
       [ \ !exit' -> colCreator cap trcv $ \ !col -> exit' (key, col)
       | (!key, !colCreator) <- odToList colCreators
       ]
-    $ \ !colEntries -> iopdFromList colEntries
-        >>= \ !tcols -> exit $ Table trcv tcols Nothing Nothing
+    $ \ !colEntries ->
+        iopdFromList colEntries >>= \ !tcols -> exit $ Table trcv tcols
 
 growTable :: EdhThreadState -> Int -> Table -> STM () -> STM ()
-growTable _ets !newRowCnt (Table !trcv !tcols _ _) !exit =
+growTable _ets !newRowCnt (Table !trcv !tcols) !exit =
   iopdValues tcols >>= \ !cols -> do
     !trc <- takeTMVar trcv
 
@@ -268,7 +264,7 @@ createTableClass !colClass !clsOuterScope =
 
   tabAttrReadProc :: EdhHostProc
   tabAttrReadProc (ArgsPack [!attrKey] _) !exit !ets =
-    withThisHostObj ets $ \_hsv (Table _ !tcols _ _) -> case attrKey of
+    withThisHostObj ets $ \_hsv (Table _ !tcols) -> case attrKey of
       EdhString !attrName -> iopdLookup (AttrByName attrName) tcols >>= \case
         Nothing -> exitEdh ets exit nil
         Just !tcol ->
@@ -284,7 +280,7 @@ createTableClass !colClass !clsOuterScope =
 
   tabAttrWriteProc :: EdhHostProc
   tabAttrWriteProc apk@(ArgsPack !args _) !exit !ets =
-    withThisHostObj ets $ \_hsv tab@(Table !trcv !tcols _ _) -> case args of
+    withThisHostObj ets $ \_hsv tab@(Table !trcv !tcols) -> case args of
       [!attrKey] ->
         edhValueAsAttrKey ets attrKey $ \ !key -> iopdDelete key tcols
       [!attrKey, !attrVal] -> case edhUltimate attrVal of
@@ -322,7 +318,7 @@ createTableClass !colClass !clsOuterScope =
   tabReprProc :: EdhHostProc
   tabReprProc _ !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
-      $ \_hsv tab@(Table !trcv !tcols _ _) -> do
+      $ \_hsv tab@(Table !trcv !tcols) -> do
           !trc      <- readTMVar trcv
           !cap      <- tableRowCapacity tab
           !colReprs <-
@@ -345,7 +341,7 @@ createTableClass !colClass !clsOuterScope =
   tabShowProc :: EdhHostProc
   tabShowProc (ArgsPack _ !kwargs) !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
-      $ \_hsv tab@(Table !trcv !tcols _ _) ->
+      $ \_hsv tab@(Table !trcv !tcols) ->
           let
             parseTabTitle :: (Text -> STM ()) -> EdhValue -> STM ()
             parseTabTitle !exit' = \case
@@ -415,7 +411,7 @@ createTableClass !colClass !clsOuterScope =
   tabDescProc :: EdhHostProc
   tabDescProc _ !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
-      $ \_hsv tab@(Table !trcv !tcols _ _) -> do
+      $ \_hsv tab@(Table !trcv !tcols) -> do
           !trc <- readTMVar trcv
           exitEdh ets exit
             $  EdhString
