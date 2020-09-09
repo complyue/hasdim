@@ -124,7 +124,11 @@ unsafeFlatArrayFromMVector !mvec = case MVS.unsafeToForeignPtr0 mvec of
 type DataTypeIdent = Text
 
 data DataTypeProxy where
-  DeviceDataType ::(EdhXchg a, Storable a) => Proxy a -> DataTypeProxy
+  DeviceDataType ::(EdhXchg a, Storable a) => {
+      device'data'type ::Proxy a
+    , device'data'size :: !Int
+    , device'data'align :: !Int
+    } -> DataTypeProxy
   HostDataType ::(EdhXchg a ) => Proxy a -> DataTypeProxy
 
 -- | DataType facilitates the basic support of a data type to be managable
@@ -137,8 +141,6 @@ data DataType where
   DataType ::{
       data'type'identifier :: !DataTypeIdent
     , data'type'proxy :: !DataTypeProxy
-    , flat'element'size :: !Int
-    , flat'element'align :: !Int
     , flat'new'array :: Int -> STM FlatArray
     , flat'grow'array :: FlatArray  -> Int -> STM FlatArray
     , flat'array'read :: EdhThreadState -> FlatArray
@@ -202,15 +204,17 @@ makeDeviceDataType
    . (EdhXchg a, Storable a, Typeable a)
   => DataTypeIdent
   -> DataType
-makeDeviceDataType !dti = DataType dti
-                                     (DeviceDataType (Proxy :: Proxy a))
-                                     (sizeOf (undefined :: a))
-                                     (alignment (undefined :: a))
-                                     createArray
-                                     growArray
-                                     readArrayCell
-                                     writeArrayCell
-                                     updateArray
+makeDeviceDataType !dti = DataType
+  dti
+  (DeviceDataType (Proxy :: Proxy a)
+                  (sizeOf (undefined :: a))
+                  (alignment (undefined :: a))
+  )
+  createArray
+  growArray
+  readArrayCell
+  writeArrayCell
+  updateArray
  where
   createArray !cap = unsafeIOToSTM (newDeviceArray @a cap)
   growArray (DeviceArray !cap !fp) !newCap = unsafeIOToSTM $ do
