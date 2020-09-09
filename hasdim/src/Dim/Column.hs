@@ -649,7 +649,7 @@ nonzeroIdxColumn !ets (Column _mdti !mclv !mcsv) !exit =
 -- obtain valid column data as an immutable Storable Vector
 -- this is unsafe in both memory/type regards and thread regards
 unsafeCastColumnData
-  :: forall a . (Storable a, EdhXchg a) => Column -> STM (VS.Vector a)
+  :: forall a . (Storable a, EdhXchg a, Typeable a) => Column -> STM (VS.Vector a)
 unsafeCastColumnData (Column _ _ !csv) = do
   !ary <- readTVar csv
   return $ unsafeFlatArrayAsVector ary
@@ -657,7 +657,10 @@ unsafeCastColumnData (Column _ _ !csv) = do
 -- obtain valid column data as a mutable Storable Vector
 -- this is unsafe in both memory/type regards and thread regards
 unsafeCastMutableColumnData
-  :: forall a . (Storable a, EdhXchg a) => Column -> STM (MVS.IOVector a)
+  :: forall a
+   . (Storable a, EdhXchg a, Typeable a)
+  => Column
+  -> STM (MVS.IOVector a)
 unsafeCastMutableColumnData (Column _ _ !csv) = do
   !ary <- readTVar csv
   return $ unsafeFlatArrayAsMVector ary

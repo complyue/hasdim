@@ -20,7 +20,7 @@ import           Control.Concurrent.STM
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 import           Data.Dynamic
-import           Data.Proxy
+import           Data.Typeable
 
 import qualified Data.Vector.Mutable           as MV
 import qualified Data.Vector.Storable          as VS
@@ -32,38 +32,40 @@ import           Dim.XCHG
 
 
 data FlatArray where
-  DeviceArray ::(EdhXchg a, Storable a) => {
+  DeviceArray ::(EdhXchg a, Typeable a, Storable a) => {
       device'array'cap :: !Int
     , device'array'ref :: !(ForeignPtr a)
     } -> FlatArray
-  HostArray ::(EdhXchg a) => {
+  HostArray ::(EdhXchg a, Typeable a) => {
       host'array'cap :: !Int
     , host'array'ref :: !(MV.IOVector a)
     } -> FlatArray
 
 
-emptyDeviceArray :: forall a . (EdhXchg a, Storable a) => FlatArray
+emptyDeviceArray :: forall a . (EdhXchg a, Typeable a, Storable a) => FlatArray
 emptyDeviceArray = unsafePerformIO $ do
   !np <- newForeignPtr_ nullPtr
   return $ DeviceArray @a 0 np
 {-# NOINLINE emptyDeviceArray #-}
 
-emptyHostArray :: forall a . (EdhXchg a) => FlatArray
+emptyHostArray :: forall a . (EdhXchg a, Typeable a) => FlatArray
 emptyHostArray = unsafePerformIO $ do
   !ha <- MV.new 0
   return $ HostArray @a 0 ha
 {-# NOINLINE emptyHostArray #-}
 
 
-newDeviceArray :: forall a . (EdhXchg a, Storable a) => Int -> IO FlatArray
+newDeviceArray
+  :: forall a . (EdhXchg a, Typeable a, Storable a) => Int -> IO FlatArray
 newDeviceArray !cap = do
   !p  <- callocArray @a cap
   !fp <- newForeignPtr finalizerFree p
   return $ DeviceArray @a cap fp
 
-newHostArray :: forall a . (EdhXchg a) => Int -> IO FlatArray
-newHostArray !cap = do
-  !ha <- MV.new cap
+newHostArray :: forall a . (EdhXchg a, Typeable a) => a -> Int -> IO FlatArray
+newHostArray !fill'val !cap = do
+  !ha <- MV.unsafeNew cap
+  MV.set ha fill'val
   return $ HostArray @a cap ha
 
 
@@ -104,19 +106,29 @@ unsafeSliceFlatArray (HostArray _ !ha) !offset !len =
 unsafeFlatArrayAsVector :: forall a . (Storable a) => FlatArray -> VS.Vector a
 unsafeFlatArrayAsVector (DeviceArray !cap fp) =
   VS.unsafeFromForeignPtr0 (castForeignPtr fp) cap
+unsafeFlatArrayAsVector HostArray{} =
+  error "bug: casting host array to storable vector"
 
 unsafeFlatArrayFromVector
-  :: forall a . (EdhXchg a, Storable a) => VS.Vector a -> FlatArray
+  :: forall a . (EdhXchg a, Typeable a, Storable a) => VS.Vector a -> FlatArray
 unsafeFlatArrayFromVector !vec = case VS.unsafeToForeignPtr0 vec of
   (!fp, !cap) -> DeviceArray @a cap (castForeignPtr fp)
 
 unsafeFlatArrayAsMVector
-  :: forall a . (Storable a, EdhXchg a) => FlatArray -> MVS.IOVector a
+  :: forall a
+   . (Storable a, EdhXchg a, Typeable a)
+  => FlatArray
+  -> MVS.IOVector a
 unsafeFlatArrayAsMVector (DeviceArray !cap !fp) =
   MVS.unsafeFromForeignPtr0 (castForeignPtr fp) cap
+unsafeFlatArrayAsMVector HostArray{} =
+  error "bug: casting host array to storable vector"
 
 unsafeFlatArrayFromMVector
-  :: forall a . (Storable a, EdhXchg a) => MVS.IOVector a -> FlatArray
+  :: forall a
+   . (Storable a, EdhXchg a, Typeable a)
+  => MVS.IOVector a
+  -> FlatArray
 unsafeFlatArrayFromMVector !mvec = case MVS.unsafeToForeignPtr0 mvec of
   (!fp, !cap) -> DeviceArray @a cap (castForeignPtr fp)
 
@@ -124,12 +136,16 @@ unsafeFlatArrayFromMVector !mvec = case MVS.unsafeToForeignPtr0 mvec of
 type DataTypeIdent = Text
 
 data DataTypeProxy where
-  DeviceDataType ::(EdhXchg a, Storable a) => {
+  DeviceDataType ::(EdhXchg a, Typeable a, Storable a) => {
       device'data'type ::Proxy a
     , device'data'size :: !Int
     , device'data'align :: !Int
     } -> DataTypeProxy
-  HostDataType ::(EdhXchg a ) => Proxy a -> DataTypeProxy
+  HostDataType ::(EdhXchg a, Typeable a ) => {
+      host'data'type :: Proxy a
+    , host'data'default :: a
+    } -> DataTypeProxy
+
 
 -- | DataType facilitates the basic support of a data type to be managable
 -- by HasDim, i.e. array allocation, element read/write, array bulk update.
@@ -201,7 +217,7 @@ createDataTypeClass !clsOuterScope =
 
 makeDeviceDataType
   :: forall a
-   . (EdhXchg a, Storable a, Typeable a)
+   . (EdhXchg a, Typeable a, Storable a)
   => DataTypeIdent
   -> DataType
 makeDeviceDataType !dti = DataType
@@ -222,55 +238,69 @@ makeDeviceDataType !dti = DataType
     !fp' <- newForeignPtr finalizerFree p'
     withForeignPtr fp $ \ !p -> copyArray p' p $ min newCap cap
     return $ DeviceArray newCap fp'
+  growArray _ _ = error "bug: not a device array"
   readArrayCell !ets (DeviceArray !cap !fp) !idx !exit =
     edhRegulateIndex ets cap idx $ \ !posIdx -> do
-      sv <- unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr ->
+      !sv <- unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr ->
         peekElemOff vPtr posIdx
       toEdh ets sv $ \ !val -> exit val
+  readArrayCell _ _ _ _ = error "bug: not a device array"
   writeArrayCell !ets (DeviceArray !cap !fp) !idx !val !exit =
     edhRegulateIndex ets cap idx $ \ !posIdx -> fromEdh ets val $ \ !sv -> do
       unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
       toEdh ets sv $ \ !val' -> exit val'
+  writeArrayCell _ _ _ _ _ = error "bug: not a device array"
   updateArray _ [] _ !exit = exit
   updateArray !ets ((!idx, !val) : rest'upds) ary@(DeviceArray !cap !fp) !exit
-    = edhRegulateIndex ets cap idx $ \ !posIdx ->
-      fromEdh @a ets val $ \ !sv -> do
-        unsafeIOToSTM $ withForeignPtr (castForeignPtr fp) $ \ !vPtr ->
-          pokeElemOff vPtr posIdx sv
-        updateArray ets rest'upds ary exit
+    = edhRegulateIndex ets cap idx $ \ !posIdx -> fromEdh ets val $ \ !sv -> do
+      unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
+      updateArray ets rest'upds ary exit
+  updateArray _ _ _ _ = error "bug: not a device array"
 
 
--- makeHostDataType
---   :: forall a . (EdhXchg a, Typeable a) => DataTypeIdent -> DataType
--- makeHostDataType !dti = DataType dti 
---                                  (sizeOf (undefined :: a))
---                                  (alignment (undefined :: a))
---                                  createArray
---                                  growArray
---                                  readArrayCell
---                                  writeArrayCell
---                                  updateArray
---  where
---   createArray !cap = unsafeIOToSTM (newHostArray cap)
---   growArray (HostArray !cap !fp) !newCap = unsafeIOToSTM $ do
---     !p'  <- callocArray newCap
---     !fp' <- newForeignPtr finalizerFree p'
---     withForeignPtr fp $ \ !p -> copyArray p' p $ min newCap cap
---     return $ HostArray newCap fp'
---   readArrayCell !ets (HostArray !cap !fp) !idx !exit =
---     edhRegulateIndex ets cap idx $ \ !posIdx -> do
---       sv <- unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr ->
---         peekElemOff vPtr posIdx
---       toEdh ets sv $ \ !val -> exit val
---   writeArrayCell !ets (HostArray !cap !fp) !idx !val !exit =
---     edhRegulateIndex ets cap idx $ \ !posIdx -> fromEdh ets val $ \ !sv -> do
---       unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
---       toEdh ets sv $ \ !val' -> exit val'
---   updateArray _ [] _ !exit = exit
---   updateArray !ets ((!idx, !sv) : rest'upds) ary@(HostArray !cap !fp) !exit =
---     edhRegulateIndex ets cap idx $ \ !posIdx -> do
---       unsafeIOToSTM $ withForeignPtr fp $ \ !vPtr -> pokeElemOff vPtr posIdx sv
---       updateArray ets rest'upds ary exit
+makeHostDataType
+  :: forall a . (EdhXchg a, Typeable a) => DataTypeIdent -> a -> DataType
+makeHostDataType !dti !def'val = DataType
+  dti
+  (HostDataType (Proxy :: Proxy a) def'val)
+  createArray
+  growArray
+  readArrayCell
+  writeArrayCell
+  updateArray
+ where
+  createArray !cap = unsafeIOToSTM (newHostArray @a def'val cap)
+  growArray (HostArray !cap !ha'') !newCap = case cast ha'' of
+    Nothing                    -> error "bug: not a host array"
+    Just (ha :: MV.IOVector a) -> unsafeIOToSTM $ do
+      (ha' :: MV.IOVector a) <- MV.unsafeNew newCap
+      let !cpLen = min newCap cap
+      if cpLen <= 0
+        then MV.set ha' def'val
+        else do
+          let !tgt     = MV.unsafeSlice 0 cpLen ha'
+              !src     = MV.unsafeSlice 0 cpLen ha
+              !restLen = newCap - cpLen
+          MV.unsafeCopy tgt src
+          when (restLen > 0) $ MV.set (MV.unsafeSlice cpLen restLen ha') def'val
+      return $ HostArray newCap ha'
+  growArray _ _ = error "bug: not a host array"
+  readArrayCell !ets (HostArray !cap !ha) !idx !exit =
+    edhRegulateIndex ets cap idx $ \ !posIdx -> do
+      !sv <- unsafeIOToSTM $ MV.unsafeRead ha posIdx
+      toEdh ets sv $ \ !val -> exit val
+  readArrayCell _ _ _ _ = error "bug: not a host array"
+  writeArrayCell !ets (HostArray !cap !ha) !idx !val !exit =
+    edhRegulateIndex ets cap idx $ \ !posIdx -> fromEdh ets val $ \ !sv -> do
+      unsafeIOToSTM $ MV.unsafeWrite ha posIdx sv
+      toEdh ets sv $ \ !val' -> exit val'
+  writeArrayCell _ _ _ _ _ = error "bug: not a host array"
+  updateArray _ [] _ !exit = exit
+  updateArray !ets ((!idx, !val) : rest'upds) ary@(HostArray !cap !ha) !exit =
+    edhRegulateIndex ets cap idx $ \ !posIdx -> fromEdh ets val $ \ !sv -> do
+      unsafeIOToSTM $ MV.unsafeWrite ha posIdx sv
+      updateArray ets rest'upds ary exit
+  updateArray _ _ _ _ = error "bug: not a host array"
 
 
 -- | A pack of data manipulation routines, per operational category, per data
@@ -331,6 +361,7 @@ flatOrd = FlatOrd vecCmp elemCmp
                 pokeElemOff rp i $ if cmp $ compare @a ev sv then 1 else 0
                 go (i + 1)
           go 0
+  vecCmp _ _ _ _ _ = error "bug: not a device array"
   -- element-wise comparation, yielding a new YesNo array
   elemCmp _ets (DeviceArray !cap1 !fp1) !cmp (DeviceArray _cap2 !fp2) !exit =
     (exit =<<)
@@ -347,11 +378,10 @@ flatOrd = FlatOrd vecCmp elemCmp
                   pokeElemOff rp i $ if cmp $ compare ev1 ev2 then 1 else 0
                   go (i + 1)
             go 0
+  elemCmp _ _ _ _ _ = error "bug: not a device array"
 
 resolveDataComparator
-  :: forall a
-   . (Typeable FlatOrd)
-  => EdhThreadState
+  :: EdhThreadState
   -> DataTypeIdent
   -> FlatArray
   -> (FlatOrd -> STM ())
@@ -362,9 +392,7 @@ resolveDataComparator !ets !dti !fa =
     $  "ordering not supported by dtype: "
     <> dti
 resolveDataComparator'
-  :: forall a
-   . (Typeable FlatOrd)
-  => EdhThreadState
+  :: EdhThreadState
   -> DataTypeIdent
   -> FlatArray
   -> STM ()
@@ -480,6 +508,7 @@ flatOp = FlatOp vecExtractBool
                       go (i + 1) (ri + 1)
                     else go (i + 1) ri
             go 0 0
+  vecExtractBool _ _ _ _ = error "bug: not a device array"
   -- vectorized data extraction with a fancy index, yielding a new array
   vecExtractFancy !ets (DeviceArray !icap !ifp) (DeviceArray !cap !fp) !exit =
     do
@@ -504,6 +533,7 @@ flatOp = FlatOp vecExtractBool
             <> " vs "
             <> T.pack (show cap)
         Right !rtnAry -> exit rtnAry
+  vecExtractFancy _ _ _ _ = error "bug: not a device array"
   -- vectorized operation, yielding a new array
   vecOp !ets (DeviceArray !cap !fp) !dop !v !exit = case fromDynamic dop of
     Nothing                  -> error "bug: dtype op type mismatch"
@@ -520,6 +550,7 @@ flatOp = FlatOp vecExtractBool
                   pokeElemOff rp i $ op ev sv
                   go (i + 1)
             go 0
+  vecOp _ _ _ _ _ = error "bug: not a device array"
   -- element-wise operation, yielding a new array
   elemOp _ets (DeviceArray !cap1 !fp1) !dop (DeviceArray _cap2 !fp2) !exit =
     case fromDynamic dop of
@@ -539,6 +570,7 @@ flatOp = FlatOp vecExtractBool
                       pokeElemOff rp i $ op ev1 ev2
                       go (i + 1)
                 go 0
+  elemOp _ _ _ _ _ = error "bug: not a device array"
   -- vectorized operation, inplace modifying the array
   vecInp !ets (DeviceArray !cap !fp) !dop !v !exit = case fromDynamic dop of
     Nothing                  -> error "bug: dtype op type mismatch"
@@ -553,6 +585,7 @@ flatOp = FlatOp vecExtractBool
                   pokeElemOff p i $ op ev sv
                   go (i + 1)
             go 0
+  vecInp _ _ _ _ _ = error "bug: not a device array"
   -- vectorized operation, inplace modifying the array, with a slice spec
   vecInpSlice !ets (!start, !stop, !step) (DeviceArray _cap !fp) !dop !v !exit
     = case fromDynamic dop of
@@ -570,6 +603,7 @@ flatOp = FlatOp vecExtractBool
                     pokeElemOff p n $ op ev sv
                     go (n + step) (i + 1)
               go start 0
+  vecInpSlice _ _ _ _ _ _ = error "bug: not a device array"
   -- vectorized operation, inplace modifying the array, with a yesno mask
   vecInpMasked !ets (DeviceArray _cap !mfp) (DeviceArray !cap !fp) !dop !v !exit
     = case fromDynamic dop of
@@ -588,6 +622,7 @@ flatOp = FlatOp vecExtractBool
                         pokeElemOff p i $ op ev sv
                       go (i + 1)
                 go 0
+  vecInpMasked _ _ _ _ _ _ = error "bug: not a device array"
   -- vectorized operation, inplace modifying the array, with a fancy index
   vecInpFancy !ets (DeviceArray !icap !ifp) (DeviceArray !cap !fp) !dop !v !exit
     = case fromDynamic dop of
@@ -615,6 +650,7 @@ flatOp = FlatOp vecExtractBool
             <> T.pack (show badIdx)
             <> " vs "
             <> T.pack (show cap)
+  vecInpFancy _ _ _ _ _ _ = error "bug: not a device array"
   -- element-wise operation, inplace modifying array
   elemInp _ets (DeviceArray !cap1 !fp1) !dop (DeviceArray _cap2 !fp2) !exit =
     case fromDynamic dop of
@@ -632,6 +668,7 @@ flatOp = FlatOp vecExtractBool
                       pokeElemOff p1 i $ op ev1 ev2
                       go (i + 1)
                 go 0
+  elemInp _ _ _ _ _ = error "bug: not a device array"
   -- element-wise operation, inplace modifying array, with a slice spec
   elemInpSlice _ets (!start, !stop, !step) (DeviceArray _cap1 !fp1) !dop (DeviceArray !cap2 !fp2) !exit
     = case fromDynamic dop of
@@ -651,6 +688,7 @@ flatOp = FlatOp vecExtractBool
                       pokeElemOff p1 n $ op ev1 ev2
                       go (n + step) (i + 1)
                 go start 0
+  elemInpSlice _ _ _ _ _ _ = error "bug: not a device array"
   -- element-wise operation, inplace modifying array, with a yesno mask
   elemInpMasked _ets (DeviceArray _cap !mfp) (DeviceArray !cap1 !fp1) !dop (DeviceArray _cap2 !fp2) !exit
     = case fromDynamic dop of
@@ -671,6 +709,7 @@ flatOp = FlatOp vecExtractBool
                           pokeElemOff p1 i $ op ev1 ev2
                         go (i + 1)
                   go 0
+  elemInpMasked _ _ _ _ _ _ = error "bug: not a device array"
   -- element-wise operation, inplace modifying array, with a fancy index
   elemInpFancy !ets (DeviceArray !icap !ifp) (DeviceArray !cap1 !fp1) !dop (DeviceArray !cap2 !fp2) !exit
     = case fromDynamic dop of
@@ -701,6 +740,7 @@ flatOp = FlatOp vecExtractBool
             <> T.pack (show badIdx)
             <> " vs "
             <> T.pack (show cap1)
+  elemInpFancy _ _ _ _ _ _ = error "bug: not a device array"
 
 resolveDataOperator
   :: EdhThreadState
@@ -921,3 +961,5 @@ flatRanger = FlatRanger rangeCreator nonzeroCreator
                     go (i + 1) (ri + 1)
                   else go (i + 1) ri
           go 0 0
+  nonzeroCreator _ _ _ = error "bug: not a device array"
+

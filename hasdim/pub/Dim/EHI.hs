@@ -32,23 +32,43 @@ import           Dim.Array
 
 builtinDataTypes :: Object -> STM [(DataTypeIdent, Object)]
 builtinDataTypes !dtClass = concat <$> sequence
-  [ mkDtAlias @Double "float64" ["f8"]
-  , mkDtAlias @Float "float32" ["f4"]
-  , mkDtAlias @Int64 "int64" ["i8"]
-  , mkDtAlias @Int32 "int32" ["i4"]
-  , mkDtAlias @Int8 "int8" ["byte"]
-  , mkDtAlias @Int "intp" []
-  , mkDtAlias @YesNo "yesno" []
+  [ mkDevTypeWithAlias @Double "float64" ["f8"]
+  , mkDevTypeWithAlias @Float "float32" ["f4"]
+  , mkDevTypeWithAlias @Int64 "int64" ["i8"]
+  , mkDevTypeWithAlias @Int32 "int32" ["i4"]
+  , mkDevTypeWithAlias @Int8 "int8" ["byte"]
+  , mkDevTypeWithAlias @Int "intp" []
+  , mkDevTypeWithAlias @YesNo "yesno" ["bool"]
+  , mkHostTypeWithAlias @EdhValue "box"
+                                  edhNA
+                                  [
+                                   -- kinda for numpy compat,
+                                   "object" -- not all values
+                                   -- are objects in Edh
+                                           ]
   ]
  where
-  mkDtAlias
+
+  mkDevTypeWithAlias
     :: forall a
-     . (EdhXchg a, Storable a, Typeable a)
+     . (EdhXchg a, Typeable a, Storable a)
     => DataTypeIdent
     -> [DataTypeIdent]
     -> STM [(DataTypeIdent, Object)]
-  mkDtAlias !dti !alias =
+  mkDevTypeWithAlias !dti !alias =
     let !dt = makeDeviceDataType @a dti
+    in  edhCreateHostObj dtClass (toDyn dt) []
+          >>= \ !dto -> return $ ((dti, dto) :) $ (, dto) <$> alias
+
+  mkHostTypeWithAlias
+    :: forall a
+     . (EdhXchg a, Typeable a)
+    => DataTypeIdent
+    -> a
+    -> [DataTypeIdent]
+    -> STM [(DataTypeIdent, Object)]
+  mkHostTypeWithAlias !dti !def'val !alias =
+    let !dt = makeHostDataType @a dti def'val
     in  edhCreateHostObj dtClass (toDyn dt) []
           >>= \ !dto -> return $ ((dti, dto) :) $ (, dto) <$> alias
 

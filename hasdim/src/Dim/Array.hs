@@ -327,7 +327,10 @@ dbArrayShape (DbArray _ _ _ !das) = readTMVar das >>= \case
   Right (!shape, _, _) -> return shape
 
 castDbArrayData
-  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (VS.Vector a)
+  :: forall a
+   . (Storable a, EdhXchg a, Typeable a)
+  => DbArray
+  -> IO (VS.Vector a)
 castDbArrayData (DbArray _ _ _ !das) = atomically (readTMVar das) >>= \case
   Left  !err              -> throwIO err
   Right (_, !hdrPtr, !fa) -> do
@@ -336,7 +339,10 @@ castDbArrayData (DbArray _ _ _ !das) = atomically (readTMVar das) >>= \case
       vlen
 
 castMutDbArrayData
-  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (MVS.IOVector a)
+  :: forall a
+   . (Storable a, EdhXchg a, Typeable a)
+  => DbArray
+  -> IO (MVS.IOVector a)
 castMutDbArrayData (DbArray _ _ _ !das) = atomically (readTMVar das) >>= \case
   Left  !err              -> throwIO err
   Right (_, !hdrPtr, !fa) -> do
@@ -345,13 +351,19 @@ castMutDbArrayData (DbArray _ _ _ !das) = atomically (readTMVar das) >>= \case
       vlen
 
 castFullDbArrayData
-  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (VS.Vector a)
+  :: forall a
+   . (Storable a, EdhXchg a, Typeable a)
+  => DbArray
+  -> IO (VS.Vector a)
 castFullDbArrayData (DbArray _ _ _ !das) = atomically (readTMVar das) >>= \case
   Left  !err        -> throwIO err
   Right (_, _, !fa) -> return $ unsafeFlatArrayAsVector fa
 
 castMutFullDbArrayData
-  :: forall a . (Storable a, EdhXchg a) => DbArray -> IO (MVS.IOVector a)
+  :: forall a
+   . (Storable a, EdhXchg a, Typeable a)
+  => DbArray
+  -> IO (MVS.IOVector a)
 castMutFullDbArrayData (DbArray _ _ _ !das) =
   atomically (readTMVar das) >>= \case
     Left  !err        -> throwIO err
