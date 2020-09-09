@@ -22,6 +22,7 @@ import           Data.Maybe
 import           Data.Dynamic
 
 import           Language.Edh.EHI
+import qualified Data.Lossless.Decimal         as D
 
 import           Dim.XCHG
 import           Dim.DataType
@@ -39,6 +40,7 @@ builtinDataTypes !dtClass = concat <$> sequence
   , mkDevTypeWithAlias @Int8 "int8" ["byte"]
   , mkDevTypeWithAlias @Int "intp" []
   , mkDevTypeWithAlias @YesNo "yesno" ["bool"]
+  , mkHostTypeWithAlias @D.Decimal "decimal" D.nan []
   , mkHostTypeWithAlias @EdhValue "box"
                                   edhNA
                                   [

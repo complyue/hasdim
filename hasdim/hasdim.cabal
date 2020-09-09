@@ -31,6 +31,7 @@ library
     ghc-options: -Wall
     build-depends:
         hasdim-internal -any,
+        lossless-decimal -any,
         base >=4.12,
         stm >=2.5,
         text -any,

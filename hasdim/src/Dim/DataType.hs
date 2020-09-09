@@ -27,6 +27,7 @@ import qualified Data.Vector.Storable          as VS
 import qualified Data.Vector.Storable.Mutable  as MVS
 
 import           Language.Edh.EHI
+import qualified Data.Lossless.Decimal         as D
 
 import           Dim.XCHG
 
@@ -137,13 +138,13 @@ type DataTypeIdent = Text
 
 data DataTypeProxy where
   DeviceDataType ::(EdhXchg a, Typeable a, Storable a) => {
-      device'data'type ::Proxy a
-    , device'data'size :: !Int
+      device'data'type  :: !(Proxy a)
+    , device'data'size  :: !Int
     , device'data'align :: !Int
     } -> DataTypeProxy
   HostDataType ::(EdhXchg a, Typeable a ) => {
-      host'data'type :: Proxy a
-    , host'data'default :: a
+      host'data'type    :: !(Proxy a)
+    , host'data'default :: !a
     } -> DataTypeProxy
 
 
@@ -358,28 +359,65 @@ deviceDataOrdering = FlatOrd vecCmp elemCmp
           !rfp <- newForeignPtr finalizerFree rp
           let go i | i >= cap = return $ DeviceArray cap rfp
               go i            = do
-                ev <- peekElemOff p i
+                !ev <- peekElemOff p i
                 pokeElemOff rp i $ if cmp $ compare @a ev sv then 1 else 0
                 go (i + 1)
           go 0
   vecCmp _ _ _ _ _ = error "bug: not a device array"
   -- element-wise comparation, yielding a new YesNo array
-  elemCmp _ets (DeviceArray !cap1 !fp1) !cmp (DeviceArray _cap2 !fp2) !exit =
+  elemCmp _ets (DeviceArray !cap1 !fp1) !cmp (DeviceArray !cap2 !fp2) !exit =
     (exit =<<)
       $ unsafeIOToSTM
       $ withForeignPtr (castForeignPtr fp1)
       $ \(p1 :: Ptr a) ->
           withForeignPtr (castForeignPtr fp2) $ \(p2 :: Ptr a) -> do
-            !rp  <- callocArray @YesNo cap1
+            !rp  <- callocArray @YesNo rcap
             !rfp <- newForeignPtr finalizerFree rp
-            let go i | i >= cap1 = return $ DeviceArray cap1 rfp
+            let go i | i >= rcap = return $ DeviceArray rcap rfp
                 go i             = do
-                  ev1 <- peekElemOff p1 i
-                  ev2 <- peekElemOff p2 i
+                  !ev1 <- peekElemOff p1 i
+                  !ev2 <- peekElemOff p2 i
                   pokeElemOff rp i $ if cmp $ compare ev1 ev2 then 1 else 0
                   go (i + 1)
             go 0
+    where !rcap = min cap1 cap2
   elemCmp _ _ _ _ _ = error "bug: not a device array"
+
+hostDataOrdering :: forall a . (Ord a, Typeable a, EdhXchg a) => FlatOrd
+hostDataOrdering = FlatOrd vecCmp elemCmp
+ where
+  -- vectorized comparation, yielding a new YesNo array
+  vecCmp !ets (HostArray !cap !ha'') !cmp !v !exit = case cast ha'' of
+    Nothing                    -> error "bug: host array dtype mismatch"
+    Just (ha :: MV.IOVector a) -> fromEdh @a ets v $ \ !sv ->
+      (exit =<<) $ unsafeIOToSTM $ do
+        !rp  <- callocArray @YesNo cap
+        !rfp <- newForeignPtr finalizerFree rp
+        let go i | i >= cap = return $ DeviceArray cap rfp
+            go i            = do
+              !ev <- MV.unsafeRead ha i
+              pokeElemOff rp i $ if cmp $ compare @a ev sv then 1 else 0
+              go (i + 1)
+        go 0
+  vecCmp _ _ _ _ _ = error "bug: not a host array"
+  -- element-wise comparation, yielding a new YesNo array
+  elemCmp _ets (HostArray !cap1 !ha1'') !cmp (HostArray !cap2 !ha2'') !exit =
+    case cast ha1'' of
+      Nothing                     -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector a) -> case cast ha2'' of
+        Nothing                     -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector a) -> (exit =<<) $ unsafeIOToSTM $ do
+          !rp  <- callocArray @YesNo rcap
+          !rfp <- newForeignPtr finalizerFree rp
+          let go i | i >= rcap = return $ DeviceArray rcap rfp
+              go i             = do
+                !ev1 <- MV.unsafeRead ha1 i
+                !ev2 <- MV.unsafeRead ha2 i
+                pokeElemOff rp i $ if cmp $ compare ev1 ev2 then 1 else 0
+                go (i + 1)
+          go 0
+    where !rcap = min cap1 cap2
+  elemCmp _ _ _ _ _ = error "bug: not a host array"
 
 resolveDataComparator
   :: EdhThreadState
@@ -423,14 +461,15 @@ resolveDataComparatorProc :: Object -> EdhHostProc
 resolveDataComparatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
   | odNull kwargs
   = case dti of
-    "float64" -> exitWith $ toDyn (deviceDataOrdering @Double)
-    "float32" -> exitWith $ toDyn (deviceDataOrdering @Float)
-    "int64"   -> exitWith $ toDyn (deviceDataOrdering @Int64)
-    "int32"   -> exitWith $ toDyn (deviceDataOrdering @Int32)
-    "int8"    -> exitWith $ toDyn (deviceDataOrdering @Int8)
-    "byte"    -> exitWith $ toDyn (deviceDataOrdering @Int8)
-    "intp"    -> exitWith $ toDyn (deviceDataOrdering @Int)
-    "yesno"   -> exitWith $ toDyn (deviceDataOrdering @YesNo)
+    "float64" -> exitWith $ deviceDataOrdering @Double
+    "float32" -> exitWith $ deviceDataOrdering @Float
+    "int64"   -> exitWith $ deviceDataOrdering @Int64
+    "int32"   -> exitWith $ deviceDataOrdering @Int32
+    "int8"    -> exitWith $ deviceDataOrdering @Int8
+    "byte"    -> exitWith $ deviceDataOrdering @Int8
+    "intp"    -> exitWith $ deviceDataOrdering @Int
+    "yesno"   -> exitWith $ deviceDataOrdering @YesNo
+    "decimal" -> exitWith $ hostDataOrdering @D.Decimal
     _ ->
       throwEdh ets UsageError
         $  "a non-trivial data type requested,"
@@ -438,8 +477,11 @@ resolveDataComparatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !
         <> " identified by: "
         <> dti
  where
+  exitWith :: FlatOrd -> STM ()
   exitWith !drp =
-    edhCreateHostObj dmrpClass (toDyn $ DataManiRoutinePack dti "cmp" drp) []
+    edhCreateHostObj dmrpClass
+                     (toDyn $ DataManiRoutinePack dti "cmp" (toDyn drp))
+                     []
       >>= exitEdh ets exit
       .   EdhObject
 resolveDataComparatorProc _ _ _ !ets =
@@ -503,7 +545,7 @@ deviceDataOperations = FlatOp vecExtractBool
             !rfp <- newForeignPtr finalizerFree rp
             let go i ri | i >= mcap = return (DeviceArray mcap rfp, ri)
                 go i ri             = do
-                  mv <- peekElemOff mp i
+                  !mv <- peekElemOff mp i
                   if mv /= 0
                     then do
                       peekElemOff p i >>= pokeElemOff rp ri
@@ -520,7 +562,7 @@ deviceDataOperations = FlatOp vecExtractBool
           !rfp <- newForeignPtr finalizerFree rp
           let go i | i >= icap = return $ Right $ DeviceArray icap rfp
               go i             = do
-                idx <- peekElemOff ip i
+                !idx <- peekElemOff ip i
                 if idx < 0 || idx >= cap
                   then return $ Left idx
                   else do
@@ -548,13 +590,13 @@ deviceDataOperations = FlatOp vecExtractBool
             !rfp <- newForeignPtr finalizerFree rp
             let go i | i >= cap = return $ DeviceArray cap rfp
                 go i            = do
-                  ev <- peekElemOff p i
+                  !ev <- peekElemOff p i
                   pokeElemOff rp i $ op ev sv
                   go (i + 1)
             go 0
   vecOp _ _ _ _ _ = error "bug: not a device array"
   -- element-wise operation, yielding a new array
-  elemOp _ets (DeviceArray !cap1 !fp1) !dop (DeviceArray _cap2 !fp2) !exit =
+  elemOp _ets (DeviceArray !cap1 !fp1) !dop (DeviceArray !cap2 !fp2) !exit =
     case fromDynamic dop of
       Nothing -> error "bug: dtype op type mismatch"
       Just (op :: a -> a -> a) ->
@@ -563,15 +605,16 @@ deviceDataOperations = FlatOp vecExtractBool
           $ withForeignPtr (castForeignPtr fp1)
           $ \(p1 :: Ptr a) ->
               withForeignPtr (castForeignPtr fp2) $ \(p2 :: Ptr a) -> do
-                !rp  <- callocArray cap1
+                !rp  <- callocArray rcap
                 !rfp <- newForeignPtr finalizerFree rp
-                let go i | i >= cap1 = return $ DeviceArray cap1 rfp
+                let go i | i >= rcap = return $ DeviceArray rcap rfp
                     go i             = do
-                      ev1 <- peekElemOff p1 i
-                      ev2 <- peekElemOff p2 i
+                      !ev1 <- peekElemOff p1 i
+                      !ev2 <- peekElemOff p2 i
                       pokeElemOff rp i $ op ev1 ev2
                       go (i + 1)
                 go 0
+    where !rcap = min cap1 cap2
   elemOp _ _ _ _ _ = error "bug: not a device array"
   -- vectorized operation, inplace modifying the array
   vecInp !ets (DeviceArray !cap !fp) !dop !v !exit = case fromDynamic dop of
@@ -583,7 +626,7 @@ deviceDataOperations = FlatOp vecExtractBool
         $ \(p :: Ptr a) -> do
             let go i | i >= cap = return ()
                 go i            = do
-                  ev <- peekElemOff p i
+                  !ev <- peekElemOff p i
                   pokeElemOff p i $ op ev sv
                   go (i + 1)
             go 0
@@ -601,7 +644,7 @@ deviceDataOperations = FlatOp vecExtractBool
                   !len   = if r == 0 then abs q else 1 + abs q
               let go _ i | i >= len = return ()
                   go n i            = do
-                    ev <- peekElemOff p n
+                    !ev <- peekElemOff p n
                     pokeElemOff p n $ op ev sv
                     go (n + step) (i + 1)
               go start 0
@@ -618,9 +661,9 @@ deviceDataOperations = FlatOp vecExtractBool
               withForeignPtr (castForeignPtr fp) $ \(p :: Ptr a) -> do
                 let go i | i >= cap = return ()
                     go i            = do
-                      mv <- peekElemOff mp i
+                      !mv <- peekElemOff mp i
                       when (mv /= 0) $ do
-                        ev <- peekElemOff p i
+                        !ev <- peekElemOff p i
                         pokeElemOff p i $ op ev sv
                       go (i + 1)
                 go 0
@@ -640,7 +683,7 @@ deviceDataOperations = FlatOp vecExtractBool
                       if idx < 0 || idx >= cap
                         then return idx
                         else do
-                          ev <- peekElemOff p idx
+                          !ev <- peekElemOff p idx
                           pokeElemOff p idx $ op ev sv
                           go (i + 1)
                 go 0
@@ -654,7 +697,7 @@ deviceDataOperations = FlatOp vecExtractBool
             <> T.pack (show cap)
   vecInpFancy _ _ _ _ _ _ = error "bug: not a device array"
   -- element-wise operation, inplace modifying array
-  elemInp _ets (DeviceArray !cap1 !fp1) !dop (DeviceArray _cap2 !fp2) !exit =
+  elemInp _ets (DeviceArray !cap1 !fp1) !dop (DeviceArray !cap2 !fp2) !exit =
     case fromDynamic dop of
       Nothing -> error "bug: dtype op type mismatch"
       Just (op :: a -> a -> a) ->
@@ -663,13 +706,14 @@ deviceDataOperations = FlatOp vecExtractBool
           $ withForeignPtr (castForeignPtr fp1)
           $ \(p1 :: Ptr a) ->
               withForeignPtr (castForeignPtr fp2) $ \(p2 :: Ptr a) -> do
-                let go i | i >= cap1 = return ()
+                let go i | i >= rcap = return ()
                     go i             = do
-                      ev1 <- peekElemOff p1 i
-                      ev2 <- peekElemOff p2 i
+                      !ev1 <- peekElemOff p1 i
+                      !ev2 <- peekElemOff p2 i
                       pokeElemOff p1 i $ op ev1 ev2
                       go (i + 1)
                 go 0
+    where !rcap = min cap1 cap2
   elemInp _ _ _ _ _ = error "bug: not a device array"
   -- element-wise operation, inplace modifying array, with a slice spec
   elemInpSlice _ets (!start, !stop, !step) (DeviceArray _cap1 !fp1) !dop (DeviceArray !cap2 !fp2) !exit
@@ -685,14 +729,14 @@ deviceDataOperations = FlatOp vecExtractBool
                     !len   = min cap2 $ if r == 0 then abs q else 1 + abs q
                 let go _ i | i >= len = return ()
                     go n i            = do
-                      ev1 <- peekElemOff p1 n
-                      ev2 <- peekElemOff p2 i
+                      !ev1 <- peekElemOff p1 n
+                      !ev2 <- peekElemOff p2 i
                       pokeElemOff p1 n $ op ev1 ev2
                       go (n + step) (i + 1)
                 go start 0
   elemInpSlice _ _ _ _ _ _ = error "bug: not a device array"
   -- element-wise operation, inplace modifying array, with a yesno mask
-  elemInpMasked _ets (DeviceArray _cap !mfp) (DeviceArray !cap1 !fp1) !dop (DeviceArray _cap2 !fp2) !exit
+  elemInpMasked _ets (DeviceArray _cap !mfp) (DeviceArray !cap1 !fp1) !dop (DeviceArray !cap2 !fp2) !exit
     = case fromDynamic dop of
       Nothing -> error "bug: dtype op type mismatch"
       Just (op :: a -> a -> a) ->
@@ -702,15 +746,16 @@ deviceDataOperations = FlatOp vecExtractBool
           $ \(mp :: Ptr YesNo) ->
               withForeignPtr (castForeignPtr fp1) $ \(p1 :: Ptr a) ->
                 withForeignPtr (castForeignPtr fp2) $ \(p2 :: Ptr a) -> do
-                  let go i | i >= cap1 = return ()
+                  let go i | i >= rcap = return ()
                       go i             = do
-                        mv <- peekElemOff mp i
+                        !mv <- peekElemOff mp i
                         when (mv /= 0) $ do
-                          ev1 <- peekElemOff p1 i
-                          ev2 <- peekElemOff p2 i
+                          !ev1 <- peekElemOff p1 i
+                          !ev2 <- peekElemOff p2 i
                           pokeElemOff p1 i $ op ev1 ev2
                         go (i + 1)
                   go 0
+    where !rcap = min cap1 cap2
   elemInpMasked _ _ _ _ _ _ = error "bug: not a device array"
   -- element-wise operation, inplace modifying array, with a fancy index
   elemInpFancy !ets (DeviceArray !icap !ifp) (DeviceArray !cap1 !fp1) !dop (DeviceArray !cap2 !fp2) !exit
@@ -729,8 +774,8 @@ deviceDataOperations = FlatOp vecExtractBool
                         if idx < 0 || idx >= cap1
                           then return idx
                           else do
-                            ev1 <- peekElemOff p1 idx
-                            ev2 <- peekElemOff p2 i
+                            !ev1 <- peekElemOff p1 idx
+                            !ev2 <- peekElemOff p2 i
                             pokeElemOff p1 idx $ op ev1 ev2
                             go (i + 1)
                   go 0
@@ -743,6 +788,279 @@ deviceDataOperations = FlatOp vecExtractBool
             <> " vs "
             <> T.pack (show cap1)
   elemInpFancy _ _ _ _ _ _ = error "bug: not a device array"
+
+hostDataOperations :: forall a . (EdhXchg a, Typeable a) => a -> FlatOp
+hostDataOperations !def'val = FlatOp vecExtractBool
+                                     vecExtractFancy
+                                     vecOp
+                                     elemOp
+                                     vecInp
+                                     vecInpSlice
+                                     vecInpMasked
+                                     vecInpFancy
+                                     elemInp
+                                     elemInpSlice
+                                     elemInpMasked
+                                     elemInpFancy
+ where
+  -- vectorized data extraction with a yesno index, yielding a new array
+  vecExtractBool _ets (DeviceArray !mcap !mfp) (HostArray _cap !ha'') !exit =
+    case cast ha'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector a) ->
+        (exit =<<)
+          $ unsafeIOToSTM
+          $ withForeignPtr (castForeignPtr mfp)
+          $ \(mp :: Ptr YesNo) -> do
+              !ha' <- MV.unsafeNew mcap
+              let go i ri | i >= mcap = do
+                    MV.set (MV.unsafeSlice 0 ri ha') def'val
+                    return (HostArray mcap ha', ri)
+                  go i ri = do
+                    !mv <- peekElemOff mp i
+                    if mv /= 0
+                      then do
+                        MV.unsafeRead ha i >>= MV.unsafeWrite ha' ri
+                        go (i + 1) (ri + 1)
+                      else go (i + 1) ri
+              go 0 0
+  vecExtractBool _ _ _ _ = error "bug: not a host array"
+  -- vectorized data extraction with a fancy index, yielding a new array
+  vecExtractFancy !ets (DeviceArray !icap !ifp) (HostArray !cap !ha'') !exit =
+    case cast ha'' of
+      Nothing                    -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector a) -> do
+        !result <-
+          unsafeIOToSTM
+          $ withForeignPtr (castForeignPtr ifp)
+          $ \(ip :: Ptr Int) -> do
+              !ha' <- MV.unsafeNew icap
+              let go i | i >= icap = return $ Right $ HostArray icap ha'
+                  go i             = do
+                    !idx <- peekElemOff ip i
+                    if idx < 0 || idx >= cap
+                      then return $ Left idx
+                      else do
+                        MV.read ha idx >>= MV.unsafeWrite ha' i
+                        go (i + 1)
+              go 0
+        case result of
+          Left !badIdx ->
+            throwEdh ets EvalError
+              $  "fancy index out of bounds: "
+              <> T.pack (show badIdx)
+              <> " vs "
+              <> T.pack (show cap)
+          Right !rtnAry -> exit rtnAry
+  vecExtractFancy _ _ _ _ = error "bug: not a host array"
+  -- vectorized operation, yielding a new array
+  vecOp !ets (HostArray !cap !ha'') !dop !v !exit = case cast ha'' of
+    Nothing                    -> error "bug: host array dtype mismatch"
+    Just (ha :: MV.IOVector a) -> case fromDynamic dop of
+      Nothing                  -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
+        (exit =<<) $ unsafeIOToSTM $ do
+          !ha' <- MV.unsafeNew cap
+          let go i | i >= cap = return $ HostArray cap ha'
+              go i            = do
+                !ev <- MV.unsafeRead ha i
+                MV.unsafeWrite ha' i $ op ev sv
+                go (i + 1)
+          go 0
+  vecOp _ _ _ _ _ = error "bug: not a host array"
+  -- element-wise operation, yielding a new array
+  elemOp _ets (HostArray !cap1 !ha''1) !dop (HostArray !cap2 !ha''2) !exit =
+    case cast ha''1 of
+      Nothing                     -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector a) -> case cast ha''2 of
+        Nothing                     -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector a) -> case fromDynamic dop of
+          Nothing                  -> error "bug: dtype op type mismatch"
+          Just (op :: a -> a -> a) -> (exit =<<) $ unsafeIOToSTM $ do
+            !ha' <- MV.unsafeNew rcap
+            let go i | i >= rcap = return $ HostArray rcap ha'
+                go i             = do
+                  !ev1 <- MV.unsafeRead ha1 i
+                  !ev2 <- MV.unsafeRead ha2 i
+                  MV.unsafeWrite ha' i $ op ev1 ev2
+                  go (i + 1)
+            go 0
+    where !rcap = min cap1 cap2
+  elemOp _ _ _ _ _ = error "bug: not a host array"
+  -- vectorized operation, inplace modifying the array
+  vecInp !ets (HostArray !cap !ha'') !dop !v !exit = case cast ha'' of
+    Nothing                    -> error "bug: host array dtype mismatch"
+    Just (ha :: MV.IOVector a) -> case fromDynamic dop of
+      Nothing                  -> error "bug: dtype op type mismatch"
+      Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
+        (>> exit) $ unsafeIOToSTM $ do
+          let go i | i >= cap = return ()
+              go i            = do
+                !ev <- MV.unsafeRead ha i
+                MV.unsafeWrite ha i $ op ev sv
+                go (i + 1)
+          go 0
+  vecInp _ _ _ _ _ = error "bug: not a host array"
+  -- vectorized operation, inplace modifying the array, with a slice spec
+  vecInpSlice !ets (!start, !stop, !step) (HostArray _cap !ha'') !dop !v !exit
+    = case cast ha'' of
+      Nothing                    -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector a) -> case fromDynamic dop of
+        Nothing                  -> error "bug: dtype op type mismatch"
+        Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
+          (>> exit) $ unsafeIOToSTM $ do
+            let (q, r) = quotRem (stop - start) step
+                !len   = if r == 0 then abs q else 1 + abs q
+            let go _ i | i >= len = return ()
+                go n i            = do
+                  !ev <- MV.unsafeRead ha n
+                  MV.unsafeWrite ha n $ op ev sv
+                  go (n + step) (i + 1)
+            go start 0
+  vecInpSlice _ _ _ _ _ _ = error "bug: not a host array"
+  -- vectorized operation, inplace modifying the array, with a yesno mask
+  vecInpMasked !ets (DeviceArray _cap !mfp) (HostArray !cap !ha'') !dop !v !exit
+    = case cast ha'' of
+      Nothing                    -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector a) -> case fromDynamic dop of
+        Nothing                  -> error "bug: dtype op type mismatch"
+        Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
+          (>> exit)
+            $ unsafeIOToSTM
+            $ withForeignPtr (castForeignPtr mfp)
+            $ \(mp :: Ptr YesNo) -> do
+                let go i | i >= cap = return ()
+                    go i            = do
+                      !mv <- peekElemOff mp i
+                      when (mv /= 0) $ do
+                        !ev <- MV.unsafeRead ha i
+                        MV.unsafeWrite ha i $ op ev sv
+                      go (i + 1)
+                go 0
+  vecInpMasked _ _ _ _ _ _ = error "bug: not a host array"
+  -- vectorized operation, inplace modifying the array, with a fancy index
+  vecInpFancy !ets (DeviceArray !icap !ifp) (HostArray !cap !ha'') !dop !v !exit
+    = case cast ha'' of
+      Nothing                    -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector a) -> case fromDynamic dop of
+        Nothing                  -> error "bug: dtype op type mismatch"
+        Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv -> do
+          !badIdx <-
+            unsafeIOToSTM
+            $ withForeignPtr (castForeignPtr ifp)
+            $ \(ip :: Ptr Int) -> do
+                let go i | i >= icap = return 0
+                    go i             = peekElemOff ip i >>= \ !idx ->
+                      if idx < 0 || idx >= cap
+                        then return idx
+                        else do
+                          !ev <- MV.unsafeRead ha idx
+                          MV.unsafeWrite ha idx $ op ev sv
+                          go (i + 1)
+                go 0
+          if badIdx == 0
+            then exit
+            else
+              throwEdh ets EvalError
+              $  "fancy index out of bounds: "
+              <> T.pack (show badIdx)
+              <> " vs "
+              <> T.pack (show cap)
+  vecInpFancy _ _ _ _ _ _ = error "bug: not a host array"
+  -- element-wise operation, inplace modifying array
+  elemInp _ets (HostArray !cap1 !ha''1) !dop (HostArray !cap2 !ha''2) !exit =
+    case cast ha''1 of
+      Nothing                     -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector a) -> case cast ha''2 of
+        Nothing                     -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector a) -> case fromDynamic dop of
+          Nothing                  -> error "bug: dtype op type mismatch"
+          Just (op :: a -> a -> a) -> (>> exit) $ unsafeIOToSTM $ do
+            let go i | i >= rcap = return ()
+                go i             = do
+                  !ev1 <- MV.unsafeRead ha1 i
+                  !ev2 <- MV.unsafeRead ha2 i
+                  MV.unsafeWrite ha1 i $ op ev1 ev2
+                  go (i + 1)
+            go 0
+    where !rcap = min cap1 cap2
+  elemInp _ _ _ _ _ = error "bug: not a host array"
+  -- element-wise operation, inplace modifying array, with a slice spec
+  elemInpSlice _ets (!start, !stop, !step) (HostArray _cap1 !ha''1) !dop (HostArray !cap2 !ha''2) !exit
+    = case cast ha''1 of
+      Nothing                     -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector a) -> case cast ha''2 of
+        Nothing                     -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector a) -> case fromDynamic dop of
+          Nothing                  -> error "bug: dtype op type mismatch"
+          Just (op :: a -> a -> a) -> (>> exit) $ unsafeIOToSTM $ do
+            let (q, r) = quotRem (stop - start) step
+                !len   = min cap2 $ if r == 0 then abs q else 1 + abs q
+            let go _ i | i >= len = return ()
+                go n i            = do
+                  !ev1 <- MV.unsafeRead ha1 n
+                  !ev2 <- MV.unsafeRead ha2 i
+                  MV.unsafeWrite ha1 n $ op ev1 ev2
+                  go (n + step) (i + 1)
+            go start 0
+  elemInpSlice _ _ _ _ _ _ = error "bug: not a host array"
+  -- element-wise operation, inplace modifying array, with a yesno mask
+  elemInpMasked _ets (DeviceArray _cap !mfp) (HostArray !cap1 !ha''1) !dop (HostArray !cap2 !ha''2) !exit
+    = case cast ha''1 of
+      Nothing                     -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector a) -> case cast ha''2 of
+        Nothing                     -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector a) -> case fromDynamic dop of
+          Nothing -> error "bug: dtype op type mismatch"
+          Just (op :: a -> a -> a) ->
+            (>> exit)
+              $ unsafeIOToSTM
+              $ withForeignPtr (castForeignPtr mfp)
+              $ \(mp :: Ptr YesNo) -> do
+                  let go i | i >= rcap = return ()
+                      go i             = do
+                        !mv <- peekElemOff mp i
+                        when (mv /= 0) $ do
+                          !ev1 <- MV.unsafeRead ha1 i
+                          !ev2 <- MV.unsafeRead ha2 i
+                          MV.unsafeWrite ha1 i $ op ev1 ev2
+                        go (i + 1)
+                  go 0
+    where !rcap = min cap1 cap2
+  elemInpMasked _ _ _ _ _ _ = error "bug: not a host array"
+  -- element-wise operation, inplace modifying array, with a fancy index
+  elemInpFancy !ets (DeviceArray !icap !ifp) (HostArray !cap1 !ha''1) !dop (HostArray !cap2 !ha''2) !exit
+    = case cast ha''1 of
+      Nothing                     -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector a) -> case cast ha''2 of
+        Nothing                     -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector a) -> case fromDynamic dop of
+          Nothing                  -> error "bug: dtype op type mismatch"
+          Just (op :: a -> a -> a) -> do
+            !badIdx <-
+              unsafeIOToSTM
+              $ withForeignPtr (castForeignPtr ifp)
+              $ \(ip :: Ptr Int) -> do
+                  let len = min icap cap2
+                  let go i | i >= len = return 0
+                      go i            = peekElemOff ip i >>= \ !idx ->
+                        if idx < 0 || idx >= cap1
+                          then return idx
+                          else do
+                            !ev1 <- MV.unsafeRead ha1 idx
+                            !ev2 <- MV.unsafeRead ha2 i
+                            MV.unsafeWrite ha1 idx $ op ev1 ev2
+                            go (i + 1)
+                  go 0
+            if badIdx == 0
+              then exit
+              else
+                throwEdh ets EvalError
+                $  "fancy index out of bounds: "
+                <> T.pack (show badIdx)
+                <> " vs "
+                <> T.pack (show cap1)
+  elemInpFancy _ _ _ _ _ _ = error "bug: not a host array"
 
 resolveDataOperator
   :: EdhThreadState
@@ -766,7 +1084,7 @@ resolveDataOperator' !ets !dti _ !naExit !exit =
   runEdhTx ets
     $ performEdhEffect (AttrBySym resolveDataOperatorEffId) [EdhString dti] []
     $ \case
-        EdhNil           -> \_ets -> naExit
+        EdhNil           -> const naExit
         EdhObject !dmrpo -> \_ets ->
           withHostObject' dmrpo naExit
             $ \_hsv (DataManiRoutinePack _dmrp'dti _dmrp'cate !drp) ->
@@ -775,7 +1093,8 @@ resolveDataOperator' !ets !dti _ !naExit !exit =
                     throwEdh ets UsageError
                       $ "bug: data manipulation routine pack obtained for dtype "
                       <> dti
-                      <> " mismatch the flat array type created from it."
+                      <> " is of wrong type: "
+                      <> T.pack (show drp)
                   Just !rp -> exit rp
         !badDtVal ->
           throwEdhTx UsageError
@@ -790,14 +1109,15 @@ resolveDataOperatorProc :: Object -> EdhHostProc
 resolveDataOperatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
   | odNull kwargs
   = case dti of
-    "float64" -> exitWith $ toDyn (deviceDataOperations @Double)
-    "float32" -> exitWith $ toDyn (deviceDataOperations @Float)
-    "int64"   -> exitWith $ toDyn (deviceDataOperations @Int64)
-    "int32"   -> exitWith $ toDyn (deviceDataOperations @Int32)
-    "int8"    -> exitWith $ toDyn (deviceDataOperations @Int8)
-    "byte"    -> exitWith $ toDyn (deviceDataOperations @Int8)
-    "intp"    -> exitWith $ toDyn (deviceDataOperations @Int)
-    "yesno"   -> exitWith $ toDyn (deviceDataOperations @YesNo)
+    "float64" -> exitWith (deviceDataOperations @Double)
+    "float32" -> exitWith (deviceDataOperations @Float)
+    "int64"   -> exitWith (deviceDataOperations @Int64)
+    "int32"   -> exitWith (deviceDataOperations @Int32)
+    "int8"    -> exitWith (deviceDataOperations @Int8)
+    "byte"    -> exitWith (deviceDataOperations @Int8)
+    "intp"    -> exitWith (deviceDataOperations @Int)
+    "yesno"   -> exitWith (deviceDataOperations @YesNo)
+    "decimal" -> exitWith (hostDataOperations @D.Decimal D.nan)
     _ ->
       throwEdh ets UsageError
         $  "a non-trivial data type requested,"
@@ -805,8 +1125,11 @@ resolveDataOperatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !et
         <> " identified by: "
         <> dti
  where
+  exitWith :: FlatOp -> STM ()
   exitWith !drp =
-    edhCreateHostObj dmrpClass (toDyn $ DataManiRoutinePack dti "op" drp) []
+    edhCreateHostObj dmrpClass
+                     (toDyn $ DataManiRoutinePack dti "op" (toDyn drp))
+                     []
       >>= exitEdh ets exit
       .   EdhObject
 resolveDataOperatorProc _ _ _ !ets =
@@ -891,13 +1214,14 @@ resolveNumDataTypeProc :: Object -> EdhHostProc
 resolveNumDataTypeProc !numdtClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
   | odNull kwargs
   = case dti of
-    "float64" -> exitWith $ toDyn $ deviceDataNumbering @Double dti
-    "float32" -> exitWith $ toDyn $ deviceDataNumbering @Float dti
-    "int64"   -> exitWith $ toDyn $ deviceDataNumbering @Int64 dti
-    "int32"   -> exitWith $ toDyn $ deviceDataNumbering @Int32 dti
-    "int8"    -> exitWith $ toDyn $ deviceDataNumbering @Int8 dti
-    "byte"    -> exitWith $ toDyn $ deviceDataNumbering @Int8 dti
-    "intp"    -> exitWith $ toDyn $ deviceDataNumbering @Int dti
+    "float64" -> exitWith $ deviceDataNumbering @Double dti
+    "float32" -> exitWith $ deviceDataNumbering @Float dti
+    "int64"   -> exitWith $ deviceDataNumbering @Int64 dti
+    "int32"   -> exitWith $ deviceDataNumbering @Int32 dti
+    "int8"    -> exitWith $ deviceDataNumbering @Int8 dti
+    "byte"    -> exitWith $ deviceDataNumbering @Int8 dti
+    "intp"    -> exitWith $ deviceDataNumbering @Int dti
+    "decimal" -> exitWith $ hostDataNumbering @D.Decimal dti D.nan
     _ ->
       throwEdh ets UsageError
         $  "a non-trivial numeric data type requested,"
@@ -905,8 +1229,9 @@ resolveNumDataTypeProc !numdtClass (ArgsPack [EdhString !dti] !kwargs) !exit !et
         <> " identified by: "
         <> dti
  where
-  exitWith !dndt =
-    edhCreateHostObj numdtClass dndt [] >>= exitEdh ets exit . EdhObject
+  exitWith :: NumDataType -> STM ()
+  exitWith !ndt =
+    edhCreateHostObj numdtClass (toDyn ndt) [] >>= exitEdh ets exit . EdhObject
 resolveNumDataTypeProc _ _ _ !ets =
   throwEdh ets UsageError "invalid args to @resolveNumDataType(dti)"
 
@@ -954,7 +1279,7 @@ deviceDataNumbering !dti = NumDataType dti rangeCreator nonzeroCreator
           !rfp <- newForeignPtr finalizerFree rp
           let go i ri | i >= mcap = return (DeviceArray mcap rfp, ri)
               go i ri             = do
-                mv <- peekElemOff mp i
+                !mv <- peekElemOff mp i
                 if mv /= 0
                   then do
                     pokeElemOff rp ri $ fromIntegral i
@@ -962,4 +1287,47 @@ deviceDataNumbering !dti = NumDataType dti rangeCreator nonzeroCreator
                   else go (i + 1) ri
           go 0 0
   nonzeroCreator _ _ _ = error "bug: not a device array"
+
+hostDataNumbering
+  :: forall a
+   . (Num a, EdhXchg a, Typeable a)
+  => DataTypeIdent
+  -> a
+  -> NumDataType
+hostDataNumbering !dti !def'val = NumDataType dti rangeCreator nonzeroCreator
+ where
+  rangeCreator _ !start !stop _ !exit | stop == start = exit (emptyHostArray @a)
+  rangeCreator !ets !start !stop !step !exit =
+    if (stop > start && step <= 0) || (stop < start && step >= 0)
+      then throwEdh ets UsageError "range is not converging"
+      else (exit =<<) $ unsafeIOToSTM $ do
+        let (q, r) = quotRem (stop - start) step
+            !len   = if r == 0 then abs q else 1 + abs q
+        !ha <- MV.unsafeNew len
+        let fillRng :: Int -> Int -> IO ()
+            fillRng !n !i = if i >= len
+              then return ()
+              else do
+                MV.unsafeWrite ha i (fromIntegral n :: a)
+                fillRng (n + step) (i + 1)
+        fillRng start 0
+        return $ HostArray len ha
+  nonzeroCreator _ (DeviceArray !mcap !mfp) !exit =
+    (exit =<<)
+      $ unsafeIOToSTM
+      $ withForeignPtr (castForeignPtr mfp)
+      $ \(mp :: Ptr YesNo) -> do
+          !ha <- MV.unsafeNew mcap
+          let go i ri | i >= mcap = do
+                MV.set (MV.unsafeSlice ri (mcap - ri) ha) def'val
+                return (HostArray mcap ha, ri)
+              go i ri = do
+                !mv <- peekElemOff mp i
+                if mv /= 0
+                  then do
+                    MV.unsafeWrite ha ri (fromIntegral i :: a)
+                    go (i + 1) (ri + 1)
+                  else go (i + 1) ri
+          go 0 0
+  nonzeroCreator _ _ _ = error "bug: not a host array"
 

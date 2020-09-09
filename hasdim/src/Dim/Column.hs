@@ -1304,6 +1304,7 @@ createColumnClass !defaultDt !clsOuterScope =
     "byte"    -> toDyn ((\_x !y -> y) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((\_x !y -> y) :: Int -> Int -> Int)
     "yesno"   -> toDyn ((\_x !y -> y) :: YesNo -> YesNo -> YesNo)
+    "decimal" -> toDyn ((\_x !y -> y) :: D.Decimal -> D.Decimal -> D.Decimal)
     _         -> toDyn nil -- means not applicable here
 
   bitAndOp :: Text -> Dynamic
@@ -1316,6 +1317,7 @@ createColumnClass !defaultDt !clsOuterScope =
     "byte"  -> toDyn ((.&.) :: Word8 -> Word8 -> Word8)
     "intp"  -> toDyn ((.&.) :: Int -> Int -> Int)
     "yesno" -> toDyn ((.&.) :: YesNo -> YesNo -> YesNo)
+    -- "decimal" -> toDyn ((.&.) :: D.Decimal -> D.Decimal -> D.Decimal)
     _       -> toDyn nil -- means not applicable here
   bitOrOp :: Text -> Dynamic
   bitOrOp = \case
@@ -1327,6 +1329,7 @@ createColumnClass !defaultDt !clsOuterScope =
     "byte"  -> toDyn ((.|.) :: Word8 -> Word8 -> Word8)
     "intp"  -> toDyn ((.|.) :: Int -> Int -> Int)
     "yesno" -> toDyn ((.|.) :: YesNo -> YesNo -> YesNo)
+    -- "decimal" -> toDyn ((.|.) :: D.Decimal -> D.Decimal -> D.Decimal)
     _       -> toDyn nil -- means not applicable here
 
   addOp :: Text -> Dynamic
@@ -1338,6 +1341,7 @@ createColumnClass !defaultDt !clsOuterScope =
     "int8"    -> toDyn ((+) :: Int8 -> Int8 -> Int8)
     "byte"    -> toDyn ((+) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((+) :: Int -> Int -> Int)
+    "decimal" -> toDyn ((+) :: D.Decimal -> D.Decimal -> D.Decimal)
     _         -> toDyn nil -- means not applicable here
   subtractOp :: Text -> Dynamic
   subtractOp = \case
@@ -1348,6 +1352,7 @@ createColumnClass !defaultDt !clsOuterScope =
     "int8"    -> toDyn ((-) :: Int8 -> Int8 -> Int8)
     "byte"    -> toDyn ((-) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((-) :: Int -> Int -> Int)
+    "decimal" -> toDyn ((-) :: D.Decimal -> D.Decimal -> D.Decimal)
     _         -> toDyn nil -- means not applicable here
   subtFromOp :: Text -> Dynamic
   subtFromOp = \case
@@ -1358,7 +1363,9 @@ createColumnClass !defaultDt !clsOuterScope =
     "int8"    -> toDyn ((\ !x !y -> y - x) :: Int8 -> Int8 -> Int8)
     "byte"    -> toDyn ((\ !x !y -> y - x) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((\ !x !y -> y - x) :: Int -> Int -> Int)
-    _         -> toDyn nil -- means not applicable here
+    "decimal" ->
+      toDyn ((\ !x !y -> y - x) :: D.Decimal -> D.Decimal -> D.Decimal)
+    _ -> toDyn nil -- means not applicable here
   mulOp :: Text -> Dynamic
   mulOp = \case
     "float64" -> toDyn ((*) :: Double -> Double -> Double)
@@ -1368,6 +1375,7 @@ createColumnClass !defaultDt !clsOuterScope =
     "int8"    -> toDyn ((*) :: Int8 -> Int8 -> Int8)
     "byte"    -> toDyn ((*) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((*) :: Int -> Int -> Int)
+    "decimal" -> toDyn ((*) :: D.Decimal -> D.Decimal -> D.Decimal)
     _         -> toDyn nil -- means not applicable here
   divOp :: Text -> Dynamic
   divOp = \case
@@ -1378,6 +1386,7 @@ createColumnClass !defaultDt !clsOuterScope =
     "int8"    -> toDyn (div :: Int8 -> Int8 -> Int8)
     "byte"    -> toDyn (div :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn (div :: Int -> Int -> Int)
+    "decimal" -> toDyn (D.divDecimal :: D.Decimal -> D.Decimal -> D.Decimal)
     _         -> toDyn nil -- means not applicable here
   divByOp :: Text -> Dynamic
   divByOp = \case
@@ -1388,7 +1397,9 @@ createColumnClass !defaultDt !clsOuterScope =
     "int8"    -> toDyn ((\ !x !y -> div y x) :: Int8 -> Int8 -> Int8)
     "byte"    -> toDyn ((\ !x !y -> div y x) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
-    _         -> toDyn nil -- means not applicable here
+    "decimal" -> toDyn
+      ((\ !x !y -> D.divDecimal y x) :: D.Decimal -> D.Decimal -> D.Decimal)
+    _ -> toDyn nil -- means not applicable here
   divIntOp :: Text -> Dynamic
   divIntOp = \case
     -- TODO reason about this:
@@ -1397,12 +1408,13 @@ createColumnClass !defaultDt !clsOuterScope =
       ((\ !x !y -> fromInteger $ floor $ x / y) :: Double -> Double -> Double)
     "float32" -> toDyn
       ((\ !x !y -> fromInteger $ floor $ x / y) :: Float -> Float -> Float)
-    "int64" -> toDyn (div :: Int64 -> Int64 -> Int64)
-    "int32" -> toDyn (div :: Int32 -> Int32 -> Int32)
-    "int8"  -> toDyn (div :: Int8 -> Int8 -> Int8)
-    "byte"  -> toDyn (div :: Word8 -> Word8 -> Word8)
-    "intp"  -> toDyn (div :: Int -> Int -> Int)
-    _       -> toDyn nil -- means not applicable here
+    "int64"   -> toDyn (div :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn (div :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn (div :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn (div :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn (div :: Int -> Int -> Int)
+    "decimal" -> toDyn (D.divIntDecimal :: D.Decimal -> D.Decimal -> D.Decimal)
+    _         -> toDyn nil -- means not applicable here
   divIntByOp :: Text -> Dynamic
   divIntByOp = \case
     "float64" -> toDyn
@@ -1414,7 +1426,11 @@ createColumnClass !defaultDt !clsOuterScope =
     "int8"  -> toDyn ((\ !x !y -> div y x) :: Int8 -> Int8 -> Int8)
     "byte"  -> toDyn ((\ !x !y -> div y x) :: Word8 -> Word8 -> Word8)
     "intp"  -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
-    _       -> toDyn nil -- means not applicable here
+    "decimal" ->
+      toDyn
+        ((\ !x !y -> D.divIntDecimal y x) :: D.Decimal -> D.Decimal -> D.Decimal
+        )
+    _ -> toDyn nil -- means not applicable here
 
 
 arangeProc :: EdhValue -> Object -> EdhHostProc

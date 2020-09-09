@@ -35,6 +35,11 @@ instance EdhXchg EdhValue where
   toEdh _ets !v !exit = exit v
   fromEdh _ets !v !exit = exit v
 
+instance EdhXchg D.Decimal where
+  toEdh _ets !v !exit = exit $ EdhDecimal v
+  fromEdh _ets (EdhDecimal !v) !exit = exit v
+  fromEdh _ets _               !exit = exit D.nan
+
 
 newtype YesNo = YesNo Int8
   deriving (Eq, Ord, Storable, Num, Bits, Typeable)
