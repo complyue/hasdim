@@ -27,6 +27,7 @@ import qualified Data.List.NonEmpty            as NE
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 import qualified Data.HashMap.Strict           as Map
+import           Data.Proxy
 import           Data.Dynamic
 
 import qualified Data.Vector.Mutable           as MV
@@ -389,21 +390,23 @@ createDbArrayClass !defaultDt !clsOuterScope =
       Right (!dataDir, !dataPath, !dtv, !shapeVal) ->
         castObjectStore' dtv >>= \case
           Nothing  -> throwEdh etsCtor UsageError "invalid dtype"
-          Just !dt -> flat'new'array dt 0 >>= \case
-            DeviceArray _ (_ :: ForeignPtr a) ->
-              if dataDir == "" || dataPath == ""
-                then throwEdh etsCtor UsageError "missing dataDir/dataPath"
-                else newEmptyTMVar >>= \ !asVar -> if shapeVal == EdhNil
-                  then runEdhTx etsCtor $ edhContIO $ do
-                    mmapDbArray @a asVar dataDir dataPath dt Nothing
-                    atomically $ ctorExit =<< HostStore <$> newTVar
+          Just !dt -> case data'type'proxy dt of
+            DeviceDataType (_ :: Proxy a) -> if dataDir == "" || dataPath == ""
+              then throwEdh etsCtor UsageError "missing dataDir/dataPath"
+              else newEmptyTMVar >>= \ !asVar -> if shapeVal == EdhNil
+                then runEdhTx etsCtor $ edhContIO $ do
+                  mmapDbArray @a asVar dataDir dataPath dt Nothing
+                  atomically $ ctorExit =<< HostStore <$> newTVar
+                    (toDyn $ DbArray dataDir dataPath dt asVar)
+                else parseArrayShape etsCtor shapeVal $ \ !shape ->
+                  runEdhTx etsCtor $ edhContIO $ do
+                    mmapDbArray @a asVar dataDir dataPath dt $ Just shape
+                    atomically $ ctorExit . HostStore =<< newTVar
                       (toDyn $ DbArray dataDir dataPath dt asVar)
-                  else parseArrayShape etsCtor shapeVal $ \ !shape ->
-                    runEdhTx etsCtor $ edhContIO $ do
-                      mmapDbArray @a asVar dataDir dataPath dt $ Just shape
-                      atomically $ ctorExit . HostStore =<< newTVar
-                        (toDyn $ DbArray dataDir dataPath dt asVar)
-            HostArray _ (_ :: MV.IOVector a) -> undefined -- xxx 
+            HostDataType (_ :: Proxy a) ->
+              throwEdh etsCtor UsageError
+                $  "can not mmap as host dtype: "
+                <> data'type'identifier dt
    where
     ctorArgsParser =
       ArgsPackParser

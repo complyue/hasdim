@@ -17,6 +17,8 @@ import           Control.Concurrent.STM
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 
+import qualified Data.Vector.Mutable           as MV
+
 import           Data.Dynamic
 
 import           Data.Lossless.Decimal         as D
@@ -206,6 +208,16 @@ createTableClass !colClass !clsOuterScope =
             !fp' <- newForeignPtr finalizerFree p'
             withForeignPtr fp $ \ !p -> copyArray p' p $ min cap clSrc
             return $ DeviceArray cap fp'
+          !csv' <- newTVar cs'
+          exit $ Column dti clv csv'
+        HostArray _capSrc !ha -> do
+          !cs' <- unsafeIOToSTM $ do
+            !ha' <- MV.new cap
+            let !cpLen = min cap clSrc
+                !tgt   = MV.unsafeSlice 0 cpLen ha'
+                !src   = MV.unsafeSlice 0 cpLen ha
+            MV.unsafeCopy tgt src
+            return $ HostArray cap ha'
           !csv' <- newTVar cs'
           exit $ Column dti clv csv'
 

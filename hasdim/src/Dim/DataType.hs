@@ -20,6 +20,7 @@ import           Control.Concurrent.STM
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 import           Data.Dynamic
+import           Data.Proxy
 
 import qualified Data.Vector.Mutable           as MV
 import qualified Data.Vector.Storable          as VS
@@ -122,6 +123,10 @@ unsafeFlatArrayFromMVector !mvec = case MVS.unsafeToForeignPtr0 mvec of
 
 type DataTypeIdent = Text
 
+data DataTypeProxy where
+  DeviceDataType ::(EdhXchg a, Storable a) => Proxy a -> DataTypeProxy
+  HostDataType ::(EdhXchg a ) => Proxy a -> DataTypeProxy
+
 -- | DataType facilitates the basic support of a data type to be managable
 -- by HasDim, i.e. array allocation, element read/write, array bulk update.
 --
@@ -131,6 +136,7 @@ type DataTypeIdent = Text
 data DataType where
   DataType ::{
       data'type'identifier :: !DataTypeIdent
+    , data'type'proxy :: !DataTypeProxy
     , flat'element'size :: !Int
     , flat'element'align :: !Int
     , flat'new'array :: Int -> STM FlatArray
@@ -191,12 +197,13 @@ createDataTypeClass !clsOuterScope =
     $ \_hsv !dt -> exitEdh ets exit $ EdhString $ data'type'identifier dt
 
 
-makeStorableDataType
+makeDeviceDataType
   :: forall a
    . (EdhXchg a, Storable a, Typeable a)
   => DataTypeIdent
   -> DataType
-makeStorableDataType !dti = DataType dti
+makeDeviceDataType !dti = DataType dti
+                                     (DeviceDataType (Proxy :: Proxy a))
                                      (sizeOf (undefined :: a))
                                      (alignment (undefined :: a))
                                      createArray
