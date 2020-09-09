@@ -19,7 +19,9 @@ import qualified Data.HashMap.Strict           as Map
 
 import           Data.Dynamic
 
-import           Data.Vector.Storable           ( Vector )
+import qualified Data.Vector.Mutable           as MV
+import qualified Data.Vector.Storable          as VS
+import qualified Data.Vector.Storable.Mutable  as MVS
 
 import           Data.Lossless.Decimal         as D
 
@@ -144,6 +146,36 @@ unsafeSliceColumn (Column !dt !clv (csv :: TVar FlatArray)) !start !stop !step !
                 fillRng start 0
                 return fp'
               let !cs' = DeviceArray len fp'
+              !csv' <- newTVar cs'
+              !clv' <- newTMVar len
+              exit $ Column dt clv' csv'
+      cs@(HostArray !cap (ha :: MV.IOVector a)) ->
+        if start >= cap || stop == start
+          then do
+            !clv' <- newTMVar 0
+            !csv' <- newTVar (emptyHostArray @a)
+            exit $ Column dt clv' csv'
+          else if step == 1
+            then do
+              let !len = max 0 $ min cl stop - start
+                  !cs' = unsafeSliceFlatArray cs start (cap - start)
+              !clv' <- newTMVar len
+              !csv' <- newTVar cs'
+              exit $ Column dt clv' csv'
+            else do
+              let (q, r) = quotRem (stop - start) step
+                  !len   = if r == 0 then abs q else 1 + abs q
+              !ha' <- unsafeIOToSTM $ do
+                !ha' <- MV.unsafeNew len
+                let fillRng :: Int -> Int -> IO ()
+                    fillRng !n !i = if i >= len
+                      then return ()
+                      else do
+                        MV.unsafeRead ha n >>= MV.unsafeWrite ha' i
+                        fillRng (n + step) (i + 1)
+                fillRng start 0
+                return ha'
+              let !cs' = HostArray len ha'
               !csv' <- newTVar cs'
               !clv' <- newTMVar len
               exit $ Column dt clv' csv'
@@ -613,13 +645,22 @@ nonzeroIdxColumn !ets (Column _mdti !mclv !mcsv) !exit =
               exit $ Column dtIntp clvRtn csvRtn
   where dtIntp = makeDeviceDataType @Int "intp"
 
+
 -- obtain valid column data as an immutable Storable Vector
--- this is unsafe in both memory/type regards and thread regard
+-- this is unsafe in both memory/type regards and thread regards
 unsafeCastColumnData
-  :: forall a . (Storable a, EdhXchg a) => Column -> STM (Vector a)
+  :: forall a . (Storable a, EdhXchg a) => Column -> STM (VS.Vector a)
 unsafeCastColumnData (Column _ _ !csv) = do
   !ary <- readTVar csv
   return $ unsafeFlatArrayAsVector ary
+
+-- obtain valid column data as a mutable Storable Vector
+-- this is unsafe in both memory/type regards and thread regards
+unsafeCastMutableColumnData
+  :: forall a . (Storable a, EdhXchg a) => Column -> STM (MVS.IOVector a)
+unsafeCastMutableColumnData (Column _ _ !csv) = do
+  !ary <- readTVar csv
+  return $ unsafeFlatArrayAsMVector ary
 
 
 createColumnClass :: EdhValue -> Scope -> STM Object
