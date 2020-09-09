@@ -4,7 +4,6 @@ module Dim.Column where
 import           Prelude
 -- import           Debug.Trace
 
-import           Unsafe.Coerce
 import           GHC.Conc                       ( unsafeIOToSTM )
 
 import           Foreign                 hiding ( void )
@@ -284,11 +283,10 @@ elemCmpColumn !dtYesNo !ets !cmp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !c
             $ \ !dtOrd -> do
                 let !fa1 = unsafeSliceFlatArray cs1 0 cl1
                     !fa2 = unsafeSliceFlatArray cs2 0 cl2
-                flat'cmp'element'wise dtOrd ets fa1 cmp (unsafeCoerce fa2)
-                  $ \ !bifa -> do
-                      !biclv <- newTMVar cl1
-                      !bicsv <- newTVar bifa
-                      exit $ Column dtYesNo biclv bicsv
+                flat'cmp'element'wise dtOrd ets fa1 cmp fa2 $ \ !bifa -> do
+                  !biclv <- newTMVar cl1
+                  !bicsv <- newTVar bifa
+                  exit $ Column dtYesNo biclv bicsv
 
 vecOpColumn
   :: EdhThreadState
@@ -347,12 +345,11 @@ elemOpColumn !ets !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !csv2) !na
                 let !dop = getOp (data'type'identifier dt1)
                 case fromDynamic dop of
                   Just EdhNil -> naExit
-                  _ ->
-                    flat'op'element'wise dtOp ets fa1 dop (unsafeCoerce fa2)
-                      $ \ !bifa -> do
-                          !biclv <- newTMVar cl1
-                          !bicsv <- newTVar bifa
-                          exit $ Column dt1 biclv bicsv
+                  _ -> flat'op'element'wise dtOp ets fa1 dop fa2 $ \ !bifa ->
+                    do
+                      !biclv <- newTMVar cl1
+                      !bicsv <- newTVar bifa
+                      exit $ Column dt1 biclv bicsv
 
 vecInpColumn
   :: EdhThreadState
@@ -422,13 +419,7 @@ vecInpMaskedColumn !ets (Column _ !mclv !mcsv) !getOp (Column !dt !clv !csv) !v 
             else do
               !mcs <- readTVar mcsv
               let !ma = unsafeSliceFlatArray mcs 0 mcl
-              flat'inp'vectorized'masked dtOp
-                                         ets
-                                         (unsafeCoerce ma)
-                                         fa
-                                         dop
-                                         v
-                                         exit
+              flat'inp'vectorized'masked dtOp ets ma fa dop v exit
 
 vecInpFancyColumn
   :: EdhThreadState
@@ -452,7 +443,7 @@ vecInpFancyColumn !ets (Column _ !iclv !icsv) !getOp (Column !dt !clv !csv) !v !
           !icl <- readTMVar iclv
           !ics <- readTVar icsv
           let !ia = unsafeSliceFlatArray ics 0 icl
-          flat'inp'vectorized'fancy dtOp ets (unsafeCoerce ia) fa dop v exit
+          flat'inp'vectorized'fancy dtOp ets ia fa dop v exit
 
 elemInpColumn
   :: EdhThreadState
@@ -490,12 +481,7 @@ elemInpColumn !ets !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !csv2) !n
                 let !dop = getOp (data'type'identifier dt1)
                 case fromDynamic dop of
                   Just EdhNil -> naExit
-                  _           -> flat'inp'element'wise dtOp
-                                                       ets
-                                                       fa1
-                                                       dop
-                                                       (unsafeCoerce fa2)
-                                                       exit
+                  _           -> flat'inp'element'wise dtOp ets fa1 dop fa2 exit
 
 elemInpSliceColumn
   :: EdhThreadState
@@ -526,13 +512,7 @@ elemInpSliceColumn !ets !slice !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !cl
             let !dop = getOp (data'type'identifier dt1)
             case fromDynamic dop of
               Just EdhNil -> naExit
-              _           -> flat'inp'element'wise'slice dtOp
-                                                         ets
-                                                         slice
-                                                         fa1
-                                                         dop
-                                                         (unsafeCoerce fa2)
-                                                         exit
+              _ -> flat'inp'element'wise'slice dtOp ets slice fa1 dop fa2 exit
 
 elemInpMaskedColumn
   :: EdhThreadState
@@ -574,13 +554,8 @@ elemInpMaskedColumn !ets (Column _ !mclv !mcsv) !getOp (Column !dt1 !clv1 !csv1)
                 let !dop = getOp (data'type'identifier dt1)
                 case fromDynamic dop of
                   Just EdhNil -> naExit
-                  _           -> flat'inp'element'wise'masked dtOp
-                                                              ets
-                                                              (unsafeCoerce ma)
-                                                              fa1
-                                                              dop
-                                                              (unsafeCoerce fa2)
-                                                              exit
+                  _ ->
+                    flat'inp'element'wise'masked dtOp ets ma fa1 dop fa2 exit
 
 elemInpFancyColumn
   :: EdhThreadState
@@ -622,34 +597,29 @@ elemInpFancyColumn !ets (Column _ !iclv !icsv) !getOp (Column !dt1 !clv1 !csv1) 
                 let !dop = getOp (data'type'identifier dt1)
                 case fromDynamic dop of
                   Just EdhNil -> naExit
-                  _           -> flat'inp'element'wise'fancy dtOp
-                                                             ets
-                                                             (unsafeCoerce ia)
-                                                             fa1
-                                                             dop
-                                                             (unsafeCoerce fa2)
-                                                             exit
+                  _ -> flat'inp'element'wise'fancy dtOp ets ia fa1 dop fa2 exit
 
 
 nonzeroIdxColumn :: EdhThreadState -> Column -> (Column -> STM ()) -> STM ()
 nonzeroIdxColumn !ets (Column _mdti !mclv !mcsv) !exit =
-  resolveNumDataType ets (data'type'identifier dtIntp)
-    $ \(NumDataType _dti !dtRanger) -> do
-        !mcl <- readTMVar mclv
-        !mcs <- readTVar mcsv
-        let !ma = unsafeSliceFlatArray mcs 0 mcl
-        flat'new'nonzero'array dtRanger ets (unsafeCoerce ma)
-          $ \(!rfa, !rlen) -> do
-              !clvRtn <- newTMVar rlen
-              !csvRtn <- newTVar rfa
-              exit $ Column dtIntp clvRtn csvRtn
+  resolveNumDataType ets (data'type'identifier dtIntp) $ \ !ndt -> do
+    !mcl <- readTMVar mclv
+    !mcs <- readTVar mcsv
+    let !ma = unsafeSliceFlatArray mcs 0 mcl
+    flat'new'nonzero'array ndt ets ma $ \(!rfa, !rlen) -> do
+      !clvRtn <- newTMVar rlen
+      !csvRtn <- newTVar rfa
+      exit $ Column dtIntp clvRtn csvRtn
   where dtIntp = makeDeviceDataType @Int "intp"
 
 
 -- obtain valid column data as an immutable Storable Vector
 -- this is unsafe in both memory/type regards and thread regards
 unsafeCastColumnData
-  :: forall a . (Storable a, EdhXchg a, Typeable a) => Column -> STM (VS.Vector a)
+  :: forall a
+   . (Storable a, EdhXchg a, Typeable a)
+  => Column
+  -> STM (VS.Vector a)
 unsafeCastColumnData (Column _ _ !csv) = do
   !ary <- readTVar csv
   return $ unsafeFlatArrayAsVector ary
@@ -1503,15 +1473,14 @@ arangeProc !defaultDt !colClass !apk !exit !ets =
           ]
   createRangeCol :: DataType -> Int -> Int -> Int -> STM ()
   createRangeCol !dt !start !stop !step =
-    resolveNumDataType ets (data'type'identifier dt)
-      $ \(NumDataType _dti !dtRanger) ->
-          flat'new'range'array dtRanger ets start stop step $ \ !cs -> do
-            !clv <- newTMVar $ flatArrayCapacity cs
-            !csv <- newTVar cs
-            let !col = Column dt clv csv
-            edhCreateHostObj colClass (toDyn col) []
-              >>= exitEdh ets exit
-              .   EdhObject
+    resolveNumDataType ets (data'type'identifier dt) $ \ !ndt ->
+      flat'new'range'array ndt ets start stop step $ \ !cs -> do
+        !clv <- newTMVar $ flatArrayCapacity cs
+        !csv <- newTVar cs
+        let !col = Column dt clv csv
+        edhCreateHostObj colClass (toDyn col) []
+          >>= exitEdh ets exit
+          .   EdhObject
 
 
 -- TODO impl. `linspace` following:

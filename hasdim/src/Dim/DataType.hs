@@ -344,9 +344,10 @@ data FlatOrd where
     , flat'cmp'element'wise :: EdhThreadState -> FlatArray
         -> (Ordering -> Bool) -> FlatArray  -> (FlatArray -> STM ()) -> STM ()
   }-> FlatOrd
- deriving Typeable
-flatOrd :: forall a . (Ord a, Storable a, Typeable a, EdhXchg a) => FlatOrd
-flatOrd = FlatOrd vecCmp elemCmp
+
+deviceDataOrdering
+  :: forall a . (Ord a, Storable a, Typeable a, EdhXchg a) => FlatOrd
+deviceDataOrdering = FlatOrd vecCmp elemCmp
  where
   -- vectorized comparation, yielding a new YesNo array
   vecCmp !ets (DeviceArray !cap !fp) !cmp !v !exit =
@@ -422,14 +423,14 @@ resolveDataComparatorProc :: Object -> EdhHostProc
 resolveDataComparatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
   | odNull kwargs
   = case dti of
-    "float64" -> exitWith $ toDyn (flatOrd @Double)
-    "float32" -> exitWith $ toDyn (flatOrd @Float)
-    "int64"   -> exitWith $ toDyn (flatOrd @Int64)
-    "int32"   -> exitWith $ toDyn (flatOrd @Int32)
-    "int8"    -> exitWith $ toDyn (flatOrd @Int8)
-    "byte"    -> exitWith $ toDyn (flatOrd @Int8)
-    "intp"    -> exitWith $ toDyn (flatOrd @Int)
-    "yesno"   -> exitWith $ toDyn (flatOrd @YesNo)
+    "float64" -> exitWith $ toDyn (deviceDataOrdering @Double)
+    "float32" -> exitWith $ toDyn (deviceDataOrdering @Float)
+    "int64"   -> exitWith $ toDyn (deviceDataOrdering @Int64)
+    "int32"   -> exitWith $ toDyn (deviceDataOrdering @Int32)
+    "int8"    -> exitWith $ toDyn (deviceDataOrdering @Int8)
+    "byte"    -> exitWith $ toDyn (deviceDataOrdering @Int8)
+    "intp"    -> exitWith $ toDyn (deviceDataOrdering @Int)
+    "yesno"   -> exitWith $ toDyn (deviceDataOrdering @YesNo)
     _ ->
       throwEdh ets UsageError
         $  "a non-trivial data type requested,"
@@ -475,20 +476,21 @@ data FlatOp where
     , flat'inp'element'wise'fancy :: EdhThreadState -> FlatArray -> FlatArray
         -> Dynamic -> FlatArray  -> STM () -> STM ()
   }-> FlatOp
- deriving Typeable
-flatOp :: forall a . (EdhXchg a, Storable a, Typeable a) => FlatOp
-flatOp = FlatOp vecExtractBool
-                vecExtractFancy
-                vecOp
-                elemOp
-                vecInp
-                vecInpSlice
-                vecInpMasked
-                vecInpFancy
-                elemInp
-                elemInpSlice
-                elemInpMasked
-                elemInpFancy
+
+deviceDataOperations
+  :: forall a . (EdhXchg a, Storable a, Typeable a) => FlatOp
+deviceDataOperations = FlatOp vecExtractBool
+                              vecExtractFancy
+                              vecOp
+                              elemOp
+                              vecInp
+                              vecInpSlice
+                              vecInpMasked
+                              vecInpFancy
+                              elemInp
+                              elemInpSlice
+                              elemInpMasked
+                              elemInpFancy
  where
   -- vectorized data extraction with a yesno index, yielding a new array
   vecExtractBool _ets (DeviceArray !mcap !mfp) (DeviceArray _cap !fp) !exit =
@@ -788,14 +790,14 @@ resolveDataOperatorProc :: Object -> EdhHostProc
 resolveDataOperatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
   | odNull kwargs
   = case dti of
-    "float64" -> exitWith $ toDyn (flatOp @Double)
-    "float32" -> exitWith $ toDyn (flatOp @Float)
-    "int64"   -> exitWith $ toDyn (flatOp @Int64)
-    "int32"   -> exitWith $ toDyn (flatOp @Int32)
-    "int8"    -> exitWith $ toDyn (flatOp @Int8)
-    "byte"    -> exitWith $ toDyn (flatOp @Int8)
-    "intp"    -> exitWith $ toDyn (flatOp @Int)
-    "yesno"   -> exitWith $ toDyn (flatOp @YesNo)
+    "float64" -> exitWith $ toDyn (deviceDataOperations @Double)
+    "float32" -> exitWith $ toDyn (deviceDataOperations @Float)
+    "int64"   -> exitWith $ toDyn (deviceDataOperations @Int64)
+    "int32"   -> exitWith $ toDyn (deviceDataOperations @Int32)
+    "int8"    -> exitWith $ toDyn (deviceDataOperations @Int8)
+    "byte"    -> exitWith $ toDyn (deviceDataOperations @Int8)
+    "intp"    -> exitWith $ toDyn (deviceDataOperations @Int)
+    "yesno"   -> exitWith $ toDyn (deviceDataOperations @YesNo)
     _ ->
       throwEdh ets UsageError
         $  "a non-trivial data type requested,"
@@ -836,17 +838,24 @@ createNumDataTypeClass !clsOuterScope =
 
   numdtEqProc :: EdhHostProc
   numdtEqProc (ArgsPack [EdhObject !dtoOther] _) !exit !ets =
-    withThisHostObj ets $ \_hsv (NumDataType !ident _) ->
+    withThisHostObj ets $ \_hsv !dt ->
       withHostObject' dtoOther (exitEdh ets exit $ EdhBool False)
-        $ \_hsv (NumDataType !identOther _) ->
-            exitEdh ets exit $ EdhBool $ identOther == ident
+        $ \_hsv !dtOther ->
+            exitEdh ets exit
+              $  EdhBool
+              $  num'type'identifier dtOther
+              == num'type'identifier dt
   numdtEqProc _ !exit !ets = exitEdh ets exit $ EdhBool False
 
   numdtIdentProc :: EdhHostProc
   numdtIdentProc _ !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-numdt>")
-      $ \_hsv (NumDataType !ident _) ->
-          exitEdh ets exit $ EdhString $ "<numeric-dtype:" <> ident <> ">"
+      $ \_hsv !dt ->
+          exitEdh ets exit
+            $  EdhString
+            $  "<numeric-dtype:"
+            <> num'type'identifier dt
+            <> ">"
 
 
 resolveNumDataType
@@ -882,19 +891,13 @@ resolveNumDataTypeProc :: Object -> EdhHostProc
 resolveNumDataTypeProc !numdtClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
   | odNull kwargs
   = case dti of
-    "float64" ->
-      exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Double)
-    "float32" ->
-      exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Float)
-    "int64" ->
-      exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int64)
-    "int32" ->
-      exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int32)
-    "int8" ->
-      exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int8)
-    "byte" ->
-      exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int8)
-    "intp" -> exitWith $ toDyn $ NumDataType dti (flatRanger :: FlatRanger Int)
+    "float64" -> exitWith $ toDyn $ deviceDataNumbering @Double dti
+    "float32" -> exitWith $ toDyn $ deviceDataNumbering @Float dti
+    "int64"   -> exitWith $ toDyn $ deviceDataNumbering @Int64 dti
+    "int32"   -> exitWith $ toDyn $ deviceDataNumbering @Int32 dti
+    "int8"    -> exitWith $ toDyn $ deviceDataNumbering @Int8 dti
+    "byte"    -> exitWith $ toDyn $ deviceDataNumbering @Int8 dti
+    "intp"    -> exitWith $ toDyn $ deviceDataNumbering @Int dti
     _ ->
       throwEdh ets UsageError
         $  "a non-trivial numeric data type requested,"
@@ -909,23 +912,20 @@ resolveNumDataTypeProc _ _ _ !ets =
 
 
 data NumDataType where
-  NumDataType ::(Num a, EdhXchg a, Storable a, Typeable a) => {
+  NumDataType ::{
       num'type'identifier :: !DataTypeIdent
-    , num'type'ranger :: !(FlatRanger a)
-    } -> NumDataType
-
-
-data FlatRanger a where
-  FlatRanger ::(Num a, EdhXchg a, Storable a, Typeable a) => {
-      flat'new'range'array :: EdhThreadState
+    , flat'new'range'array :: EdhThreadState
         -> Int -> Int -> Int -> (FlatArray  -> STM ()) -> STM ()
     , flat'new'nonzero'array :: EdhThreadState
         -> FlatArray -> ((FlatArray , Int) -> STM ()) -> STM ()
-    }-> FlatRanger a
- deriving Typeable
-flatRanger
-  :: forall a . (Num a, EdhXchg a, Storable a, Typeable a) => FlatRanger a
-flatRanger = FlatRanger rangeCreator nonzeroCreator
+    } -> NumDataType
+
+deviceDataNumbering
+  :: forall a
+   . (Num a, EdhXchg a, Storable a, Typeable a)
+  => DataTypeIdent
+  -> NumDataType
+deviceDataNumbering !dti = NumDataType dti rangeCreator nonzeroCreator
  where
   rangeCreator _ !start !stop _ !exit | stop == start =
     exit (emptyDeviceArray @a)
