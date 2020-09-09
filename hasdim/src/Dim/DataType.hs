@@ -28,6 +28,7 @@ import qualified Data.Vector.Storable.Mutable  as MVS
 
 import           Language.Edh.EHI
 import qualified Data.Lossless.Decimal         as D
+import           Language.Edh.Batteries
 
 import           Dim.XCHG
 
@@ -419,6 +420,51 @@ hostDataOrdering = FlatOrd vecCmp elemCmp
     where !rcap = min cap1 cap2
   elemCmp _ _ _ _ _ = error "bug: not a host array"
 
+edhDataOrdering :: FlatOrd
+edhDataOrdering = FlatOrd vecCmp elemCmp
+ where
+  -- vectorized comparation, yielding a new YesNo array
+  vecCmp !ets (HostArray !cap !ha'') !cmp !sv !exit = case cast ha'' of
+    Nothing                           -> error "bug: host array dtype mismatch"
+    Just (ha :: MV.IOVector EdhValue) -> do
+      !rp  <- unsafeIOToSTM $ callocArray @YesNo cap
+      !rfp <- unsafeIOToSTM $ newForeignPtr finalizerFree rp
+      let
+        go i | i >= cap = exit $ DeviceArray cap rfp
+        go i            = do
+          !ev <- unsafeIOToSTM $ MV.unsafeRead ha i
+          doEdhComparison ets ev sv $ \ !maybeOrd -> do
+            case maybeOrd of
+              Nothing -> unsafeIOToSTM $ pokeElemOff rp i 0
+              Just !ord ->
+                unsafeIOToSTM $ pokeElemOff rp i $ if cmp ord then 1 else 0
+            go (i + 1)
+      go 0
+  vecCmp _ _ _ _ _ = error "bug: not a host array"
+  -- element-wise comparation, yielding a new YesNo array
+  elemCmp !ets (HostArray !cap1 !ha1'') !cmp (HostArray !cap2 !ha2'') !exit =
+    case cast ha1'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector EdhValue) -> case cast ha2'' of
+        Nothing -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector EdhValue) -> do
+          !rp  <- unsafeIOToSTM $ callocArray @YesNo rcap
+          !rfp <- unsafeIOToSTM $ newForeignPtr finalizerFree rp
+          let
+            go i | i >= rcap = exit $ DeviceArray rcap rfp
+            go i             = do
+              !ev1 <- unsafeIOToSTM $ MV.unsafeRead ha1 i
+              !ev2 <- unsafeIOToSTM $ MV.unsafeRead ha2 i
+              doEdhComparison ets ev1 ev2 $ \ !maybeOrd -> do
+                case maybeOrd of
+                  Nothing -> unsafeIOToSTM $ pokeElemOff rp i 0
+                  Just !ord ->
+                    unsafeIOToSTM $ pokeElemOff rp i $ if cmp ord then 1 else 0
+                go (i + 1)
+          go 0
+    where !rcap = min cap1 cap2
+  elemCmp _ _ _ _ _ = error "bug: not a host array"
+
 resolveDataComparator
   :: EdhThreadState
   -> DataTypeIdent
@@ -470,12 +516,12 @@ resolveDataComparatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !
     "intp"    -> exitWith $ deviceDataOrdering @Int
     "yesno"   -> exitWith $ deviceDataOrdering @YesNo
     "decimal" -> exitWith $ hostDataOrdering @D.Decimal
+    "box"     -> exitWith $ edhDataOrdering
     _ ->
       throwEdh ets UsageError
-        $  "a non-trivial data type requested,"
-        <> " you may have some framework/lib to provide an effective dtype"
-        <> " identified by: "
+        $  "no effective support for comparison on dtype="
         <> dti
+        <> ", please find some framework/lib to provide such effectful support"
  where
   exitWith :: FlatOrd -> STM ()
   exitWith !drp =
@@ -1120,10 +1166,9 @@ resolveDataOperatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !et
     "decimal" -> exitWith (hostDataOperations @D.Decimal D.nan)
     _ ->
       throwEdh ets UsageError
-        $  "a non-trivial data type requested,"
-        <> " you may have some framework/lib to provide an effective dtype"
-        <> " identified by: "
+        $  "no effective support for such operation on dtype="
         <> dti
+        <> ", please find some framework/lib to provide such effectful support"
  where
   exitWith :: FlatOp -> STM ()
   exitWith !drp =
@@ -1222,12 +1267,12 @@ resolveNumDataTypeProc !numdtClass (ArgsPack [EdhString !dti] !kwargs) !exit !et
     "byte"    -> exitWith $ deviceDataNumbering @Int8 dti
     "intp"    -> exitWith $ deviceDataNumbering @Int dti
     "decimal" -> exitWith $ hostDataNumbering @D.Decimal dti D.nan
+    "box"     -> exitWith $ edhDataNumbering dti
     _ ->
       throwEdh ets UsageError
-        $  "a non-trivial numeric data type requested,"
-        <> " you may have some framework/lib to provide an effective numdt"
-        <> " identified by: "
+        $  "no effective support for numbering on dtype="
         <> dti
+        <> ", please find some framework/lib to provide such effectful support"
  where
   exitWith :: NumDataType -> STM ()
   exitWith !ndt =
@@ -1326,6 +1371,46 @@ hostDataNumbering !dti !def'val = NumDataType dti rangeCreator nonzeroCreator
                 if mv /= 0
                   then do
                     MV.unsafeWrite ha ri (fromIntegral i :: a)
+                    go (i + 1) (ri + 1)
+                  else go (i + 1) ri
+          go 0 0
+  nonzeroCreator _ _ _ = error "bug: not a host array"
+
+edhDataNumbering :: DataTypeIdent -> NumDataType
+edhDataNumbering !dti = NumDataType dti rangeCreator nonzeroCreator
+ where
+  rangeCreator _ !start !stop _ !exit | stop == start =
+    exit (emptyHostArray @EdhValue)
+  rangeCreator !ets !start !stop !step !exit =
+    if (stop > start && step <= 0) || (stop < start && step >= 0)
+      then throwEdh ets UsageError "range is not converging"
+      else (exit =<<) $ unsafeIOToSTM $ do
+        let (q, r) = quotRem (stop - start) step
+            !len   = if r == 0 then abs q else 1 + abs q
+        !ha <- MV.unsafeNew len
+        let fillRng :: Int -> Int -> IO ()
+            fillRng !n !i = if i >= len
+              then return ()
+              else do
+                MV.unsafeWrite ha i $ EdhDecimal (fromIntegral n :: Decimal)
+                fillRng (n + step) (i + 1)
+        fillRng start 0
+        return $ HostArray len ha
+  nonzeroCreator _ (DeviceArray !mcap !mfp) !exit =
+    (exit =<<)
+      $ unsafeIOToSTM
+      $ withForeignPtr (castForeignPtr mfp)
+      $ \(mp :: Ptr YesNo) -> do
+          !ha <- MV.unsafeNew mcap
+          let go i ri | i >= mcap = do
+                MV.set (MV.unsafeSlice ri (mcap - ri) ha) edhNA
+                return (HostArray mcap ha, ri)
+              go i ri = do
+                !mv <- peekElemOff mp i
+                if mv /= 0
+                  then do
+                    MV.unsafeWrite ha ri
+                      $ EdhDecimal (fromIntegral i :: Decimal)
                     go (i + 1) (ri + 1)
                   else go (i + 1) ri
           go 0 0
