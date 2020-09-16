@@ -174,46 +174,46 @@ instance Eq DataType where
 
 createDataTypeClass :: Scope -> STM Object
 createDataTypeClass !clsOuterScope =
-  mkHostClass' clsOuterScope "dtype" dtypeAllocator [] $ \ !clsScope -> do
-    !mths <-
-      sequence
-      $  [ (AttrByName nm, ) <$> mkHostProc clsScope vc nm hp args
-         | (nm, vc, hp, args) <-
-           [ ( "=="
-             , EdhMethod
-             , dtypeEqProc
-             , PackReceiver []
-             )
+  mkHostClass clsOuterScope "dtype" (allocEdhObj dtypeAllocator) []
+    $ \ !clsScope -> do
+        !mths <-
+          sequence
+          $  [ (AttrByName nm, ) <$> mkHostProc clsScope vc nm hp
+             | (nm, vc, hp) <-
+               [ ( "__eq__"
+                 , EdhMethod
+                 , wrapHostProc dtypeEqProc
+                 )
 -- assuming there's an attribute in context samely named after the
 -- identifier for a valid dtype
-           , ("__repr__", EdhMethod, dtypeIdentProc, PackReceiver [])
-           ]
-         ]
-      ++ [ (AttrByName nm, ) <$> mkHostProperty clsScope nm getter setter
-         | (nm, getter, setter) <- [("id", dtypeIdentProc, Nothing)]
-         ]
-    iopdUpdate mths $ edh'scope'entity clsScope
+               , ("__repr__", EdhMethod, wrapHostProc dtypeIdentProc)
+               ]
+             ]
+          ++ [ (AttrByName nm, ) <$> mkHostProperty clsScope nm getter setter
+             | (nm, getter, setter) <- [("id", dtypeIdentProc, Nothing)]
+             ]
+        iopdUpdate mths $ edh'scope'entity clsScope
 
  where
 
   -- | host constructor dtype()
   dtypeAllocator :: EdhObjectAllocator
   -- not really constructable from Edh code, this only creates bogus dtype obj
-  dtypeAllocator _ _ !ctorExit = ctorExit =<< HostStore <$> newTVar (toDyn nil)
+  dtypeAllocator !ctorExit _ = ctorExit =<< HostStore <$> newTVar (toDyn nil)
 
-  dtypeEqProc :: EdhHostProc
-  dtypeEqProc (ArgsPack [EdhObject !dtoOther] _) !exit !ets =
-    withThisHostObj ets $ \_hsv !dt ->
+  dtypeEqProc :: EdhValue -> EdhHostProc
+  dtypeEqProc !other !exit !ets = case other of
+    EdhObject !dtoOther -> withThisHostObj ets $ \_hsv !dt ->
       withHostObject' dtoOther (exitEdh ets exit $ EdhBool False)
         $ \_hsv !dtOther ->
             exitEdh ets exit
               $  EdhBool
               $  data'type'identifier dtOther
               == data'type'identifier dt
-  dtypeEqProc _ !exit !ets = exitEdh ets exit $ EdhBool False
+    _ -> exitEdh ets exit $ EdhBool False
 
   dtypeIdentProc :: EdhHostProc
-  dtypeIdentProc _ !exit !ets = withThisHostObj ets
+  dtypeIdentProc !exit !ets = withThisHostObj ets
     $ \_hsv !dt -> exitEdh ets exit $ EdhString $ data'type'identifier dt
 
 
@@ -317,23 +317,23 @@ data DataManiRoutinePack where
 
 createDMRPClass :: Scope -> STM Object
 createDMRPClass !clsOuterScope =
-  mkHostClass' clsOuterScope "DMRP" dmrpAllocator [] $ \ !clsScope -> do
-    !mths <- sequence
-      [ (AttrByName nm, ) <$> mkHostProc clsScope vc nm hp mthArgs
-      | (nm, vc, hp, mthArgs) <-
-        [("__repr__", EdhMethod, dmrpReprProc, PackReceiver [])]
-      ]
-    iopdUpdate mths $ edh'scope'entity clsScope
+  mkHostClass clsOuterScope "DMRP" (allocEdhObj dmrpAllocator) []
+    $ \ !clsScope -> do
+        !mths <- sequence
+          [ (AttrByName nm, ) <$> mkHostProc clsScope vc nm hp
+          | (nm, vc, hp) <- [("__repr__", EdhMethod, wrapHostProc dmrpReprProc)]
+          ]
+        iopdUpdate mths $ edh'scope'entity clsScope
 
  where
 
   -- | host constructor dmrp()
   dmrpAllocator :: EdhObjectAllocator
   -- not really constructable from Edh code, this only creates bogus dmrp obj
-  dmrpAllocator _ _ !ctorExit = ctorExit =<< HostStore <$> newTVar (toDyn nil)
+  dmrpAllocator !ctorExit _ = ctorExit =<< HostStore <$> newTVar (toDyn nil)
 
   dmrpReprProc :: EdhHostProc
-  dmrpReprProc _ !exit !ets =
+  dmrpReprProc !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-dmrp>")
       $ \_hsv (DataManiRoutinePack !ident !cate _) ->
           exitEdh ets exit $ EdhString $ "<dmrp/" <> ident <> "#" <> cate <> ">"
@@ -503,10 +503,9 @@ resolveDataComparatorEffId = globalSymbol "@resolveDataComparator"
 
 
 -- | The ultimate fallback to have trivial data types resolved
-resolveDataComparatorProc :: Object -> EdhHostProc
-resolveDataComparatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
-  | odNull kwargs
-  = case dti of
+resolveDataComparatorProc :: Object -> "dti" !: Text -> EdhHostProc
+resolveDataComparatorProc !dmrpClass (mandatoryArg -> !dti) !exit !ets =
+  case dti of
     "float64" -> exitWith $ deviceDataOrdering @Double
     "float32" -> exitWith $ deviceDataOrdering @Float
     "int64"   -> exitWith $ deviceDataOrdering @Int64
@@ -530,8 +529,6 @@ resolveDataComparatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !
                      []
       >>= exitEdh ets exit
       .   EdhObject
-resolveDataComparatorProc _ _ _ !ets =
-  throwEdh ets UsageError "invalid args to @resolveDataComparator(dti)"
 
 
 data FlatOp where
@@ -1151,10 +1148,9 @@ resolveDataOperatorEffId = globalSymbol "@resolveDataOperator"
 
 
 -- | The ultimate fallback to have trivial data types resolved
-resolveDataOperatorProc :: Object -> EdhHostProc
-resolveDataOperatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
-  | odNull kwargs
-  = case dti of
+resolveDataOperatorProc :: Object -> "dti" !: Text -> EdhHostProc
+resolveDataOperatorProc !dmrpClass (mandatoryArg-> !dti) !exit !ets =
+  case dti of
     "float64" -> exitWith (deviceDataOperations @Double)
     "float32" -> exitWith (deviceDataOperations @Float)
     "int64"   -> exitWith (deviceDataOperations @Int64)
@@ -1177,46 +1173,45 @@ resolveDataOperatorProc !dmrpClass (ArgsPack [EdhString !dti] !kwargs) !exit !et
                      []
       >>= exitEdh ets exit
       .   EdhObject
-resolveDataOperatorProc _ _ _ !ets =
-  throwEdh ets UsageError "invalid args to @resolveDataOperator(dti)"
 
 
 createNumDataTypeClass :: Scope -> STM Object
 createNumDataTypeClass !clsOuterScope =
-  mkHostClass' clsOuterScope "NumDataType" numdtAllocator [] $ \ !clsScope -> do
-    !mths <-
-      sequence
-      $  [ (AttrByName nm, ) <$> mkHostProc clsScope vc nm hp args
-         | (nm, vc, hp, args) <-
-           [ ("=="      , EdhMethod, numdtEqProc   , PackReceiver [])
-           , ("__repr__", EdhMethod, numdtIdentProc, PackReceiver [])
-           ]
-         ]
-      ++ [ (AttrByName nm, ) <$> mkHostProperty clsScope nm getter setter
-         | (nm, getter, setter) <- [("id", numdtIdentProc, Nothing)]
-         ]
-    iopdUpdate mths $ edh'scope'entity clsScope
+  mkHostClass clsOuterScope "NumDataType" (allocEdhObj numdtAllocator) []
+    $ \ !clsScope -> do
+        !mths <-
+          sequence
+          $  [ (AttrByName nm, ) <$> mkHostProc clsScope vc nm hp
+             | (nm, vc, hp) <-
+               [ ("__eq__"  , EdhMethod, wrapHostProc numdtEqProc)
+               , ("__repr__", EdhMethod, wrapHostProc numdtIdentProc)
+               ]
+             ]
+          ++ [ (AttrByName nm, ) <$> mkHostProperty clsScope nm getter setter
+             | (nm, getter, setter) <- [("id", numdtIdentProc, Nothing)]
+             ]
+        iopdUpdate mths $ edh'scope'entity clsScope
 
  where
 
   -- | host constructor numdt()
   numdtAllocator :: EdhObjectAllocator
   -- not really constructable from Edh code, this only creates bogus numdt obj
-  numdtAllocator _ _ !ctorExit = ctorExit =<< HostStore <$> newTVar (toDyn nil)
+  numdtAllocator !ctorExit _ = ctorExit =<< HostStore <$> newTVar (toDyn nil)
 
-  numdtEqProc :: EdhHostProc
-  numdtEqProc (ArgsPack [EdhObject !dtoOther] _) !exit !ets =
-    withThisHostObj ets $ \_hsv !dt ->
+  numdtEqProc :: EdhValue -> EdhHostProc
+  numdtEqProc !other !exit !ets = case other of
+    EdhObject !dtoOther -> withThisHostObj ets $ \_hsv !dt ->
       withHostObject' dtoOther (exitEdh ets exit $ EdhBool False)
         $ \_hsv !dtOther ->
             exitEdh ets exit
               $  EdhBool
               $  num'type'identifier dtOther
               == num'type'identifier dt
-  numdtEqProc _ !exit !ets = exitEdh ets exit $ EdhBool False
+    _ -> exitEdh ets exit $ EdhBool False
 
   numdtIdentProc :: EdhHostProc
-  numdtIdentProc _ !exit !ets =
+  numdtIdentProc !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-numdt>")
       $ \_hsv !dt ->
           exitEdh ets exit
@@ -1255,10 +1250,9 @@ resolveNumDataTypeEffId = globalSymbol "@resolveNumDataType"
 
 
 -- | The ultimate fallback to have trivial data types resolved
-resolveNumDataTypeProc :: Object -> EdhHostProc
-resolveNumDataTypeProc !numdtClass (ArgsPack [EdhString !dti] !kwargs) !exit !ets
-  | odNull kwargs
-  = case dti of
+resolveNumDataTypeProc :: Object -> "dti" !: Text -> EdhHostProc
+resolveNumDataTypeProc !numdtClass (mandatoryArg -> !dti) !exit !ets =
+  case dti of
     "float64" -> exitWith $ deviceDataNumbering @Double dti
     "float32" -> exitWith $ deviceDataNumbering @Float dti
     "int64"   -> exitWith $ deviceDataNumbering @Int64 dti
@@ -1277,8 +1271,6 @@ resolveNumDataTypeProc !numdtClass (ArgsPack [EdhString !dti] !kwargs) !exit !et
   exitWith :: NumDataType -> STM ()
   exitWith !ndt =
     edhCreateHostObj numdtClass (toDyn ndt) [] >>= exitEdh ets exit . EdhObject
-resolveNumDataTypeProc _ _ _ !ets =
-  throwEdh ets UsageError "invalid args to @resolveNumDataType(dti)"
 
 
 data NumDataType where

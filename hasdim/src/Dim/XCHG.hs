@@ -106,7 +106,7 @@ coerceEdhToFloat'
   -> STM ()
 coerceEdhToFloat' !ets !v !naExit !exit = case edhUltimate v of
   EdhDecimal !d -> exitWith d
-  EdhObject  !o -> lookupEdhObjAttr o (AttrByName "__float__") >>= \case
+  EdhObject  !o -> lookupEdhObjMagic o (AttrByName "__float__") >>= \case
     (_     , EdhNil                         ) -> naExit
     (_     , EdhDecimal !d                  ) -> exitWith d
     (!this', EdhProcedure (EdhMethod !mth) _) -> runEdhTx ets
@@ -150,7 +150,7 @@ coerceEdhToIntegral'
   -> STM ()
 coerceEdhToIntegral' !ets !v !naExit !exit = case edhUltimate v of
   EdhDecimal !d -> exitWith d
-  EdhObject  !o -> lookupEdhObjAttr o (AttrByName "__int__") >>= \case
+  EdhObject  !o -> lookupEdhObjMagic o (AttrByName "__int__") >>= \case
     (_     , EdhNil                         ) -> naExit
     (_     , EdhDecimal !d                  ) -> exitWith d
     (!this', EdhProcedure (EdhMethod !mth) _) -> runEdhTx ets

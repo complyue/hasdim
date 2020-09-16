@@ -130,9 +130,13 @@ installDimBatteries !world = do
           _             -> error "bug: module not bearing hash store"
 
     !defaultDataType <-
-      fromJust <$> iopdLookup (AttrByName "float64") dtypesModuStore
+      fromJust <$> iopdLookup (AttrByName "float64") dtypesModuStore >>= \case
+        EdhObject !dto -> return dto
+        _              -> error "bug: dtype not object"
     !defaultRangeDataType <-
-      fromJust <$> iopdLookup (AttrByName "intp") dtypesModuStore
+      fromJust <$> iopdLookup (AttrByName "intp") dtypesModuStore >>= \case
+        EdhObject !dto -> return dto
+        _              -> error "bug: dtype not object"
 
     let !moduScope = contextScope $ edh'context ets
 
@@ -144,41 +148,29 @@ installDimBatteries !world = do
 
     !moduArts0    <-
       sequence
-      $  [ (AttrBySym sym, ) <$> mkSymbolicHostProc moduScope mc sym hp args
-         | (mc, sym, hp, args) <-
+      $  [ (AttrBySym sym, ) <$> mkSymbolicHostProc moduScope mc sym hp
+         | (mc, sym, hp) <-
            [ ( EdhMethod
              , resolveDataComparatorEffId
-             , resolveDataComparatorProc dmrpClass
-             , PackReceiver [mandatoryArg "dti"]
+             , wrapHostProc $ resolveDataComparatorProc dmrpClass
              )
            , ( EdhMethod
              , resolveDataOperatorEffId
-             , resolveDataOperatorProc dmrpClass
-             , PackReceiver [mandatoryArg "dti"]
+             , wrapHostProc $ resolveDataOperatorProc dmrpClass
              )
            , ( EdhMethod
              , resolveNumDataTypeEffId
-             , resolveNumDataTypeProc numdtClass
-             , PackReceiver [mandatoryArg "dti"]
+             , wrapHostProc $ resolveNumDataTypeProc numdtClass
              )
            ]
          ]
-      ++ [ (AttrByName nm, ) <$> mkHostProc moduScope mc nm hp args
-         | (mc, nm, hp, args) <-
+      ++ [ (AttrByName nm, ) <$> mkHostProc moduScope mc nm hp
+         | (mc, nm, hp) <-
            [ ( EdhMethod
              , "arange"
-             , arangeProc defaultRangeDataType columnClass
-             , PackReceiver [mandatoryArg "rangeSpec"]
+             , wrapHostProc $ arangeProc defaultRangeDataType columnClass
              )
-           , ( EdhMethod
-             , "where"
-             , whereProc
-             , PackReceiver
-               [ mandatoryArg "predict"
-               , optionalArg "trueData"  (LitExpr NilLiteral)
-               , optionalArg "falseData" (LitExpr NilLiteral)
-               ]
-             )
+           , (EdhMethod, "where", wrapHostProc whereProc)
            ]
          ]
 
