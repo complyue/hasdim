@@ -1345,7 +1345,7 @@ whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit !ets
       then
         throwEdh ets UsageError
         $  "invalid dtype="
-        <> (data'type'identifier dt)
+        <> data'type'identifier dt
         <> " for where(), need to be yesno"
       else nonzeroIdxColumn ets mcol $ \ !colResult ->
         edhCreateHostObj (edh'obj'class colBoolIdx) (toDyn colResult) []

@@ -1312,7 +1312,7 @@ deviceDataNumbering !dti = NumDataType dti rangeCreator nonzeroCreator
       $ unsafeIOToSTM
       $ withForeignPtr (castForeignPtr mfp)
       $ \(mp :: Ptr YesNo) -> do
-          !rp  <- callocArray @YesNo mcap
+          !rp  <- callocArray @Int mcap
           !rfp <- newForeignPtr finalizerFree rp
           let go i ri | i >= mcap = return (DeviceArray mcap rfp, ri)
               go i ri             = do
