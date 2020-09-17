@@ -318,7 +318,7 @@ mmapDbArray !asVar !dataDir !dataPath !dt !maybeShape =
 
 -- | unwrap an array from Edh object form
 unwrapDbArrayObject :: Object -> STM (Maybe DbArray)
-unwrapDbArrayObject = castObjectStore
+unwrapDbArrayObject = (fmap snd <$>) . castObjectStore
 
 dbArrayShape :: DbArray -> STM ArrayShape
 dbArrayShape (DbArray _ _ _ !das) = readTMVar das >>= \case
@@ -409,8 +409,8 @@ createDbArrayClass !defaultDt !clsOuterScope =
                     UsageError
                     "you don't create Array within a transaction"
       else castObjectStore dto >>= \case
-        Nothing  -> throwEdh etsCtor UsageError "invalid dtype"
-        Just !dt -> case data'type'proxy dt of
+        Nothing       -> throwEdh etsCtor UsageError "invalid dtype"
+        Just (_, !dt) -> case data'type'proxy dt of
           DeviceDataType{} -> if dataDir == "" || dataPath == ""
             then throwEdh etsCtor UsageError "missing dataDir/dataPath"
             else newEmptyTMVar >>= \ !asVar -> case maybeShape of

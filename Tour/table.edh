@@ -1,0 +1,2 @@
+
+tab = Table( 10, 5, a=f8, b=f4, c=box )

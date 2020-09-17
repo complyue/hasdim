@@ -52,7 +52,6 @@ data Column where
       -- STM tx to commit
     , column'storage :: !(TVar FlatArray)
     } -> Column
- deriving Typeable
 instance Eq Column where
   (Column !x'dt _ x'cs) == (Column !y'dt _ y'cs) =
     -- note coerce is safe only when dti matches
@@ -774,8 +773,8 @@ createColumnClass !defaultDt !clsOuterScope =
                       UsageError
                       "expect a positive interger for length"
         else castObjectStore dto >>= \case
-          Nothing  -> throwEdh etsCtor UsageError "invalid dtype"
-          Just !dt -> do
+          Nothing       -> throwEdh etsCtor UsageError "invalid dtype"
+          Just (_, !dt) -> do
             !lv <- newTMVar len
             createColumn etsCtor
                          dt
@@ -835,7 +834,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
   colShowProc :: EdhHostProc
   colShowProc !exit !ets =
-    withHostObject ets colObj $ \_hsv (Column !dt !clv !csv) -> do
+    withThisHostObj ets $ \_hsv (Column !dt !clv !csv) -> do
       !cl <- readTMVar clv
       !cs <- readTVar csv
       showData cl $ flat'array'read dt ets cs
@@ -902,26 +901,27 @@ createColumnClass !defaultDt !clsOuterScope =
 
 
   colIdxReadProc :: EdhValue -> EdhHostProc
-  colIdxReadProc !idxVal !exit !ets =
-    withHostObject ets colObj $ \_hsv !col -> castObjectStore' idxVal >>= \case
-      Just !idxCol -> case data'type'identifier $ column'data'type idxCol of
-        "yesno" -> -- yesno index 
-                   extractColumnBool ets
-                                     idxCol
-                                     col
-                                     (exitEdh ets exit edhNA)
-                                     exitWithNewClone
-        "intp" -> -- fancy index 
-                  extractColumnFancy ets
-                                     idxCol
-                                     col
-                                     (exitEdh ets exit edhNA)
-                                     exitWithNewClone
-        !badDti ->
-          throwEdh ets UsageError
-            $  "invalid dtype="
-            <> badDti
-            <> " for a column as an index to another column"
+  colIdxReadProc !idxVal !exit !ets = withThisHostObj ets $ \_hsv !col ->
+    castObjectStore' idxVal >>= \case
+      Just (_, !idxCol) ->
+        case data'type'identifier $ column'data'type idxCol of
+          "yesno" -> -- yesno index 
+                     extractColumnBool ets
+                                       idxCol
+                                       col
+                                       (exitEdh ets exit edhNA)
+                                       exitWithNewClone
+          "intp" -> -- fancy index 
+                    extractColumnFancy ets
+                                       idxCol
+                                       col
+                                       (exitEdh ets exit edhNA)
+                                       exitWithNewClone
+          !badDti ->
+            throwEdh ets UsageError
+              $  "invalid dtype="
+              <> badDti
+              <> " for a column as an index to another column"
       Nothing -> parseEdhIndex ets idxVal $ \case
         Left !err -> throwEdh ets UsageError err
         Right (EdhIndex !i) ->
@@ -936,9 +936,8 @@ createColumnClass !defaultDt !clsOuterScope =
    where
     !colObj = edh'scope'that $ contextScope $ edh'context ets
     !that   = edh'scope'that $ contextScope $ edh'context ets
-    exitWithNewClone !colResult =
-      edhCloneHostObj ets colObj that (toDyn colResult)
-        $ \ !thatObjClone -> exitEdh ets exit $ EdhObject thatObjClone
+    exitWithNewClone !colResult = edhCloneHostObj ets colObj that colResult
+      $ \ !thatObjClone -> exitEdh ets exit $ EdhObject thatObjClone
 
   colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
   colIdxWriteProc !idxVal !other !exit !ets =
@@ -946,7 +945,7 @@ createColumnClass !defaultDt !clsOuterScope =
       let colObj = edh'scope'that $ contextScope $ edh'context ets
       castObjectStore' (edhUltimate other) >>= \case
         -- assign column to column
-        Just colOther@(Column !dtOther !clvOther _) -> if dtOther /= dt
+        Just (_, colOther@(Column !dtOther !clvOther _)) -> if dtOther /= dt
           then
             throwEdh ets UsageError
             $  "assigning column of dtype="
@@ -955,7 +954,7 @@ createColumnClass !defaultDt !clsOuterScope =
             <> (data'type'identifier dt)
             <> " not supported."
           else castObjectStore' idxVal >>= \case
-            Just !idxCol ->
+            Just (_, !idxCol) ->
               case data'type'identifier $ column'data'type idxCol of
                 "yesno" -> -- yesno index
                   elemInpMaskedColumn ets
@@ -1029,7 +1028,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
         -- assign scalar to column
         Nothing -> castObjectStore' idxVal >>= \case
-          Just idxCol@(Column !dtIdx _clvIdx _csvIdx) ->
+          Just (_, idxCol@(Column !dtIdx _clvIdx _csvIdx)) ->
             case data'type'identifier dtIdx of
               "yesno" -> -- yesno index
                 vecInpMaskedColumn ets
@@ -1084,13 +1083,12 @@ createColumnClass !defaultDt !clsOuterScope =
 
 
   colCmpProc :: (Ordering -> Bool) -> EdhValue -> EdhHostProc
-  colCmpProc !cmp !other !exit !ets =
-    withHostObject ets colObj $ \_hsv !col ->
-      let !otherVal = edhUltimate other
-      in  castObjectStore' otherVal >>= \case
-            Just colOther@Column{} ->
-              elemCmpColumn dtYesNo ets cmp col colOther exitWithResult
-            _ -> vecCmpColumn dtYesNo ets cmp col otherVal exitWithResult
+  colCmpProc !cmp !other !exit !ets = withThisHostObj ets $ \_hsv !col ->
+    let !otherVal = edhUltimate other
+    in  castObjectStore' otherVal >>= \case
+          Just (_, colOther@Column{}) ->
+            elemCmpColumn dtYesNo ets cmp col colOther exitWithResult
+          _ -> vecCmpColumn dtYesNo ets cmp col otherVal exitWithResult
    where
     !colObj = edh'scope'this $ contextScope $ edh'context ets
     exitWithResult !colResult =
@@ -1100,34 +1098,33 @@ createColumnClass !defaultDt !clsOuterScope =
 
 
   colOpProc :: (Text -> Dynamic) -> EdhValue -> EdhHostProc
-  colOpProc !getOp !other !exit !ets =
-    withHostObject ets colObj $ \_hsv !col ->
-      let !otherVal = edhUltimate other
-      in  castObjectStore' otherVal >>= \case
-            Just colOther@Column{} -> elemOpColumn ets
-                                                   getOp
-                                                   col
-                                                   colOther
-                                                   (exitEdh ets exit edhNA)
-                                                   exitWithNewClone
-            _ -> vecOpColumn ets
-                             getOp
-                             col
-                             otherVal
-                             (exitEdh ets exit edhNA)
-                             exitWithNewClone
+  colOpProc !getOp !other !exit !ets = withThisHostObj ets $ \_hsv !col ->
+    let !otherVal = edhUltimate other
+    in  castObjectStore' otherVal >>= \case
+          Just (_, colOther@Column{}) -> elemOpColumn
+            ets
+            getOp
+            col
+            colOther
+            (exitEdh ets exit edhNA)
+            exitWithNewClone
+          _ -> vecOpColumn ets
+                           getOp
+                           col
+                           otherVal
+                           (exitEdh ets exit edhNA)
+                           exitWithNewClone
    where
     !colObj = edh'scope'that $ contextScope $ edh'context ets
     !that   = edh'scope'that $ contextScope $ edh'context ets
-    exitWithNewClone !colResult =
-      edhCloneHostObj ets colObj that (toDyn colResult)
-        $ \ !thatObjClone -> exitEdh ets exit $ EdhObject thatObjClone
+    exitWithNewClone !colResult = edhCloneHostObj ets colObj that colResult
+      $ \ !thatObjClone -> exitEdh ets exit $ EdhObject thatObjClone
 
   colInpProc :: (Text -> Dynamic) -> EdhValue -> EdhHostProc
   colInpProc !getOp !other !exit !ets = withThisHostObj ets $ \_hsv !col ->
     let !otherVal = edhUltimate other
     in  castObjectStore' otherVal >>= \case
-          Just colOther@Column{} ->
+          Just (_, colOther@Column{}) ->
             elemInpColumn ets getOp col colOther (exitEdh ets exit edhNA)
               $ exitEdh ets exit
               $ EdhObject colObj
@@ -1284,8 +1281,8 @@ arangeProc
   -> EdhHostProc
 arangeProc !defaultDt !colClass (mandatoryArg -> !rngSpec) (defaultArg defaultDt -> !dto) !exit !ets
   = castObjectStore dto >>= \case
-    Nothing  -> throwEdh ets UsageError "invalid dtype"
-    Just !dt -> case edhUltimate rngSpec of
+    Nothing       -> throwEdh ets UsageError "invalid dtype"
+    Just (_, !dt) -> case edhUltimate rngSpec of
       EdhPair (EdhPair (EdhDecimal !startN) (EdhDecimal !stopN)) (EdhDecimal stepN)
         -> case D.decimalToInteger startN of
           Just !start -> case D.decimalToInteger stopN of
@@ -1341,7 +1338,7 @@ whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit !ets
       ets
       UsageError
       "invalid index object, need to be a column with dtype=yesno"
-    Just mcol@(Column !dt _ _) -> if data'type'identifier dt /= "yesno"
+    Just (_, mcol@(Column !dt _ _)) -> if data'type'identifier dt /= "yesno"
       then
         throwEdh ets UsageError
         $  "invalid dtype="

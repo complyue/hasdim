@@ -202,15 +202,13 @@ createDataTypeClass !clsOuterScope =
   dtypeAllocator !ctorExit _ = ctorExit =<< HostStore <$> newTVar (toDyn nil)
 
   dtypeEqProc :: EdhValue -> EdhHostProc
-  dtypeEqProc !other !exit !ets = case other of
-    EdhObject !dtoOther -> withThisHostObj ets $ \_hsv !dt ->
-      withHostObject' dtoOther (exitEdh ets exit $ EdhBool False)
-        $ \_hsv !dtOther ->
-            exitEdh ets exit
-              $  EdhBool
-              $  data'type'identifier dtOther
-              == data'type'identifier dt
-    _ -> exitEdh ets exit $ EdhBool False
+  dtypeEqProc !other !exit !ets = castObjectStore' other >>= \case
+    Nothing            -> exitEdh ets exit $ EdhBool False
+    Just (_, !dtOther) -> withThisHostObj ets $ \_hsv !dt ->
+      exitEdh ets exit
+        $  EdhBool
+        $  data'type'identifier dtOther
+        == data'type'identifier dt
 
   dtypeIdentProc :: EdhHostProc
   dtypeIdentProc !exit !ets = withThisHostObj ets
@@ -488,12 +486,12 @@ resolveDataComparator' !ets !dti _ !naExit !exit =
     $ performEdhEffect (AttrBySym resolveDataComparatorEffId) [EdhString dti] []
     $ \case
         EdhNil           -> \_ets -> naExit
-        EdhObject !dmrpo -> \_ets ->
-          withHostObject' dmrpo naExit
-            $ \_hsv (DataManiRoutinePack _dmrp'dti _dmrp'cate !drp) ->
-                case fromDynamic drp of
-                  Nothing  -> naExit
-                  Just !rp -> exit rp
+        EdhObject !dmrpo -> \_ets -> castObjectStore dmrpo >>= \case
+          Nothing -> naExit
+          Just (_, DataManiRoutinePack _dmrp'dti _dmrp'cate !drp) ->
+            case fromDynamic drp of
+              Nothing  -> naExit
+              Just !rp -> exit rp
         !badDtVal ->
           throwEdhTx UsageError
             $  "bad return type from @resolveDataComparator(dti): "
@@ -1128,17 +1126,17 @@ resolveDataOperator' !ets !dti _ !naExit !exit =
     $ performEdhEffect (AttrBySym resolveDataOperatorEffId) [EdhString dti] []
     $ \case
         EdhNil           -> const naExit
-        EdhObject !dmrpo -> \_ets ->
-          withHostObject' dmrpo naExit
-            $ \_hsv (DataManiRoutinePack _dmrp'dti _dmrp'cate !drp) ->
-                case fromDynamic drp of
-                  Nothing ->
-                    throwEdh ets UsageError
-                      $ "bug: data manipulation routine pack obtained for dtype "
-                      <> dti
-                      <> " is of wrong type: "
-                      <> T.pack (show drp)
-                  Just !rp -> exit rp
+        EdhObject !dmrpo -> \_ets -> castObjectStore dmrpo >>= \case
+          Nothing -> naExit
+          Just (_, DataManiRoutinePack _dmrp'dti _dmrp'cate !drp) ->
+            case fromDynamic drp of
+              Nothing ->
+                throwEdh ets UsageError
+                  $  "bug: data manipulation routine pack obtained for dtype "
+                  <> dti
+                  <> " is of wrong type: "
+                  <> T.pack (show drp)
+              Just !rp -> exit rp
         !badDtVal ->
           throwEdhTx UsageError
             $  "bad return type from @resolveDataOperator(dti): "
@@ -1200,15 +1198,13 @@ createNumDataTypeClass !clsOuterScope =
   numdtAllocator !ctorExit _ = ctorExit =<< HostStore <$> newTVar (toDyn nil)
 
   numdtEqProc :: EdhValue -> EdhHostProc
-  numdtEqProc !other !exit !ets = case other of
-    EdhObject !dtoOther -> withThisHostObj ets $ \_hsv !dt ->
-      withHostObject' dtoOther (exitEdh ets exit $ EdhBool False)
-        $ \_hsv !dtOther ->
-            exitEdh ets exit
-              $  EdhBool
-              $  num'type'identifier dtOther
-              == num'type'identifier dt
-    _ -> exitEdh ets exit $ EdhBool False
+  numdtEqProc !other !exit !ets = castObjectStore' other >>= \case
+    Nothing            -> exitEdh ets exit $ EdhBool False
+    Just (_, !dtOther) -> withThisHostObj ets $ \_hsv !dt ->
+      exitEdh ets exit
+        $  EdhBool
+        $  num'type'identifier dtOther
+        == num'type'identifier dt
 
   numdtIdentProc :: EdhHostProc
   numdtIdentProc !exit !ets =
@@ -1238,9 +1234,10 @@ resolveNumDataType' !ets !dti !naExit !exit =
   runEdhTx ets
     $ performEdhEffect (AttrBySym resolveNumDataTypeEffId) [EdhString dti] []
     $ \case
-        EdhNil -> \_ets -> naExit
-        EdhObject !ndto ->
-          \_ets -> withHostObject' ndto naExit $ \_hsv !ndt -> exit ndt
+        EdhNil          -> \_ets -> naExit
+        EdhObject !ndto -> \_ets -> castObjectStore ndto >>= \case
+          Nothing        -> naExit
+          Just (_, !ndt) -> exit ndt
         !badDtVal ->
           throwEdhTx UsageError
             $  "bad return type from @resolveNumDataType(dti): "

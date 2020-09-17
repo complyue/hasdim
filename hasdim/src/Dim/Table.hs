@@ -33,9 +33,10 @@ data Table = Table {
     -- this is also the mutex to coordinate concurrent modifications to the
     -- table
     table'row'count :: !(TMVar Int)
-    -- underlying table storage, represented as columns, those sharing 
-  , table'columns :: !(IOPD AttrKey Column)
-  } deriving (Typeable)
+    -- underlying table storage, represented as column objects, those sharing
+    -- a common length, which is the row count
+  , table'columns :: !(IOPD AttrKey Object)
+  }
 
 tableRowCount :: Table -> STM Int
 tableRowCount (Table !trcv _) = readTMVar trcv
@@ -43,9 +44,14 @@ tableRowCount (Table !trcv _) = readTMVar trcv
 tableRowCapacity :: Table -> STM Int
 tableRowCapacity (Table _ !cols) = iopdNull cols >>= \case
   True -> return 0
-  _ ->
+  False ->
     iopdValues cols
-      >>= foldM (\ !cap !col -> min cap <$> columnCapacity col) maxBound
+      >>= foldM (\ !cap !col -> min cap <$> colObjLen col) maxBound
+ where
+  colObjLen :: Object -> STM Int
+  colObjLen !colObj = castObjectStore colObj >>= \case
+    Just (_, col :: Column) -> columnCapacity col
+    _                       -> error "bug: non-column object in table"
 
 -- | the new row count must not be negative, and must not exceed the cap,
 -- but it's not checked here, thus unsafe
@@ -60,7 +66,7 @@ createTable
   -> Int
   -> OrderedDict
        AttrKey
-       (Int -> TMVar Int -> (Column -> STM ()) -> STM ())
+       (Int -> TMVar Int -> (Object -> STM ()) -> STM ())
   -> (Table -> STM ())
   -> STM ()
 createTable _ets !cap !rowCnt !colCreators !exit = do
@@ -83,11 +89,13 @@ growTable _ets !newRowCnt (Table !trcv !tcols) !exit =
 
     exit
  where
-  growCol :: Column -> STM ()
-  growCol (Column !dt _ !csv) = do
-    !cs  <- readTVar csv
-    !cs' <- flat'grow'array dt cs newRowCnt
-    writeTVar csv cs'
+  growCol :: Object -> STM ()
+  growCol !col = castObjectStore col >>= \case
+    Nothing                     -> error "bug: non-column obj in table"
+    Just (_, Column !dt _ !csv) -> do
+      !cs  <- readTVar csv
+      !cs' <- flat'grow'array dt cs newRowCnt
+      writeTVar csv cs'
 
 
 createTableClass :: Object -> Scope -> STM Object
@@ -146,13 +154,13 @@ createTableClass !colClass !clsOuterScope =
 
     parseColSpec
       :: EdhValue
-      -> ((Int -> TMVar Int -> (Column -> STM ()) -> STM ()) -> STM ())
+      -> ((Int -> TMVar Int -> (Object -> STM ()) -> STM ()) -> STM ())
       -> STM ()
     parseColSpec !val !exit = case edhUltimate val of
       EdhObject !obj -> castObjectStore obj >>= \case
-        Just col@Column{} -> exit $ copyCol col
-        Nothing           -> castObjectStore obj >>= \case
-          Just !dt -> exit $ createCol dt
+        Just (!colThis, col :: Column) -> exit $ copyCol colThis obj col
+        Nothing                        -> castObjectStore obj >>= \case
+          Just (_, !dt) -> exit $ createCol dt
           Nothing ->
             throwEdh etsCtor UsageError
               $  "neither a Column object nor a dtype, but of class: "
@@ -164,31 +172,40 @@ createTableClass !colClass !clsOuterScope =
           <> ": "
           <> colRepr
 
-    createCol :: DataType -> Int -> TMVar Int -> (Column -> STM ()) -> STM ()
-    createCol !dt !cap !clv !exit = createColumn etsCtor dt cap clv exit
+    createCol :: DataType -> Int -> TMVar Int -> (Object -> STM ()) -> STM ()
+    createCol !dt !cap !clv !exit = createColumn etsCtor dt cap clv
+      $ \ !col -> edhCreateHostObj colClass (toDyn col) [] >>= exit
 
-    copyCol :: Column -> Int -> TMVar Int -> (Column -> STM ()) -> STM ()
-    copyCol (Column !dti !clvSrc !csvSrc) !cap !clv !exit = do
-      !clSrc <- readTMVar clvSrc
-      readTVar csvSrc >>= \case
-        DeviceArray _capSrc !fp -> do
-          !cs' <- unsafeIOToSTM $ do
-            !p'  <- callocArray cap
-            !fp' <- newForeignPtr finalizerFree p'
-            withForeignPtr fp $ \ !p -> copyArray p' p $ min cap clSrc
-            return $ DeviceArray cap fp'
-          !csv' <- newTVar cs'
-          exit $ Column dti clv csv'
-        HostArray _capSrc !ha -> do
-          !cs' <- unsafeIOToSTM $ do
-            !ha' <- MV.new cap
-            let !cpLen = min cap clSrc
-                !tgt   = MV.unsafeSlice 0 cpLen ha'
-                !src   = MV.unsafeSlice 0 cpLen ha
-            MV.unsafeCopy tgt src
-            return $ HostArray cap ha'
-          !csv' <- newTVar cs'
-          exit $ Column dti clv csv'
+    copyCol
+      :: Object
+      -> Object
+      -> Column
+      -> Int
+      -> TMVar Int
+      -> (Object -> STM ())
+      -> STM ()
+    copyCol !fromThis !fromThat (Column !dti !clvSrc !csvSrc) !cap !clv !exit =
+      do
+        !clSrc <- readTMVar clvSrc
+        readTVar csvSrc >>= \case
+          DeviceArray _capSrc !fp -> do
+            !cs' <- unsafeIOToSTM $ do
+              !p'  <- callocArray cap
+              !fp' <- newForeignPtr finalizerFree p'
+              withForeignPtr fp $ \ !p -> copyArray p' p $ min cap clSrc
+              return $ DeviceArray cap fp'
+            !csv' <- newTVar cs'
+            edhCloneHostObj etsCtor fromThis fromThat (Column dti clv csv') exit
+          HostArray _capSrc !ha -> do
+            !cs' <- unsafeIOToSTM $ do
+              !ha' <- MV.new cap
+              let !cpLen = min cap clSrc
+                  !tgt   = MV.unsafeSlice 0 cpLen ha'
+                  !src   = MV.unsafeSlice 0 cpLen ha
+              MV.unsafeCopy tgt src
+              return $ HostArray cap ha'
+            !csv' <- newTVar cs'
+            edhCloneHostObj etsCtor fromThis fromThat (Column dti clv csv') exit
 
 
   tabGrowProc :: "newCap" !: Int -> EdhHostProc
@@ -249,28 +266,27 @@ createTableClass !colClass !clsOuterScope =
     withThisHostObj ets $ \_hsv tab@(Table !trcv !tcols) -> case maybeAttrVal of
       Nothing -> edhValueAsAttrKey ets attrKey $ \ !key -> iopdDelete key tcols
       Just !attrVal -> case edhUltimate attrVal of
-        EdhObject !colObj ->
-          withHostObject' colObj (badCol attrVal)
-            $ \_hsv (Column !dt !clv !csv) -> do
-                !cl  <- readTMVar clv
-                !trc <- readTMVar trcv
-                if cl < trc
-                  then
-                    throwEdh ets UsageError
-                    $  "no enough data in column: column length "
-                    <> T.pack (show cl)
-                    <> " vs table row count "
-                    <> T.pack (show trc)
-                  else do
-                    !tcap <- tableRowCapacity tab
-                    !ca   <- readTVar csv
-                    !tca  <- unsafeIOToSTM $ dupFlatArray ca cl tcap
-                    !tcol <- Column dt trcv <$> newTVar tca
-                    edhValueAsAttrKey ets attrKey $ \ !key -> do
-                      iopdInsert key tcol tcols
-                      edhCreateHostObj colClass (toDyn tcol) []
-                        >>= exitEdh ets exit
-                        .   EdhObject
+        EdhObject !colObj -> castObjectStore colObj >>= \case
+          Nothing                               -> badCol attrVal
+          Just (!colThis, Column !dt !clv !csv) -> do
+            !cl  <- readTMVar clv
+            !trc <- readTMVar trcv
+            if cl < trc
+              then
+                throwEdh ets UsageError
+                $  "no enough data in column: column length "
+                <> T.pack (show cl)
+                <> " vs table row count "
+                <> T.pack (show trc)
+              else do
+                !tcap <- tableRowCapacity tab
+                !ca   <- readTVar csv
+                !tca  <- unsafeIOToSTM $ dupFlatArray ca cl tcap
+                !tcol <- Column dt trcv <$> newTVar tca
+                edhCloneHostObj ets colThis colObj tcol $ \ !newColObj ->
+                  edhValueAsAttrKey ets attrKey $ \ !key -> do
+                    iopdInsert key newColObj tcols
+                    exitEdh ets exit $ EdhObject newColObj
         _ -> badCol attrVal
    where
     badCol !badVal = edhValueDesc ets badVal $ \ !badValDesc ->
@@ -283,24 +299,27 @@ createTableClass !colClass !clsOuterScope =
   tabReprProc !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
       $ \_hsv tab@(Table !trcv !tcols) -> do
-          !trc      <- readTMVar trcv
-          !cap      <- tableRowCapacity tab
-          !colReprs <-
-            (iopdToList tcols >>=) $ (return .) $ fmap $ \(!colKey, !col) ->
-              T.pack (show colKey)
-                <> "="
-                <> data'type'identifier (column'data'type col)
-                <> ", "
-          exitEdh ets exit
-            $  EdhString
-            $  "table( "
-            <> T.pack (show cap)
-            <> ", "
-            <> T.pack (show trc)
-            <> ", "
-            <> T.concat colReprs
-            <> ")"
-
+          !trc <- readTMVar trcv
+          !cap <- tableRowCapacity tab
+          (fmap colShortRepr <$> iopdToList tcols >>=)
+            $ flip seqcontSTM
+            $ \ !colReprs ->
+                exitEdh ets exit
+                  $  EdhString
+                  $  "Table( "
+                  <> T.pack (show cap)
+                  <> ", "
+                  <> T.pack (show trc)
+                  <> ", "
+                  <> T.concat colReprs
+                  <> ")"
+   where
+    colShortRepr :: (AttrKey, Object) -> (Text -> STM ()) -> STM ()
+    -- TODO better repr here
+    colShortRepr (!colKey, !colObj) !exit' = castObjectStore colObj >>= \case
+      Nothing -> throwEdh ets EvalError "bug: non-column object in table"
+      Just (_, Column !dt _ _) ->
+        exit' $ T.pack (show colKey) <> "=" <> data'type'identifier dt <> ", "
 
   tabShowProc :: OrderedDict AttrKey EdhValue -> EdhHostProc
   tabShowProc !kwargs !exit !ets =
