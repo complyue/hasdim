@@ -319,6 +319,7 @@ createTableClass !colClass !clsOuterScope =
       Just (_, Column !dt _ _) ->
         exit' $ T.pack (show colKey) <> "=" <> data'type'identifier dt <> ", "
 
+
   tabShowProc :: RestKwArgs -> EdhHostProc
   tabShowProc !kwargs !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
@@ -413,6 +414,7 @@ createTableClass !colClass !clsOuterScope =
             <> T.pack (show colKey)
             <> " :\n"
             <> colDesc
+
 
 centerBriefAlign :: Int -> Text -> Text
 centerBriefAlign !colWidth !txt | colWidth <= 5 = T.take colWidth txt

@@ -1,9 +1,9 @@
 
 class MyTable { extends Table
   method __init__( name as this.name, ***_ ) pass
-  method __repr__() {
+  method __repr__(** kwargs ) {
     '# ' ++ this.name ++ ' #\n'
-    ++ super.__repr__()
+    ++ super.__repr__(** kwargs )
   }
   method __show__(** kwargs ) {
     '# ' ++ this.name ++ ' #\n'
