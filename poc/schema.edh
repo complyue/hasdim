@@ -3,7 +3,7 @@
 export class DataSchema {
 
   # requires an effective `DataBack` instance for each instance of this lib
-  __init__:: ( db::DataBack ) -> this
+  __init__:: ( db !: DataBack ) -> this
   method __init__ ( db as this.db ) {
 
     # TODO create global indices
@@ -31,7 +31,7 @@ export class DataSchema {
     ) )
 
     __init__:: (
-      instruId:: InstrumentId, # which instrument this is for
+      instruId !: InstrumentId, # which instrument this is for
     ) -> this
     method __init__(
       instruId as this.instruId,
