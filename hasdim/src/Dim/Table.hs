@@ -137,22 +137,21 @@ createTableClass !colClass !clsOuterScope =
     -> ArgsPack -- allow/ignore arbitrary ctor args for descendant classes
     -> EdhObjectAllocator
   tableAllocator (mandatoryArg -> !ctorCap) (mandatoryArg  -> KeywordArgs  !colSpecs) (defaultArg ctorCap -> !rowCnt) _ctorOtherArgs !ctorExit !etsCtor
-    = if ctorCap <= 0
-      then
-        throwEdh etsCtor UsageError
-        $  "table capacity should be a positive integer, not "
-        <> T.pack (show ctorCap)
-      else if rowCnt < 0
-        then
-          throwEdh etsCtor UsageError
-          $  "table row count should be zero or a positive integer, not "
-          <> T.pack (show rowCnt)
-        else odMapContSTM parseColSpec colSpecs $ \ !colCreators -> createTable
-          etsCtor
-          ctorCap
-          rowCnt
-          colCreators
-          ((ctorExit . HostStore =<<) . newTVar . toDyn)
+    | ctorCap <= 0
+    = throwEdh etsCtor UsageError
+      $  "table capacity should be a positive integer, not "
+      <> T.pack (show ctorCap)
+    | rowCnt < 0
+    = throwEdh etsCtor UsageError
+      $  "table row count should be zero or a positive integer, not "
+      <> T.pack (show rowCnt)
+    | otherwise
+    = odMapContSTM parseColSpec colSpecs $ \ !colCreators -> createTable
+      etsCtor
+      ctorCap
+      rowCnt
+      colCreators
+      ((ctorExit . HostStore =<<) . newTVar . toDyn)
    where
 
     parseColSpec

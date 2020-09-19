@@ -2,6 +2,24 @@
 hd = { import * 'dim' }
 effect import * 'dim/effects'
 
+
+class MyColumn { extends Column
+  method __init__( name as this.name, ***_ ) pass
+  method __repr__() {
+    '# ' ++ this.name ++ ' #\n'
+    ++ super.__repr__()
+  }
+  method __show__(** kwargs ) {
+    '# ' ++ this.name ++ ' #\n'
+    ++ super.__show__(** kwargs )
+  }
+  method __desc__(** kwargs ) {
+    '# ' ++ this.name ++ ' #\n'
+    ++ super.__desc__(** kwargs )
+  }
+}
+
+
 # %% issue a dir command to see what's in scope
 # note a command will only get interpreted when it's the final value of a piece
 # of code submitted to the repl, it has no effect when being in middle
@@ -10,20 +28,23 @@ dir
 # Column objects are 1-d arrays per se
 
 # %%
-c = Column( 10, dtype=f8 )
+c = MyColumn( name= 'My Demo Column',
+  capacity= 10, dtype= f8,
+  length= 5,
+)
 c|show
 
 # %%
 # note we have no implicit dtype convertion
-c[] = arange( 10 ) * 3 # this'll fail
+c[] = arange( len( c ) ) * 3 # this'll fail
 
 # %%
 # make sure to specify desired dtype on creation of a column
-i = arange( 10:20, dtype=f8 )
+i = arange( 3 : 3+len( c ), dtype=f8 )
 i|show
 
 # %%
-c[] = i*3 # this'll work
+c[] = i * 3 # this'll work
 c|show
 
 # various display methods supported for column object

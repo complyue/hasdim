@@ -762,25 +762,27 @@ createColumnClass !defaultDt !clsOuterScope =
     :: "capacity" !: Int
     -> "length" ?: Int
     -> "dtype" ?: Object
+    -> ArgsPack -- allow/ignore arbitrary ctor args for descendant classes
     -> EdhObjectAllocator
-  columnAllocator (mandatoryArg -> !cap) (defaultArg cap -> !len) (defaultArg defaultDt -> dto) !ctorExit !etsCtor
-    = if cap < 0
-      then throwEdh etsCtor
-                    UsageError
-                    "expect a positive interger for capacity"
-      else if len < 0
-        then throwEdh etsCtor
-                      UsageError
-                      "expect a positive interger for length"
-        else castObjectStore dto >>= \case
-          Nothing       -> throwEdh etsCtor UsageError "invalid dtype"
-          Just (_, !dt) -> do
-            !lv <- newTMVar len
-            createColumn etsCtor
-                         dt
-                         cap
-                         lv
-                         ((ctorExit . HostStore =<<) . newTVar . toDyn)
+  columnAllocator (mandatoryArg -> !ctorCap) (defaultArg ctorCap -> !ctorLen) (defaultArg defaultDt -> dto) _ctorOtherArgs !ctorExit !etsCtor
+    | ctorCap <= 0
+    = throwEdh etsCtor UsageError
+      $  "column capacity should be a positive interger, not "
+      <> T.pack (show ctorCap)
+    | ctorLen < 0
+    = throwEdh etsCtor UsageError
+      $  "column length should be zero or a positive integer, not "
+      <> T.pack (show ctorLen)
+    | otherwise
+    = castObjectStore dto >>= \case
+      Nothing       -> throwEdh etsCtor UsageError "invalid dtype"
+      Just (_, !dt) -> do
+        !lv <- newTMVar ctorLen
+        createColumn etsCtor
+                     dt
+                     ctorCap
+                     lv
+                     ((ctorExit . HostStore =<<) . newTVar . toDyn)
 
   dtYesNo = makeDeviceDataType @YesNo "yesno"
 
@@ -824,7 +826,7 @@ createColumnClass !defaultDt !clsOuterScope =
           !cs <- readTVar csv
           exitEdh ets exit
             $  EdhString
-            $  "Column("
+            $  "Column( capacity="
             <> T.pack (show $ flatArrayCapacity cs)
             <> ", length="
             <> T.pack (show cl)

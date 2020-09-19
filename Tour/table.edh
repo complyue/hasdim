@@ -5,13 +5,21 @@ class MyTable { extends Table
     '# ' ++ this.name ++ ' #\n'
     ++ super.__repr__()
   }
+  method __show__(** kwargs ) {
+    '# ' ++ this.name ++ ' #\n'
+    ++ super.__show__(** kwargs )
+  }
+  method __desc__(** kwargs ) {
+    '# ' ++ this.name ++ ' #\n'
+    ++ super.__desc__(** kwargs )
+  }
 }
 
 # %%
 tab = MyTable( name= 'My Demo Table',
   capacity= 10, columns= (
     a=f8, b=f4, c=box,
-  ), row'count=5,
+  ), row'count= 5,
 )
 
 # %%
