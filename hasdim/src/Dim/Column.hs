@@ -841,10 +841,10 @@ createColumnClass !defaultDt !clsOuterScope =
       !cs <- readTVar csv
       showData cl $ flat'array'read dt ets cs
    where
-    !colObj = edh'scope'this $ contextScope $ edh'context ets
+    !thisCol = edh'scope'this $ contextScope $ edh'context ets
 
     exitWithDetails :: Text -> STM ()
-    exitWithDetails !details = edhValueRepr ets (EdhObject colObj)
+    exitWithDetails !details = edhValueRepr ets (EdhObject thisCol)
       $ \ !repr -> exitEdh ets exit $ EdhString $ repr <> "\n" <> details
 
     showData :: Int -> (Int -> (EdhValue -> STM ()) -> STM ()) -> STM ()
@@ -928,23 +928,22 @@ createColumnClass !defaultDt !clsOuterScope =
         Left !err -> throwEdh ets UsageError err
         Right (EdhIndex !i) ->
           unsafeReadColumnCell ets col i $ exitEdh ets exit
-        Right EdhAny -> exitEdh ets exit $ EdhObject colObj
-        Right EdhAll -> exitEdh ets exit $ EdhObject colObj
+        Right EdhAny -> exitEdh ets exit $ EdhObject thatCol
+        Right EdhAll -> exitEdh ets exit $ EdhObject thatCol
         Right (EdhSlice !start !stop !step) -> do
           !cl <- columnLength col
           edhRegulateSlice ets cl (start, stop, step)
             $ \(!iStart, !iStop, !iStep) ->
                 unsafeSliceColumn col iStart iStop iStep exitWithNewClone
    where
-    !colObj = edh'scope'that $ contextScope $ edh'context ets
-    !that   = edh'scope'that $ contextScope $ edh'context ets
-    exitWithNewClone !colResult = edhCloneHostObj ets colObj that colResult
-      $ \ !thatObjClone -> exitEdh ets exit $ EdhObject thatObjClone
+    !thisCol = edh'scope'this $ contextScope $ edh'context ets
+    !thatCol = edh'scope'that $ contextScope $ edh'context ets
+    exitWithNewClone !colResult = edhCloneHostObj ets thisCol thatCol colResult
+      $ \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
   colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
   colIdxWriteProc !idxVal !other !exit !ets =
-    withThisHostObj ets $ \_hsv col@(Column !dt !clv _csv) -> do
-      let colObj = edh'scope'that $ contextScope $ edh'context ets
+    withThisHostObj ets $ \_hsv col@(Column !dt !clv _csv) ->
       castObjectStore' (edhUltimate other) >>= \case
         -- assign column to column
         Just (_, colOther@(Column !dtOther !clvOther _)) -> if dtOther /= dt
@@ -966,7 +965,7 @@ createColumnClass !defaultDt !clsOuterScope =
                                       colOther
                                       (exitEdh ets exit edhNA)
                     $ exitEdh ets exit
-                    $ EdhObject colObj
+                    $ EdhObject thatCol
                 "intp" -> -- fancy index
                   elemInpFancyColumn ets
                                      idxCol
@@ -975,7 +974,7 @@ createColumnClass !defaultDt !clsOuterScope =
                                      colOther
                                      (exitEdh ets exit edhNA)
                     $ exitEdh ets exit
-                    $ EdhObject colObj
+                    $ EdhObject thatCol
                 !badDti ->
                   throwEdh ets UsageError
                     $  "invalid dtype="
@@ -1016,7 +1015,7 @@ createColumnClass !defaultDt !clsOuterScope =
                                     colOther
                                     (exitEdh ets exit edhNA)
                       $ exitEdh ets exit
-                      $ EdhObject colObj
+                      $ EdhObject thatCol
               Right (EdhSlice !start !stop !step) -> do
                 !cl <- columnLength col
                 edhRegulateSlice ets cl (start, stop, step) $ \ !slice ->
@@ -1040,7 +1039,7 @@ createColumnClass !defaultDt !clsOuterScope =
                                    (edhUltimate other)
                                    (exitEdh ets exit edhNA)
                   $ exitEdh ets exit
-                  $ EdhObject colObj
+                  $ EdhObject thatCol
               "intp" -> -- fancy index
                 vecInpFancyColumn ets
                                   idxCol
@@ -1049,7 +1048,7 @@ createColumnClass !defaultDt !clsOuterScope =
                                   (edhUltimate other)
                                   (exitEdh ets exit edhNA)
                   $ exitEdh ets exit
-                  $ EdhObject colObj
+                  $ EdhObject thatCol
               !badDti ->
                 throwEdh ets UsageError
                   $  "invalid dtype="
@@ -1064,12 +1063,12 @@ createColumnClass !defaultDt !clsOuterScope =
               !cl <- columnLength col
               unsafeFillColumn ets col (edhUltimate other) [0 .. cl - 1]
                 $ exitEdh ets exit
-                $ EdhObject colObj
+                $ EdhObject thatCol
             Right EdhAll -> do
               !cl <- columnLength col
               unsafeFillColumn ets col (edhUltimate other) [0 .. cl - 1]
                 $ exitEdh ets exit
-                $ EdhObject colObj
+                $ EdhObject thatCol
             Right (EdhSlice !start !stop !step) -> do
               !cl <- columnLength col
               edhRegulateSlice ets cl (start, stop, step)
@@ -1081,7 +1080,8 @@ createColumnClass !defaultDt !clsOuterScope =
                                       (edhUltimate other)
                                       (exitEdh ets exit edhNA)
                       $ exitEdh ets exit
-                      $ EdhObject colObj
+                      $ EdhObject thatCol
+    where thatCol = edh'scope'that $ contextScope $ edh'context ets
 
 
   colCmpProc :: (Ordering -> Bool) -> EdhValue -> EdhHostProc
@@ -1092,9 +1092,9 @@ createColumnClass !defaultDt !clsOuterScope =
             elemCmpColumn dtYesNo ets cmp col colOther exitWithResult
           _ -> vecCmpColumn dtYesNo ets cmp col otherVal exitWithResult
    where
-    !colObj = edh'scope'this $ contextScope $ edh'context ets
+    !thisCol = edh'scope'this $ contextScope $ edh'context ets
     exitWithResult !colResult =
-      edhCreateHostObj (edh'obj'class colObj) (toDyn colResult) []
+      edhCreateHostObj (edh'obj'class thisCol) (toDyn colResult) []
         >>= exitEdh ets exit
         .   EdhObject
 
@@ -1117,10 +1117,10 @@ createColumnClass !defaultDt !clsOuterScope =
                            (exitEdh ets exit edhNA)
                            exitWithNewClone
    where
-    !colObj = edh'scope'that $ contextScope $ edh'context ets
-    !that   = edh'scope'that $ contextScope $ edh'context ets
-    exitWithNewClone !colResult = edhCloneHostObj ets colObj that colResult
-      $ \ !thatObjClone -> exitEdh ets exit $ EdhObject thatObjClone
+    !thisCol = edh'scope'this $ contextScope $ edh'context ets
+    !thatCol = edh'scope'that $ contextScope $ edh'context ets
+    exitWithNewClone !colResult = edhCloneHostObj ets thisCol thatCol colResult
+      $ \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
   colInpProc :: (Text -> Dynamic) -> EdhValue -> EdhHostProc
   colInpProc !getOp !other !exit !ets = withThisHostObj ets $ \_hsv !col ->
@@ -1129,12 +1129,12 @@ createColumnClass !defaultDt !clsOuterScope =
           Just (_, colOther@Column{}) ->
             elemInpColumn ets getOp col colOther (exitEdh ets exit edhNA)
               $ exitEdh ets exit
-              $ EdhObject colObj
+              $ EdhObject thatCol
           _ ->
             vecInpColumn ets getOp col otherVal (exitEdh ets exit edhNA)
               $ exitEdh ets exit
-              $ EdhObject colObj
-    where !colObj = edh'scope'that $ contextScope $ edh'context ets
+              $ EdhObject thatCol
+    where !thatCol = edh'scope'that $ contextScope $ edh'context ets
 
   assignOp :: Text -> Dynamic
   assignOp = \case
