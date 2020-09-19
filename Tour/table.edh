@@ -23,7 +23,10 @@ tab = MyTable( name= 'My Demo Table',
 )
 
 # %%
-tab.b|show
+tab|desc
+
+# %%
+tab.b|desc
 
 # %%
 mark( tab.b, 7 )

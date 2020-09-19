@@ -24,6 +24,7 @@ import           Data.Dynamic
 import           Data.Lossless.Decimal         as D
 
 import           Language.Edh.EHI
+import           Language.Edh.Batteries
 
 import           Dim.DataType
 import           Dim.Column
@@ -388,18 +389,30 @@ createTableClass !colClass !clsOuterScope =
                           <> T.replicate (totalWidth + 1) "-"
 
 
-  tabDescProc :: EdhHostProc
-  tabDescProc !exit !ets =
+  tabDescProc :: RestKwArgs -> EdhHostProc
+  tabDescProc !kwargs !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
-      $ \_hsv tab@(Table !trcv !tcols) -> do
-          !trc <- readTMVar trcv
-          exitEdh ets exit
-            $  EdhString
-            $  "table:\n * Row Count: "
-            <> T.pack (show trc)
-  -- TODO fill here with column statistics
-            <> "...\n"
-
+      $ \_hsv (Table !trcv !tcols) ->
+          (fmap tcDesc <$> iopdToList tcols >>=)
+            $ flip seqcontSTM
+            $ \ !tcDescLines -> do
+                !trc <- readTMVar trcv
+                exitEdh ets exit
+                  $  EdhString
+                  $  " * table row count: "
+                  <> T.pack (show trc)
+                  <> "\n"
+                  <> T.unlines tcDescLines
+   where
+    tcDesc :: (AttrKey, Object) -> (Text -> STM ()) -> STM ()
+    tcDesc (!colKey, !colObj) !exit' =
+      runEdhTx ets $ descProc (EdhObject colObj) kwargs $ \ !colDescVal _ets ->
+        edhValueStr ets colDescVal $ \ !colDesc ->
+          exit'
+            $  " * table column "
+            <> T.pack (show colKey)
+            <> " :\n"
+            <> colDesc
 
 centerBriefAlign :: Int -> Text -> Text
 centerBriefAlign !colWidth !txt | colWidth <= 5 = T.take colWidth txt
