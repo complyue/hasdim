@@ -1,2 +1,29 @@
 
-tab = Table( 10, 5, a=f8, b=f4, c=box )
+class MyTable { extends Table
+  method __init__( name as this.name, ***_ ) pass
+  method __repr__() {
+    '# ' ++ this.name ++ ' #\n'
+    ++ super.__repr__()
+  }
+}
+
+# %%
+tab = MyTable( name= 'My Demo Table',
+  capacity= 10, columns= (
+    a=f8, b=f4, c=box,
+  ), row'count=5,
+)
+
+# %%
+tab.b|show
+
+# %%
+mark( tab.b, 7 )
+tab
+
+# %%
+tab|show
+
+# %%
+tab.d = arange( 20 )
+tab.d|show

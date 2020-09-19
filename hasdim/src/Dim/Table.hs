@@ -126,14 +126,17 @@ createTableClass !colClass !clsOuterScope =
   -- | host constructor 
   --    Table(
   --       capacity, rowCount, 
-  --       col1=<dtype> | <Column>, col2=...
+  --       columns=(
+  --         col1=<dtype> | <Column>, col2=...
+  --       ),
   --    )
   tableAllocator
     :: "capacity" !: Int
+    -> "columns" !: KeywordArgs
     -> "row'count" ?: Int
-    -> OrderedDict AttrKey EdhValue
+    -> ArgsPack -- allow/ignore arbitrary ctor args for descendant classes
     -> EdhObjectAllocator
-  tableAllocator (mandatoryArg -> !ctorCap) (defaultArg 0 -> !rowCnt) !kwargs !ctorExit !etsCtor
+  tableAllocator (mandatoryArg -> !ctorCap) (mandatoryArg  -> KeywordArgs  !colSpecs) (defaultArg ctorCap -> !rowCnt) _ctorOtherArgs !ctorExit !etsCtor
     = if ctorCap <= 0
       then
         throwEdh etsCtor UsageError
@@ -144,7 +147,7 @@ createTableClass !colClass !clsOuterScope =
           throwEdh etsCtor UsageError
           $  "table row count should be zero or a positive integer, not "
           <> T.pack (show rowCnt)
-        else odMapContSTM parseColSpec kwargs $ \ !colCreators -> createTable
+        else odMapContSTM parseColSpec colSpecs $ \ !colCreators -> createTable
           etsCtor
           ctorCap
           rowCnt
@@ -249,17 +252,12 @@ createTableClass !colClass !clsOuterScope =
 
 
   tabAttrReadProc :: EdhValue -> EdhHostProc
-  tabAttrReadProc !attrKey !exit !ets =
-    withThisHostObj ets $ \_hsv (Table _ !tcols) -> case attrKey of
-      EdhString !attrName -> iopdLookup (AttrByName attrName) tcols >>= \case
-        Nothing -> exitEdh ets exit nil
-        Just !tcol ->
-          edhCreateHostObj colClass (toDyn tcol) []
-            >>= exitEdh ets exit
-            .   EdhObject
-      !badColId ->
-        throwEdh ets UsageError $ "invalid Column identifier of " <> T.pack
-          (edhTypeNameOf badColId)
+  tabAttrReadProc !keyVal !exit !ets =
+    withThisHostObj ets $ \_hsv (Table _ !tcols) ->
+      edhValueAsAttrKey ets keyVal $ \ !attrKey ->
+        iopdLookup attrKey tcols >>= \case
+          Nothing    -> exitEdh ets exit edhNA
+          Just !tcol -> exitEdh ets exit $ EdhObject tcol
 
   tabAttrWriteProc :: EdhValue -> "toVal" ?: EdhValue -> EdhHostProc
   tabAttrWriteProc !attrKey (optionalArg -> !maybeAttrVal) !exit !ets =
@@ -321,7 +319,7 @@ createTableClass !colClass !clsOuterScope =
       Just (_, Column !dt _ _) ->
         exit' $ T.pack (show colKey) <> "=" <> data'type'identifier dt <> ", "
 
-  tabShowProc :: OrderedDict AttrKey EdhValue -> EdhHostProc
+  tabShowProc :: RestKwArgs -> EdhHostProc
   tabShowProc !kwargs !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
       $ \_hsv tab@(Table !trcv !tcols) ->
