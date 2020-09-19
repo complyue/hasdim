@@ -38,3 +38,6 @@ tab|show
 # %%
 tab.d = arange( 20 )
 tab.d|show
+
+# %%
+tab.columns

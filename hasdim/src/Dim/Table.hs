@@ -105,21 +105,24 @@ createTableClass !colClass !clsOuterScope =
     $ \ !clsScope -> do
         !mths <-
           sequence
-            $ [ (AttrByName nm, ) <$> mkHostProc clsScope vc nm hp
-              | (nm, vc, hp) <-
-                [ ("__cap__" , EdhMethod, wrapHostProc tabCapProc)
-                , ("__grow__", EdhMethod, wrapHostProc tabGrowProc)
-                , ("__len__" , EdhMethod, wrapHostProc tabLenProc)
-                , ("__mark__", EdhMethod, wrapHostProc tabMarkRowCntProc)
-                , ("[]"      , EdhMethod, wrapHostProc tabIdxReadProc)
-                , ("[=]"     , EdhMethod, wrapHostProc tabIdxWriteProc)
-                , ("@"       , EdhMethod, wrapHostProc tabAttrReadProc)
-                , ("@="      , EdhMethod, wrapHostProc tabAttrWriteProc)
-                , ("__repr__", EdhMethod, wrapHostProc tabReprProc)
-                , ("__show__", EdhMethod, wrapHostProc tabShowProc)
-                , ("__desc__", EdhMethod, wrapHostProc tabDescProc)
-                ]
-              ]
+          $  [ (AttrByName nm, ) <$> mkHostProc clsScope vc nm hp
+             | (nm, vc, hp) <-
+               [ ("__cap__" , EdhMethod, wrapHostProc tabCapProc)
+               , ("__grow__", EdhMethod, wrapHostProc tabGrowProc)
+               , ("__len__" , EdhMethod, wrapHostProc tabLenProc)
+               , ("__mark__", EdhMethod, wrapHostProc tabMarkRowCntProc)
+               , ("[]"      , EdhMethod, wrapHostProc tabIdxReadProc)
+               , ("[=]"     , EdhMethod, wrapHostProc tabIdxWriteProc)
+               , ("@"       , EdhMethod, wrapHostProc tabAttrReadProc)
+               , ("@="      , EdhMethod, wrapHostProc tabAttrWriteProc)
+               , ("__repr__", EdhMethod, wrapHostProc tabReprProc)
+               , ("__show__", EdhMethod, wrapHostProc tabShowProc)
+               , ("__desc__", EdhMethod, wrapHostProc tabDescProc)
+               ]
+             ]
+          ++ [ (AttrByName nm, ) <$> mkHostProperty clsScope nm getter setter
+             | (nm, getter, setter) <- [("columns", tabColsGetterProc, Nothing)]
+             ]
         iopdUpdate mths $ edh'scope'entity clsScope
 
  where
@@ -250,6 +253,13 @@ createTableClass !colClass !clsOuterScope =
     -- TODO impl. 
     exitEdh ets exit $ EdhString "<not impl.>"
 
+
+  tabColsGetterProc :: EdhHostProc
+  tabColsGetterProc !exit !ets =
+    withThisHostObj ets $ \_hsv (Table _ !tcols) ->
+      iopdSnapshot tcols >>= \ !tcols' ->
+        exitEdh ets exit $ EdhArgsPack $ ArgsPack [] $ odTransform EdhObject
+                                                                   tcols'
 
   tabAttrReadProc :: EdhValue -> EdhHostProc
   tabAttrReadProc !keyVal !exit !ets =
