@@ -52,8 +52,11 @@ tab|desc
 tab.sq|desc
 
 # %%
-tab.d = 3 ** arange( 20, dtype=f4 )
-tab.d|show
+tab.data1 = 3 ** arange( 20, dtype=f4 )
+tab.data1|show
+
+# %%
+tab|show
 
 # %%
 tab.columns
