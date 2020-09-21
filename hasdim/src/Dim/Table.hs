@@ -39,6 +39,16 @@ data Table = Table {
   , table'columns :: !(IOPD AttrKey Object)
   }
 
+castTableColumn :: Object -> STM Column
+castTableColumn !colObj = castObjectStore colObj >>= \case
+  Nothing        -> error "bug: non-column object in a table"
+  Just (_, !col) -> return col
+
+castTableColumn' :: Object -> STM (Object, Column)
+castTableColumn' !colObj = castObjectStore colObj >>= \case
+  Nothing               -> error "bug: non-column object in a table"
+  Just (!thisCol, !col) -> return (thisCol, col)
+
 tableRowCount :: Table -> STM Int
 tableRowCount (Table !trcv _) = readTMVar trcv
 
@@ -47,12 +57,10 @@ tableRowCapacity (Table _ !cols) = iopdNull cols >>= \case
   True -> return 0
   False ->
     iopdValues cols
-      >>= foldM (\ !cap !col -> min cap <$> colObjLen col) maxBound
- where
-  colObjLen :: Object -> STM Int
-  colObjLen !colObj = castObjectStore colObj >>= \case
-    Just (_, col :: Column) -> columnCapacity col
-    _                       -> error "bug: non-column object in table"
+      >>= foldM
+            (\ !cap !col -> min cap <$> (columnCapacity =<< castTableColumn col)
+            )
+            maxBound
 
 -- | the new row count must not be negative, and must not exceed the cap,
 -- but it's not checked here, thus unsafe
@@ -60,6 +68,32 @@ unsafeMarkTableRowCount :: Int -> Table -> STM ()
 unsafeMarkTableRowCount !rc (Table !trcv _) = do
   void $ tryTakeTMVar trcv
   void $ tryPutTMVar trcv rc
+
+
+readTableRow :: EdhThreadState -> Table -> Int -> (ArgsPack -> STM ()) -> STM ()
+readTableRow !ets (Table !trcVar !tcols) !i !exit =
+  readTMVar trcVar >>= \ !trc -> edhRegulateIndex ets trc i $ \ !rowIdx -> do
+    let readCols !cells [] = exit $ ArgsPack [] $ odFromList $ reverse cells
+        readCols !cells ((!k, !colObj) : rest) =
+          castTableColumn colObj >>= \ !col ->
+            unsafeReadColumnCell ets col rowIdx
+              $ \ !cellVal -> readCols ((k, cellVal) : cells) rest
+    iopdToList tcols >>= readCols []
+
+
+unsafeSliceTable
+  :: EdhThreadState
+  -> Table
+  -> Object
+  -> Object
+  -> Int
+  -> Int
+  -> Int
+  -> EdhTxExit
+  -> STM ()
+unsafeSliceTable !ets !tab !thisTab !thatTab !iStart !iStop !iStep !exit =
+  undefined
+
 
 createTable
   :: EdhThreadState
@@ -127,12 +161,14 @@ createTableClass !colClass !clsOuterScope =
 
  where
 
+  dtBox = makeHostDataType @EdhValue "box" edhNA
+
   -- | host constructor 
   --    Table(
-  --       capacity, rowCount, 
+  --       capacity,
   --       columns=(
   --         col1=<dtype> | <Column>, col2=...
-  --       ),
+  --       ), row'count, 
   --    )
   tableAllocator
     :: "capacity" !: Int
@@ -150,7 +186,7 @@ createTableClass !colClass !clsOuterScope =
       $  "table row count should be zero or a positive integer, not "
       <> T.pack (show rowCnt)
     | otherwise
-    = odMapContSTM parseColSpec colSpecs $ \ !colCreators -> createTable
+    = odMapContSTM' parseColSpec colSpecs $ \ !colCreators -> createTable
       etsCtor
       ctorCap
       rowCnt
@@ -159,24 +195,43 @@ createTableClass !colClass !clsOuterScope =
    where
 
     parseColSpec
-      :: EdhValue
+      :: (AttrKey, EdhValue)
       -> ((Int -> TMVar Int -> (Object -> STM ()) -> STM ()) -> STM ())
       -> STM ()
-    parseColSpec !val !exit = case edhUltimate val of
+    parseColSpec (!key, !val) !exit = case edhUltimate val of
       EdhObject !obj -> castObjectStore obj >>= \case
-        Just (!colThis, col :: Column) -> exit $ copyCol colThis obj col
+        Just (!thisCol, col :: Column) -> exit $ copyCol thisCol obj col
         Nothing                        -> castObjectStore obj >>= \case
           Just (_, !dt) -> exit $ createCol dt
           Nothing ->
             throwEdh etsCtor UsageError
-              $  "neither a Column object nor a dtype, but of class: "
+              $  attrKeyStr key
+              <> " is neither a Column nor a dtype object, but of class: "
               <> objClassName obj
-      !badColSpec -> edhValueRepr etsCtor badColSpec $ \ !colRepr ->
+      EdhArgsPack (ArgsPack !args !kwargs) | odNull kwargs ->
+        exit $ boxCol args
+      !badColSpec -> edhValueDesc etsCtor badColSpec $ \ !badDesc ->
         throwEdh etsCtor UsageError
-          $  "invalid column specification, "
-          <> T.pack (show $ edhTypeNameOf badColSpec)
-          <> ": "
-          <> colRepr
+          $  "invalid column specification for "
+          <> attrKeyStr key
+          <> " - "
+          <> badDesc
+
+    boxCol :: [EdhValue] -> Int -> TMVar Int -> (Object -> STM ()) -> STM ()
+    boxCol !items !cap !clv !exit = do
+      !ha <- unsafeIOToSTM $ do
+        !ha <- MV.unsafeNew cap
+        let fill i _ | i >= cap = return ha
+            fill i []           = do
+              MV.set (MV.unsafeSlice i (cap - i) ha) edhNA
+              return ha
+            fill i (item : rest) = do
+              MV.write ha i item
+              fill (i + 1) rest
+        fill 0 items
+      !csv <- newTVar $ HostArray @EdhValue cap ha
+      let !col = Column dtBox clv csv
+      edhCreateHostObj colClass (toDyn col) [] >>= exit
 
     createCol :: DataType -> Int -> TMVar Int -> (Object -> STM ()) -> STM ()
     createCol !dt !cap !clv !exit = createColumn etsCtor dt cap clv
@@ -244,9 +299,42 @@ createTableClass !colClass !clsOuterScope =
 
 
   tabIdxReadProc :: EdhValue -> EdhHostProc
-  tabIdxReadProc !idxVal !exit !ets =
-    -- TODO impl. 
-    exitEdh ets exit $ EdhString "<not impl.>"
+  tabIdxReadProc !idxVal !exit !ets = withThisHostObj ets $ \_hsv !tab ->
+    castObjectStore' idxVal >>= \case
+      Just (_, !idxCol) ->
+        case data'type'identifier $ column'data'type idxCol of
+          -- "yesno" -> -- yesno index 
+          --            extractColumnBool ets
+          --                              idxCol
+          --                              col
+          --                              (exitEdh ets exit edhNA)
+          --                              exitWithNewClone
+          -- "intp" -> -- fancy index 
+          --           extractColumnFancy ets
+          --                              idxCol
+          --                              col
+          --                              (exitEdh ets exit edhNA)
+          --                              exitWithNewClone
+          !badDti ->
+            throwEdh ets UsageError
+              $  "invalid dtype="
+              <> badDti
+              <> " for a column as an index to a table"
+      Nothing -> parseEdhIndex ets idxVal $ \case
+        Left !err -> throwEdh ets UsageError err
+        Right (EdhIndex !i) ->
+          readTableRow ets tab i $ exitEdh ets exit . EdhArgsPack
+        Right EdhAny -> exitEdh ets exit $ EdhObject thatTab
+        Right EdhAll -> exitEdh ets exit $ EdhObject thatTab
+        Right (EdhSlice !start !stop !step) -> do
+          !trc <- tableRowCount tab
+          edhRegulateSlice ets trc (start, stop, step)
+            $ \(!iStart, !iStop, !iStep) ->
+                unsafeSliceTable ets tab thisTab thatTab iStart iStop iStep exit
+   where
+    !thisTab = edh'scope'this $ contextScope $ edh'context ets
+    !thatTab = edh'scope'that $ contextScope $ edh'context ets
+
 
   tabIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
   tabIdxWriteProc !idxVal !toVal !exit !ets =
@@ -276,7 +364,7 @@ createTableClass !colClass !clsOuterScope =
       Just !attrVal -> case edhUltimate attrVal of
         EdhObject !colObj -> castObjectStore colObj >>= \case
           Nothing                               -> badCol attrVal
-          Just (!colThis, Column !dt !clv !csv) -> do
+          Just (!thisCol, Column !dt !clv !csv) -> do
             !cl  <- readTMVar clv
             !trc <- readTMVar trcv
             if cl < trc
@@ -291,7 +379,7 @@ createTableClass !colClass !clsOuterScope =
                 !ca   <- readTVar csv
                 !tca  <- unsafeIOToSTM $ dupFlatArray ca cl tcap
                 !tcol <- Column dt trcv <$> newTVar tca
-                edhCloneHostObj ets colThis colObj tcol $ \ !newColObj ->
+                edhCloneHostObj ets thisCol colObj tcol $ \ !newColObj ->
                   edhValueAsAttrKey ets attrKey $ \ !key -> do
                     iopdInsert key newColObj tcols
                     exitEdh ets exit $ EdhObject newColObj

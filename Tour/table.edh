@@ -18,25 +18,38 @@ class MyTable { extends Table
 # %%
 tab = MyTable( name= 'My Demo Table',
   capacity= 10, columns= (
-    a=f8, b=f4, c=box,
+    rowidx=arange( 10 ), rownum=arange( 10, dtype=int32 ) + 1,
+    sq=arange( 10, dtype=f8 ) **2, rowdesc=() =< ( # this round bracket
+      # intends for its content indented by Edh formatter
+      for i from range( 10 ) do 'Square of ' ++ i ++ ' is ' ++ i**2
+    ),
   ), row'count= 5,
 )
-
-# %%
-tab|desc
-
-# %%
-tab.b|desc
-
-# %%
-mark( tab.b, 7 )
-tab
 
 # %%
 tab|show
 
 # %%
-tab.d = arange( 20 )
+tab[ 2 ]
+
+# %%
+tab.rowdesc|show
+
+# %%
+mark( tab.sq, 7 )
+tab|show
+
+# %%
+tab[ 6 ]
+
+# %%
+tab|desc
+
+# %%
+tab.sq|desc
+
+# %%
+tab.d = 3 ** arange( 20, dtype=f4 )
 tab.d|show
 
 # %%

@@ -6,6 +6,8 @@ import           Prelude
 
 import           GHC.Conc                       ( unsafeIOToSTM )
 
+import           GHC.Float
+
 import           Foreign                 hiding ( void )
 
 import           Control.Monad
@@ -748,6 +750,9 @@ createColumnClass !defaultDt !clsOuterScope =
                , ("//" , EdhMethod, wrapHostProc $ colOpProc divIntOp)
                , ("//@", EdhMethod, wrapHostProc $ colOpProc divIntByOp)
                , ("//=", EdhMethod, wrapHostProc $ colInpProc divIntOp)
+               , ("**" , EdhMethod, wrapHostProc $ colOpProc powOp)
+               , ("**@", EdhMethod, wrapHostProc $ colOpProc powToOp)
+               , ("**=", EdhMethod, wrapHostProc $ colInpProc powOp)
                ]
              ]
           ++ [ (AttrByName nm, ) <$> mkHostProperty clsScope nm getter setter
@@ -1273,6 +1278,28 @@ createColumnClass !defaultDt !clsOuterScope =
         ((\ !x !y -> D.divIntDecimal y x) :: D.Decimal -> D.Decimal -> D.Decimal
         )
     _ -> toDyn nil -- means not applicable here
+  powOp :: Text -> Dynamic
+  powOp = \case
+    "float64" -> toDyn powerDouble
+    "float32" -> toDyn powerFloat
+    "int64"   -> toDyn ((^) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn ((^) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn ((^) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn ((^) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn ((^) :: Int -> Int -> Int)
+    "decimal" -> toDyn D.powerDecimal
+    _         -> toDyn nil -- means not applicable here
+  powToOp :: Text -> Dynamic
+  powToOp = \case
+    "float64" -> toDyn $ flip powerDouble
+    "float32" -> toDyn $ flip powerFloat
+    "int64"   -> toDyn $ flip ((^) :: Int64 -> Int64 -> Int64)
+    "int32"   -> toDyn $ flip ((^) :: Int32 -> Int32 -> Int32)
+    "int8"    -> toDyn $ flip ((^) :: Int8 -> Int8 -> Int8)
+    "byte"    -> toDyn $ flip ((^) :: Word8 -> Word8 -> Word8)
+    "intp"    -> toDyn $ flip ((^) :: Int -> Int -> Int)
+    "decimal" -> toDyn $ flip D.powerDecimal
+    _         -> toDyn nil -- means not applicable here
 
 
 arangeProc
