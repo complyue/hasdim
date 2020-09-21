@@ -8,6 +8,7 @@ module Dim.DataType where
 import           Prelude
 -- import           Debug.Trace
 
+import           Foreign.ForeignPtr.Unsafe
 import           System.IO.Unsafe               ( unsafePerformIO )
 import           GHC.Conc                       ( unsafeIOToSTM )
 
@@ -855,7 +856,7 @@ hostDataOperations !def'val = FlatOp vecExtractBool
           $ \(mp :: Ptr YesNo) -> do
               !ha' <- MV.unsafeNew mcap
               let go i ri | i >= mcap = do
-                    MV.set (MV.unsafeSlice 0 ri ha') def'val
+                    MV.set (MV.unsafeSlice ri mcap ha') def'val
                     return (HostArray mcap ha', ri)
                   go i ri = do
                     !mv <- peekElemOff mp i
@@ -1103,6 +1104,264 @@ hostDataOperations !def'val = FlatOp vecExtractBool
                 <> T.pack (show cap1)
   elemInpFancy _ _ _ _ _ _ = error "bug: not a host array"
 
+edhDataOperations :: EdhValue -> FlatOp
+edhDataOperations !def'val = FlatOp vecExtractBool
+                                    vecExtractFancy
+                                    vecOp
+                                    elemOp
+                                    vecInp
+                                    vecInpSlice
+                                    vecInpMasked
+                                    vecInpFancy
+                                    elemInp
+                                    elemInpSlice
+                                    elemInpMasked
+                                    elemInpFancy
+ where
+  -- vectorized data extraction with a yesno index, yielding a new array
+  vecExtractBool _ets (DeviceArray !mcap !mfp) (HostArray _cap !ha'') !exit =
+    case cast ha'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector EdhValue) -> do
+        let (mp :: Ptr YesNo) = unsafeForeignPtrToPtr (castForeignPtr mfp)
+        !ha' <- unsafeIOToSTM $ MV.unsafeNew mcap
+        let go i ri | i >= mcap = do
+              unsafeIOToSTM $ MV.set (MV.unsafeSlice ri mcap ha') def'val
+              exit (HostArray mcap ha', ri)
+            go i ri = do
+              !mv <- unsafeIOToSTM $ peekElemOff mp i
+              if mv /= 0
+                then do
+                  unsafeIOToSTM $ MV.unsafeRead ha i >>= MV.unsafeWrite ha' ri
+                  go (i + 1) (ri + 1)
+                else go (i + 1) ri
+        go 0 0
+  vecExtractBool _ _ _ _ = error "bug: not an Edh array"
+  -- vectorized data extraction with a fancy index, yielding a new array
+  vecExtractFancy !ets (DeviceArray !icap !ifp) (HostArray !cap !ha'') !exit =
+    case cast ha'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector EdhValue) -> do
+        !ha' <- unsafeIOToSTM $ MV.unsafeNew icap
+        let (ip :: Ptr Int) = unsafeForeignPtrToPtr (castForeignPtr ifp)
+            go i | i >= icap = exit $ HostArray icap ha'
+            go i             = do
+              !idx <- unsafeIOToSTM $ peekElemOff ip i
+              if idx < 0 || idx >= cap
+                then
+                  throwEdh ets EvalError
+                  $  "fancy index out of bounds: "
+                  <> T.pack (show idx)
+                  <> " vs "
+                  <> T.pack (show cap)
+                else do
+                  unsafeIOToSTM $ MV.read ha idx >>= MV.unsafeWrite ha' i
+                  go (i + 1)
+        go 0
+  vecExtractFancy _ _ _ _ = error "bug: not an Edh array"
+  -- vectorized operation, yielding a new array
+  vecOp !ets (HostArray !cap !ha'') !dop !v !exit = case cast ha'' of
+    Nothing                           -> error "bug: host array dtype mismatch"
+    Just (ha :: MV.IOVector EdhValue) -> case fromDynamic dop of
+      Nothing -> error "bug: dtype op type mismatch"
+      Just (op :: EdhValue -> EdhValue -> EdhHostProc) -> do
+        !ha' <- unsafeIOToSTM $ MV.unsafeNew cap
+        let go i | i >= cap = exit $ HostArray cap ha'
+            go i            = do
+              !ev <- unsafeIOToSTM $ MV.unsafeRead ha i
+              runEdhTx ets $ op ev v $ \ !rv _ets -> do
+                unsafeIOToSTM $ MV.unsafeWrite ha' i rv
+                go (i + 1)
+        go 0
+  vecOp _ _ _ _ _ = error "bug: not an Edh array"
+  -- element-wise operation, yielding a new array
+  elemOp !ets (HostArray !cap1 !ha''1) !dop (HostArray !cap2 !ha''2) !exit =
+    case cast ha''1 of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector EdhValue) -> case cast ha''2 of
+        Nothing -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector EdhValue) -> case fromDynamic dop of
+          Nothing -> error "bug: dtype op type mismatch"
+          Just (op :: EdhValue -> EdhValue -> EdhHostProc) -> do
+            !ha' <- unsafeIOToSTM $ MV.unsafeNew rcap
+            let go i | i >= rcap = exit $ HostArray rcap ha'
+                go i             = do
+                  !ev1 <- unsafeIOToSTM $ MV.unsafeRead ha1 i
+                  !ev2 <- unsafeIOToSTM $ MV.unsafeRead ha2 i
+                  runEdhTx ets $ op ev1 ev2 $ \ !rv _ets -> do
+                    unsafeIOToSTM $ MV.unsafeWrite ha' i rv
+                    go (i + 1)
+            go 0
+    where !rcap = min cap1 cap2
+  elemOp _ _ _ _ _ = error "bug: not an Edh array"
+  -- vectorized operation, inplace modifying the array
+  vecInp !ets (HostArray !cap !ha'') !dop !v !exit = case cast ha'' of
+    Nothing                           -> error "bug: host array dtype mismatch"
+    Just (ha :: MV.IOVector EdhValue) -> case fromDynamic dop of
+      Nothing -> error "bug: dtype op type mismatch"
+      Just (op :: EdhValue -> EdhValue -> EdhHostProc) ->
+        fromEdh ets v $ \ !sv -> do
+          let go i | i >= cap = exit
+              go i            = do
+                !ev <- unsafeIOToSTM $ MV.unsafeRead ha i
+                runEdhTx ets $ op ev sv $ \ !rv _ets -> do
+                  unsafeIOToSTM $ MV.unsafeWrite ha i rv
+                  go (i + 1)
+          go 0
+  vecInp _ _ _ _ _ = error "bug: not an Edh array"
+  -- vectorized operation, inplace modifying the array, with a slice spec
+  vecInpSlice !ets (!start, !stop, !step) (HostArray _cap !ha'') !dop !v !exit
+    = case cast ha'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector EdhValue) -> case fromDynamic dop of
+        Nothing -> error "bug: dtype op type mismatch"
+        Just (op :: EdhValue -> EdhValue -> EdhHostProc) ->
+          fromEdh ets v $ \ !sv -> do
+            let (q, r) = quotRem (stop - start) step
+                !len   = if r == 0 then abs q else 1 + abs q
+            let go _ i | i >= len = exit
+                go n i            = do
+                  !ev <- unsafeIOToSTM $ MV.unsafeRead ha n
+                  runEdhTx ets $ op ev sv $ \ !rv _ets -> do
+                    unsafeIOToSTM $ MV.unsafeWrite ha n rv
+                    go (n + step) (i + 1)
+            go start 0
+  vecInpSlice _ _ _ _ _ _ = error "bug: not an Edh array"
+  -- vectorized operation, inplace modifying the array, with a yesno mask
+  vecInpMasked !ets (DeviceArray _cap !mfp) (HostArray !cap !ha'') !dop !v !exit
+    = case cast ha'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector EdhValue) -> case fromDynamic dop of
+        Nothing -> error "bug: dtype op type mismatch"
+        Just (op :: EdhValue -> EdhValue -> EdhHostProc) -> do
+          let (mp :: Ptr YesNo) = unsafeForeignPtrToPtr (castForeignPtr mfp)
+              go i | i >= cap = exit
+              go i            = do
+                !mv <- unsafeIOToSTM $ peekElemOff mp i
+                when (mv /= 0) $ do
+                  !ev <- unsafeIOToSTM $ MV.unsafeRead ha i
+                  runEdhTx ets $ op ev v $ \ !rv _ets -> do
+                    unsafeIOToSTM $ MV.unsafeWrite ha i rv
+                    go (i + 1)
+          go 0
+  vecInpMasked _ _ _ _ _ _ = error "bug: not an Edh array"
+  -- vectorized operation, inplace modifying the array, with a fancy index
+  vecInpFancy !ets (DeviceArray !icap !ifp) (HostArray !cap !ha'') !dop !v !exit
+    = case cast ha'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector EdhValue) -> case fromDynamic dop of
+        Nothing -> error "bug: dtype op type mismatch"
+        Just (op :: EdhValue -> EdhValue -> EdhHostProc) -> do
+          let (ip :: Ptr Int) = unsafeForeignPtrToPtr (castForeignPtr ifp)
+              go i | i >= icap = exit
+              go i = (unsafeIOToSTM $ peekElemOff ip i) >>= \ !idx ->
+                if idx < 0 || idx >= cap
+                  then
+                    throwEdh ets EvalError
+                    $  "fancy index out of bounds: "
+                    <> T.pack (show idx)
+                    <> " vs "
+                    <> T.pack (show cap)
+                  else do
+                    !ev <- unsafeIOToSTM $ MV.unsafeRead ha idx
+                    runEdhTx ets $ op ev v $ \ !rv _ets -> do
+                      unsafeIOToSTM $ MV.unsafeWrite ha idx rv
+                      go (i + 1)
+          go 0
+  vecInpFancy _ _ _ _ _ _ = error "bug: not an Edh array"
+  -- element-wise operation, inplace modifying array
+  elemInp !ets (HostArray !cap1 !ha''1) !dop (HostArray !cap2 !ha''2) !exit =
+    case cast ha''1 of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector EdhValue) -> case cast ha''2 of
+        Nothing -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector EdhValue) -> case fromDynamic dop of
+          Nothing -> error "bug: dtype op type mismatch"
+          Just (op :: EdhValue -> EdhValue -> EdhHostProc) -> do
+            let go i | i >= rcap = exit
+                go i             = do
+                  !ev1 <- unsafeIOToSTM $ MV.unsafeRead ha1 i
+                  !ev2 <- unsafeIOToSTM $ MV.unsafeRead ha2 i
+                  runEdhTx ets $ op ev1 ev2 $ \ !rv _ets -> do
+                    unsafeIOToSTM $ MV.unsafeWrite ha1 i rv
+                    go (i + 1)
+            go 0
+    where !rcap = min cap1 cap2
+  elemInp _ _ _ _ _ = error "bug: not an Edh array"
+  -- element-wise operation, inplace modifying array, with a slice spec
+  elemInpSlice !ets (!start, !stop, !step) (HostArray _cap1 !ha''1) !dop (HostArray !cap2 !ha''2) !exit
+    = case cast ha''1 of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector EdhValue) -> case cast ha''2 of
+        Nothing -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector EdhValue) -> case fromDynamic dop of
+          Nothing -> error "bug: dtype op type mismatch"
+          Just (op :: EdhValue -> EdhValue -> EdhHostProc) -> do
+            let (q, r) = quotRem (stop - start) step
+                !len   = min cap2 $ if r == 0 then abs q else 1 + abs q
+            let go _ i | i >= len = exit
+                go n i            = do
+                  !ev1 <- unsafeIOToSTM $ MV.unsafeRead ha1 n
+                  !ev2 <- unsafeIOToSTM $ MV.unsafeRead ha2 i
+                  runEdhTx ets $ op ev1 ev2 $ \ !rv _ets -> do
+                    unsafeIOToSTM $ MV.unsafeWrite ha1 n rv
+                    go (n + step) (i + 1)
+            go start 0
+  elemInpSlice _ _ _ _ _ _ = error "bug: not an Edh array"
+  -- element-wise operation, inplace modifying array, with a yesno mask
+  elemInpMasked !ets (DeviceArray _cap !mfp) (HostArray !cap1 !ha''1) !dop (HostArray !cap2 !ha''2) !exit
+    = case cast ha''1 of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector EdhValue) -> case cast ha''2 of
+        Nothing -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector EdhValue) -> case fromDynamic dop of
+          Nothing -> error "bug: dtype op type mismatch"
+          Just (op :: EdhValue -> EdhValue -> EdhHostProc) -> do
+            let (mp :: Ptr YesNo) = unsafeForeignPtrToPtr $ castForeignPtr mfp
+                go i | i >= rcap = exit
+                go i             = do
+                  !mv <- unsafeIOToSTM $ peekElemOff mp i
+                  if mv /= 0
+                    then do
+                      !ev1 <- unsafeIOToSTM $ MV.unsafeRead ha1 i
+                      !ev2 <- unsafeIOToSTM $ MV.unsafeRead ha2 i
+                      runEdhTx ets $ op ev1 ev2 $ \ !rv _ets -> do
+                        unsafeIOToSTM $ MV.unsafeWrite ha1 i rv
+                        go (i + 1)
+                    else go (i + 1)
+            go 0
+    where !rcap = min cap1 cap2
+  elemInpMasked _ _ _ _ _ _ = error "bug: not an Edh array"
+  -- element-wise operation, inplace modifying array, with a fancy index
+  elemInpFancy !ets (DeviceArray !icap !ifp) (HostArray !cap1 !ha''1) !dop (HostArray !cap2 !ha''2) !exit
+    = case cast ha''1 of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha1 :: MV.IOVector EdhValue) -> case cast ha''2 of
+        Nothing -> error "bug: host array dtype mismatch"
+        Just (ha2 :: MV.IOVector EdhValue) -> case fromDynamic dop of
+          Nothing -> error "bug: dtype op type mismatch"
+          Just (op :: EdhValue -> EdhValue -> EdhHostProc) -> do
+            let (ip :: Ptr Int) = unsafeForeignPtrToPtr $ castForeignPtr ifp
+                !len            = min icap cap2
+                go :: Int -> STM ()
+                go i | i >= len = exit
+                go i = (unsafeIOToSTM $ peekElemOff ip i) >>= \ !idx ->
+                  if idx < 0 || idx >= cap1
+                    then
+                      throwEdh ets EvalError
+                      $  "fancy index out of bounds: "
+                      <> T.pack (show idx)
+                      <> " vs "
+                      <> T.pack (show cap1)
+                    else do
+                      !ev1 <- unsafeIOToSTM $ MV.unsafeRead ha1 idx
+                      !ev2 <- unsafeIOToSTM $ MV.unsafeRead ha2 i
+                      runEdhTx ets $ op ev1 ev2 $ \ !rv _ets -> do
+                        unsafeIOToSTM $ MV.unsafeWrite ha1 idx rv
+                        go (i + 1)
+            go 0
+  elemInpFancy _ _ _ _ _ _ = error "bug: not an Edh array"
+
 resolveDataOperator
   :: EdhThreadState
   -> DataTypeIdent
@@ -1158,6 +1417,7 @@ resolveDataOperatorProc !dmrpClass (mandatoryArg-> !dti) !exit !ets =
     "intp"    -> exitWith (deviceDataOperations @Int)
     "yesno"   -> exitWith (deviceDataOperations @YesNo)
     "decimal" -> exitWith (hostDataOperations @D.Decimal D.nan)
+    "box"     -> exitWith (edhDataOperations edhNA)
     _ ->
       throwEdh ets UsageError
         $  "no effective support for such operation on dtype="

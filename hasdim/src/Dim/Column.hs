@@ -27,6 +27,8 @@ import           Data.Lossless.Decimal         as D
 
 import           Language.Edh.EHI
 
+import           Language.Edh.Batteries
+
 import           Dim.XCHG
 import           Dim.DataType
 
@@ -1152,7 +1154,11 @@ createColumnClass !defaultDt !clsOuterScope =
     "intp"    -> toDyn ((\_x !y -> y) :: Int -> Int -> Int)
     "yesno"   -> toDyn ((\_x !y -> y) :: YesNo -> YesNo -> YesNo)
     "decimal" -> toDyn ((\_x !y -> y) :: D.Decimal -> D.Decimal -> D.Decimal)
-    _         -> toDyn nil -- means not applicable here
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp _x !y !exit !ets = exitEdh ets exit y
+      in  toDyn edhOp
+    _ -> toDyn nil -- means not applicable here
 
   bitAndOp :: Text -> Dynamic
   bitAndOp = \case
@@ -1165,6 +1171,11 @@ createColumnClass !defaultDt !clsOuterScope =
     "intp"  -> toDyn ((.&.) :: Int -> Int -> Int)
     "yesno" -> toDyn ((.&.) :: YesNo -> YesNo -> YesNo)
     -- "decimal" -> toDyn ((.&.) :: D.Decimal -> D.Decimal -> D.Decimal)
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              logicalAndProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+      in  toDyn edhOp
     _       -> toDyn nil -- means not applicable here
   bitOrOp :: Text -> Dynamic
   bitOrOp = \case
@@ -1177,6 +1188,11 @@ createColumnClass !defaultDt !clsOuterScope =
     "intp"  -> toDyn ((.|.) :: Int -> Int -> Int)
     "yesno" -> toDyn ((.|.) :: YesNo -> YesNo -> YesNo)
     -- "decimal" -> toDyn ((.|.) :: D.Decimal -> D.Decimal -> D.Decimal)
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              logicalOrProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+      in  toDyn edhOp
     _       -> toDyn nil -- means not applicable here
 
   addOp :: Text -> Dynamic
@@ -1189,7 +1205,12 @@ createColumnClass !defaultDt !clsOuterScope =
     "byte"    -> toDyn ((+) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((+) :: Int -> Int -> Int)
     "decimal" -> toDyn ((+) :: D.Decimal -> D.Decimal -> D.Decimal)
-    _         -> toDyn nil -- means not applicable here
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              addProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+      in  toDyn edhOp
+    _ -> toDyn nil -- means not applicable here
   subtractOp :: Text -> Dynamic
   subtractOp = \case
     "float64" -> toDyn ((-) :: Double -> Double -> Double)
@@ -1200,7 +1221,12 @@ createColumnClass !defaultDt !clsOuterScope =
     "byte"    -> toDyn ((-) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((-) :: Int -> Int -> Int)
     "decimal" -> toDyn ((-) :: D.Decimal -> D.Decimal -> D.Decimal)
-    _         -> toDyn nil -- means not applicable here
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              subtProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+      in  toDyn edhOp
+    _ -> toDyn nil -- means not applicable here
   subtFromOp :: Text -> Dynamic
   subtFromOp = \case
     "float64" -> toDyn ((\ !x !y -> y - x) :: Double -> Double -> Double)
@@ -1212,6 +1238,11 @@ createColumnClass !defaultDt !clsOuterScope =
     "intp"    -> toDyn ((\ !x !y -> y - x) :: Int -> Int -> Int)
     "decimal" ->
       toDyn ((\ !x !y -> y - x) :: D.Decimal -> D.Decimal -> D.Decimal)
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              subtProc (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
+      in  toDyn edhOp
     _ -> toDyn nil -- means not applicable here
   mulOp :: Text -> Dynamic
   mulOp = \case
@@ -1223,7 +1254,12 @@ createColumnClass !defaultDt !clsOuterScope =
     "byte"    -> toDyn ((*) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((*) :: Int -> Int -> Int)
     "decimal" -> toDyn ((*) :: D.Decimal -> D.Decimal -> D.Decimal)
-    _         -> toDyn nil -- means not applicable here
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              mulProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+      in  toDyn edhOp
+    _ -> toDyn nil -- means not applicable here
   divOp :: Text -> Dynamic
   divOp = \case
     "float64" -> toDyn ((/) :: Double -> Double -> Double)
@@ -1234,7 +1270,12 @@ createColumnClass !defaultDt !clsOuterScope =
     "byte"    -> toDyn (div :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn (div :: Int -> Int -> Int)
     "decimal" -> toDyn (D.divDecimal :: D.Decimal -> D.Decimal -> D.Decimal)
-    _         -> toDyn nil -- means not applicable here
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              divProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+      in  toDyn edhOp
+    _ -> toDyn nil -- means not applicable here
   divByOp :: Text -> Dynamic
   divByOp = \case
     "float64" -> toDyn ((\ !x !y -> y / x) :: Double -> Double -> Double)
@@ -1246,6 +1287,11 @@ createColumnClass !defaultDt !clsOuterScope =
     "intp"    -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
     "decimal" -> toDyn
       ((\ !x !y -> D.divDecimal y x) :: D.Decimal -> D.Decimal -> D.Decimal)
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              divProc (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
+      in  toDyn edhOp
     _ -> toDyn nil -- means not applicable here
   divIntOp :: Text -> Dynamic
   divIntOp = \case
@@ -1261,7 +1307,12 @@ createColumnClass !defaultDt !clsOuterScope =
     "byte"    -> toDyn (div :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn (div :: Int -> Int -> Int)
     "decimal" -> toDyn (D.divIntDecimal :: D.Decimal -> D.Decimal -> D.Decimal)
-    _         -> toDyn nil -- means not applicable here
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              divIntProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+      in  toDyn edhOp
+    _ -> toDyn nil -- means not applicable here
   divIntByOp :: Text -> Dynamic
   divIntByOp = \case
     "float64" -> toDyn
@@ -1277,6 +1328,11 @@ createColumnClass !defaultDt !clsOuterScope =
       toDyn
         ((\ !x !y -> D.divIntDecimal y x) :: D.Decimal -> D.Decimal -> D.Decimal
         )
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              divIntProc (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
+      in  toDyn edhOp
     _ -> toDyn nil -- means not applicable here
   powOp :: Text -> Dynamic
   powOp = \case
@@ -1288,7 +1344,12 @@ createColumnClass !defaultDt !clsOuterScope =
     "byte"    -> toDyn ((^) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn ((^) :: Int -> Int -> Int)
     "decimal" -> toDyn D.powerDecimal
-    _         -> toDyn nil -- means not applicable here
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              powProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+      in  toDyn edhOp
+    _ -> toDyn nil -- means not applicable here
   powToOp :: Text -> Dynamic
   powToOp = \case
     "float64" -> toDyn $ flip powerDouble
@@ -1299,7 +1360,12 @@ createColumnClass !defaultDt !clsOuterScope =
     "byte"    -> toDyn $ flip ((^) :: Word8 -> Word8 -> Word8)
     "intp"    -> toDyn $ flip ((^) :: Int -> Int -> Int)
     "decimal" -> toDyn $ flip D.powerDecimal
-    _         -> toDyn nil -- means not applicable here
+    "box" ->
+      let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+          edhOp !x !y =
+              powProc (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
+      in  toDyn edhOp
+    _ -> toDyn nil -- means not applicable here
 
 
 arangeProc
