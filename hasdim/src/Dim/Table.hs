@@ -53,10 +53,10 @@ tableRowCount :: Table -> STM Int
 tableRowCount (Table !trcv _) = readTMVar trcv
 
 tableRowCapacity :: Table -> STM Int
-tableRowCapacity (Table _ !cols) = iopdNull cols >>= \case
+tableRowCapacity (Table _ !tcols) = iopdNull tcols >>= \case
   True -> return 0
   False ->
-    iopdValues cols
+    iopdValues tcols
       >>= foldM
             (\ !cap !col -> min cap <$> (columnCapacity =<< castTableColumn col)
             )
@@ -79,20 +79,6 @@ readTableRow !ets (Table !trcVar !tcols) !i !exit =
             unsafeReadColumnCell ets col rowIdx
               $ \ !cellVal -> readCols ((k, cellVal) : cells) rest
     iopdToList tcols >>= readCols []
-
-
-unsafeSliceTable
-  :: EdhThreadState
-  -> Table
-  -> Object
-  -> Object
-  -> Int
-  -> Int
-  -> Int
-  -> EdhTxExit
-  -> STM ()
-unsafeSliceTable !ets !tab !thisTab !thatTab !iStart !iStop !iStep !exit =
-  undefined
 
 
 createTable
@@ -329,8 +315,25 @@ createTableClass !colClass !clsOuterScope =
         Right (EdhSlice !start !stop !step) -> do
           !trc <- tableRowCount tab
           edhRegulateSlice ets trc (start, stop, step)
-            $ \(!iStart, !iStop, !iStep) ->
-                unsafeSliceTable ets tab thisTab thatTab iStart iStop iStep exit
+            $ \(!iStart, !iStop, !iStep) -> do
+                let (q, r)    = quotRem (iStop - iStart) iStep
+                    !sliceLen = if r == 0 then abs q else 1 + abs q
+                !trcVarNew <- newTMVar sliceLen
+                !tcolsNew  <- iopdEmpty
+                let sliceCols [] =
+                      edhCloneHostObj ets
+                                      thisTab
+                                      thatTab
+                                      (Table trcVarNew tcolsNew)
+                        $ \ !newTabObj -> exitEdh ets exit $ EdhObject newTabObj
+                    sliceCols ((!key, !thatCol) : rest) =
+                      castTableColumn' thatCol >>= \(!thisCol, !col) ->
+                        unsafeSliceColumn col iStart iStop iStep $ \ !colNew ->
+                          edhCloneHostObj ets thisCol thatCol colNew
+                            $ \ !newColObj -> do
+                                iopdInsert key newColObj tcolsNew
+                                sliceCols rest
+                iopdToList (table'columns tab) >>= sliceCols
    where
     !thisTab = edh'scope'this $ contextScope $ edh'context ets
     !thatTab = edh'scope'that $ contextScope $ edh'context ets
@@ -418,55 +421,65 @@ createTableClass !colClass !clsOuterScope =
         exit' $ T.pack (show colKey) <> "=" <> data'type'identifier dt <> ", "
 
 
-  tabShowProc :: RestKwArgs -> EdhHostProc
-  tabShowProc !kwargs !exit !ets =
-    withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
-      $ \_hsv tab@(Table !trcv !tcols) ->
-          let
-            parseTabTitle :: (Text -> STM ()) -> EdhValue -> STM ()
-            parseTabTitle !exit' = \case
-              EdhString !title -> exit' title
-              !titleVal -> edhValueRepr ets titleVal $ \ !title -> exit' title
-            parseColWidth :: (Int -> STM ()) -> EdhValue -> STM ()
-            parseColWidth !exit' = \case
-              EdhDecimal !cwNum -> case D.decimalToInteger cwNum of
-                Just !cw | cw > 0 && cw < 200 -> exit' $ fromInteger cw
-                _ ->
-                  throwEdh ets UsageError $ "invalid columnWidth: " <> T.pack
-                    (show cwNum)
-              !badColWidthVal ->
-                edhValueRepr ets badColWidthVal $ \ !badColWidth ->
-                  throwEdh ets UsageError
-                    $  "invalid columnWidth: "
-                    <> badColWidth
-          in
-            odLookupContSTM 10 (flip parseColWidth) (AttrByName "cw") kwargs
-              $ \ !colWidth ->
-                  odLookupContSTM "table"
-                                  (flip parseTabTitle)
-                                  (AttrByName "title")
-                                  kwargs
-                    $ \ !tabTitle -> do
-                        !tcc        <- iopdSize tcols
-                        !trc        <- readTMVar trcv
-                        !cap        <- tableRowCapacity tab
-                        !colEntries <- iopdToList tcols
-                        let !titleLine =
-                              T.concat
-                                $   centerBriefAlign colWidth
-                                .   T.pack
-                                .   show
-                                .   fst
-                                <$> colEntries
-                            !totalWidth = T.length titleLine
+  tabShowProc :: "columnWidth" ?: Int -> RestKwArgs -> EdhHostProc
+  tabShowProc (defaultArg 10 -> !colWidth) _kwargs !exit !ets =
+    if colWidth <= 0 || colWidth > 2000
+      then throwEdh ets UsageError $ "invalid columnWidth: " <> T.pack
+        (show colWidth)
+      else
+        withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
+          $ \_hsv tab@(Table !trcv !tcols) -> do
+              !tcc        <- iopdSize tcols
+              !trc        <- readTMVar trcv
+              !cap        <- tableRowCapacity tab
+              !colEntries <- iopdToList tcols
+              let !titleLine =
+                    T.concat
+                      $   centerBriefAlign colWidth
+                      .   attrKeyStr
+                      .   fst
+                      <$> colEntries
+                  !totalWidth = T.length titleLine
+              seqcontSTM
+                  ((<$> colEntries) $ \(_colKey, !colObj) !cellRdrExit ->
+                    castTableColumn colObj >>= \(Column !dt _clv !csv) -> do
+                      !cs <- readTVar csv
+                      cellRdrExit $ flat'array'read dt ets cs
+                  )
+                $ \(cellReaders :: [Int -> (EdhValue -> STM ()) -> STM ()]) ->
+                    let
+                      rowLine :: Int -> (Text -> STM ()) -> STM ()
+                      rowLine !i !rowLineExit = readCells "|" cellReaders
+                       where
+                        readCells !line [] = rowLineExit line
+                        readCells !line (colReader : rest) =
+                          colReader i $ \ !cellVal ->
+                            edhValueStr ets cellVal
+                              $ \ !cellStr -> readCells
+                                  (line <> centerBriefAlign colWidth cellStr)
+                                  rest
+                      rowLines :: [Int] -> ([Text] -> STM ()) -> STM ()
+                      rowLines !rowIdxs !rowLinesExit = go [] rowIdxs
+                       where
+                        go !rls [] = rowLinesExit $ reverse rls
+                        go !rls (rowIdx : rest) =
+                          rowLine rowIdx $ \ !line -> go (line : rls) rest
+                      dataLines :: ([Text] -> STM ()) -> STM ()
+                      dataLines !dataLinesExit = if trc <= 20
+                        -- TODO make this tunable
+                        then rowLines [0 .. trc - 1] dataLinesExit
+                        else rowLines [0 .. 10] $ \ !headLines ->
+                          rowLines [trc - 11 .. trc - 1] $ \ !tailLines ->
+                            dataLinesExit $ headLines <> ["..."] <> tailLines
+                    in
+                      dataLines $ \ !dls ->
                         exitEdh ets exit
                           $  EdhString
                           $  T.replicate (totalWidth + 1) "-"
                           <> "\n|"
                           <> centerBriefAlign
                                totalWidth
-                               (  tabTitle
-                               <> " "
+                               (  "table "
                                <> T.pack (show trc)
                                <> "/"
                                <> T.pack (show cap)
@@ -479,12 +492,10 @@ createTableClass !colClass !clsOuterScope =
                           <> titleLine
                           <> "\n|"
                           <> T.replicate (totalWidth - 1) "-"
-                          <> "|\n|"
+                          <> "|\n"
 
-  -- TODO fill here with column data
-                          <> centerBriefAlign totalWidth "..."
+                          <> T.unlines dls
 
-                          <> "\n"
                           <> T.replicate (totalWidth + 1) "-"
 
 

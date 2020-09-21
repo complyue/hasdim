@@ -27,10 +27,13 @@ tab = MyTable( name= 'My Demo Table',
 )
 
 # %%
-tab|show
+tab | ( columnWidth=25 ) | show
 
 # %%
 tab[ 2 ]
+
+# %%
+tab[ 2:9:2 ] | show
 
 # %%
 tab.rowdesc|show
