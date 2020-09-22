@@ -856,7 +856,7 @@ hostDataOperations !def'val = FlatOp vecExtractBool
           $ \(mp :: Ptr YesNo) -> do
               !ha' <- MV.unsafeNew mcap
               let go i ri | i >= mcap = do
-                    MV.set (MV.unsafeSlice ri mcap ha') def'val
+                    MV.set (MV.unsafeSlice ri (mcap - ri) ha') def'val
                     return (HostArray mcap ha', ri)
                   go i ri = do
                     !mv <- peekElemOff mp i
@@ -1126,7 +1126,7 @@ edhDataOperations !def'val = FlatOp vecExtractBool
         let (mp :: Ptr YesNo) = unsafeForeignPtrToPtr (castForeignPtr mfp)
         !ha' <- unsafeIOToSTM $ MV.unsafeNew mcap
         let go i ri | i >= mcap = do
-              unsafeIOToSTM $ MV.set (MV.unsafeSlice ri mcap ha') def'val
+              unsafeIOToSTM $ MV.set (MV.unsafeSlice ri (mcap - ri) ha') def'val
               exit (HostArray mcap ha', ri)
             go i ri = do
               !mv <- unsafeIOToSTM $ peekElemOff mp i
