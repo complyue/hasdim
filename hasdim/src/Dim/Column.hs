@@ -189,7 +189,17 @@ extractColumnBool
   -> STM ()
   -> (Column -> STM ())
   -> STM ()
-extractColumnBool !ets (Column _mdt !mclv !mcsv) (Column !dt !clv !csv) !naExit !exit
+extractColumnBool !ets !idxCol !col !naExit !exit = newEmptyTMVar
+  >>= \ !clvNew -> extractColumnBool' clvNew ets idxCol col naExit exit
+extractColumnBool'
+  :: TMVar Int
+  -> EdhThreadState
+  -> Column
+  -> Column
+  -> STM ()
+  -> (Column -> STM ())
+  -> STM ()
+extractColumnBool' !clvNew !ets (Column _mdt !mclv !mcsv) (Column !dt !clv !csv) !naExit !exit
   = do
     !cl <- readTMVar clv
     !cs <- readTVar csv
@@ -207,9 +217,9 @@ extractColumnBool !ets (Column _mdt !mclv !mcsv) (Column !dt !clv !csv) !naExit 
           !mcs <- readTVar mcsv
           let !ma = unsafeSliceFlatArray mcs 0 mcl
           flat'extract'yesno dtOp ets ma fa $ \(!rfa, !rlen) -> do
-            !clvRtn <- newTMVar rlen
+            void $ tryPutTMVar clvNew rlen
             !csvRtn <- newTVar rfa
-            exit $ Column dt clvRtn csvRtn
+            exit $ Column dt clvNew csvRtn
 
 
 extractColumnFancy
@@ -219,7 +229,17 @@ extractColumnFancy
   -> STM ()
   -> (Column -> STM ())
   -> STM ()
-extractColumnFancy !ets (Column _idti !iclv !icsv) (Column !dt !clv !csv) !naExit !exit
+extractColumnFancy !ets !idxCol !col !naExit !exit = newEmptyTMVar
+  >>= \ !clvNew -> extractColumnFancy' clvNew ets idxCol col naExit exit
+extractColumnFancy'
+  :: TMVar Int
+  -> EdhThreadState
+  -> Column
+  -> Column
+  -> STM ()
+  -> (Column -> STM ())
+  -> STM ()
+extractColumnFancy' !clvNew !ets (Column _idti !iclv !icsv) (Column !dt !clv !csv) !naExit !exit
   = do
     !icl <- readTMVar iclv
     !ics <- readTVar icsv
@@ -229,9 +249,9 @@ extractColumnFancy !ets (Column _idti !iclv !icsv) (Column !dt !clv !csv) !naExi
       let !ifa = unsafeSliceFlatArray ics 0 icl
           !fa  = unsafeSliceFlatArray cs 0 cl
       flat'extract'fancy dtOp ets ifa fa $ \ !rfa -> do
-        !clvRtn <- newTMVar icl
+        void $ tryPutTMVar clvNew icl
         !csvRtn <- newTVar rfa
-        exit $ Column dt clvRtn csvRtn
+        exit $ Column dt clvNew csvRtn
 
 
 vecCmpColumn

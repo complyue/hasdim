@@ -21,8 +21,6 @@ import qualified Data.Vector.Mutable           as MV
 
 import           Data.Dynamic
 
-import           Data.Lossless.Decimal         as D
-
 import           Language.Edh.EHI
 import           Language.Edh.Batteries
 
@@ -289,18 +287,42 @@ createTableClass !colClass !clsOuterScope =
     castObjectStore' idxVal >>= \case
       Just (_, !idxCol) ->
         case data'type'identifier $ column'data'type idxCol of
-          -- "yesno" -> -- yesno index 
-          --            extractColumnBool ets
-          --                              idxCol
-          --                              col
-          --                              (exitEdh ets exit edhNA)
-          --                              exitWithNewClone
-          -- "intp" -> -- fancy index 
-          --           extractColumnFancy ets
-          --                              idxCol
-          --                              col
-          --                              (exitEdh ets exit edhNA)
-          --                              exitWithNewClone
+          "yesno" -> do -- yesno index 
+            !trcVarNew <- newEmptyTMVar
+            !tcolsNew  <- iopdEmpty
+            let
+              extractCols [] =
+                edhCloneHostObj ets thisTab thatTab (Table trcVarNew tcolsNew)
+                  $ \ !newTabObj -> exitEdh ets exit $ EdhObject newTabObj
+              extractCols ((!key, !thatCol) : rest) =
+                castTableColumn' thatCol >>= \(!thisCol, !col) ->
+                  extractColumnBool' trcVarNew ets idxCol col (extractCols rest)
+                    $ \ !colNew ->
+                        edhCloneHostObj ets thisCol thatCol colNew
+                          $ \ !newColObj -> do
+                              iopdInsert key newColObj tcolsNew
+                              extractCols rest
+            iopdToList (table'columns tab) >>= extractCols
+          "intp" -> do -- fancy index 
+            !trcVarNew <- newEmptyTMVar
+            !tcolsNew  <- iopdEmpty
+            let
+              extractCols [] =
+                edhCloneHostObj ets thisTab thatTab (Table trcVarNew tcolsNew)
+                  $ \ !newTabObj -> exitEdh ets exit $ EdhObject newTabObj
+              extractCols ((!key, !thatCol) : rest) =
+                castTableColumn' thatCol >>= \(!thisCol, !col) ->
+                  extractColumnFancy' trcVarNew
+                                      ets
+                                      idxCol
+                                      col
+                                      (extractCols rest)
+                    $ \ !colNew ->
+                        edhCloneHostObj ets thisCol thatCol colNew
+                          $ \ !newColObj -> do
+                              iopdInsert key newColObj tcolsNew
+                              extractCols rest
+            iopdToList (table'columns tab) >>= extractCols
           !badDti ->
             throwEdh ets UsageError
               $  "invalid dtype="

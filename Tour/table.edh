@@ -23,7 +23,7 @@ tab = MyTable( name= 'My Demo Table',
       # intends for its content indented by Edh formatter
       for i from range( 10 ) do 'Square of ' ++ i ++ ' is ' ++ i**2
     ),
-  ), row'count= 5,
+  ), row'count= 8,
 )
 
 # %%
@@ -33,7 +33,16 @@ tab | ( columnWidth=25 ) | show
 tab[ 2 ]
 
 # %%
-tab[ 2:9:2 ] | show
+tab[ 2:7:2 ] | show
+
+# %%
+tab.sq > 5 && tab.sq < 20 | where | show
+
+# %%
+tab[ tab.sq > 5 && tab.sq < 20 ] | show
+
+# %%
+tab[ where $ tab.sq > 5 && tab.sq < 20 ] | show
 
 # %%
 tab.rowdesc|show
