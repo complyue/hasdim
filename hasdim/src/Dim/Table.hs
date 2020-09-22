@@ -364,8 +364,65 @@ createTableClass !colClass !clsOuterScope =
 
   tabIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
   tabIdxWriteProc !idxVal !toVal !exit !ets =
-    -- TODO impl. 
-    exitEdh ets exit $ EdhString "<not impl.>"
+    withThisHostObj ets $ \_hsv (Table !trcv !tcols) -> readTMVar trcv
+      >>= \ !trc -> iopdToList tcols >>= matchColTgts trc assignCols
+   where
+    assignCols :: [(Object, EdhValue)] -> STM ()
+    assignCols [] = exitEdh ets exit toVal
+    assignCols ((!colObj, !tgtVal) : rest) =
+      castTableColumn colObj >>= \ !col ->
+        runEdhTx ets $ idxAssignColumn col idxVal tgtVal $ \_ _ets ->
+          assignCols rest
+
+    matchColTgts
+      :: Int
+      -> ([(Object, EdhValue)] -> STM ())
+      -> [(AttrKey, Object)]
+      -> STM ()
+    matchColTgts !trc !mcExit !cols = case edhUltimate toVal of
+      -- assign with an apk
+      EdhArgsPack (ArgsPack !tgts !kwtgts) -> matchApk [] cols tgts kwtgts
+      !toVal'                              -> castObjectStore' toVal' >>= \case
+        -- assign with another table 
+        Just (_tabOther, Table !trcvOther !tcolsOther) -> do
+          !trcOther <- readTMVar trcvOther
+          if trc /= trcOther
+            then
+              throwEdh ets UsageError
+              $  "table row count mismatch: "
+              <> T.pack (show trc)
+              <> " vs "
+              <> T.pack (show trcOther)
+            else iopdSnapshot tcolsOther >>= matchTab [] cols
+        -- assign with a scalar
+        Nothing -> mcExit $ (, toVal) . snd <$> cols
+     where
+      matchApk
+        :: [(Object, EdhValue)]
+        -> [(AttrKey, Object)]
+        -> [EdhValue]
+        -> KwArgs
+        -> STM ()
+      matchApk !ms [] _ _ = mcExit $! reverse ms
+      matchApk !ms ((!colKey, !colObj) : rest) !tgts !kwtgts =
+        case odLookup colKey kwtgts of
+          Just !tgtVal -> matchApk ((colObj, tgtVal) : ms) rest tgts kwtgts
+          Nothing      -> case tgts of
+            [] -> matchApk ms rest [] kwtgts
+            tgtVal : tgts' ->
+              matchApk ((colObj, tgtVal) : ms) rest tgts' kwtgts
+
+      matchTab
+        :: [(Object, EdhValue)]
+        -> [(AttrKey, Object)]
+        -> OrderedDict AttrKey Object
+        -> STM ()
+      matchTab !ms [] _ = mcExit $! reverse ms
+      matchTab !ms ((!colKey, !colObj) : rest) !colsOther =
+        case odLookup colKey colsOther of
+          Nothing -> matchTab ms rest colsOther
+          Just !colOther ->
+            matchTab ((colObj, EdhObject colOther) : ms) rest colsOther
 
 
   tabColsGetterProc :: EdhHostProc

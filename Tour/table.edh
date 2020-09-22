@@ -27,7 +27,7 @@ tab = MyTable( name= 'My Demo Table',
 )
 
 # %%
-tab | ( columnWidth=( 6, 6, 3, rowdesc=20, ) ) | show
+tab | ( columnWidth=( 6, rowdesc=20, ) ) | show
 
 # %%
 tab[ 2 ]
@@ -69,3 +69,15 @@ tab|show
 
 # %%
 tab.columns
+
+# %%
+tab[ 2:5 ] = 77
+tab|show
+
+# %%
+tab[ 2:5 ] =( sq=33 )
+tab|show
+
+# %%
+tab[ 2:5 ] =( rownum=arange( 99:96, dtype=i4 ) )
+tab|show
