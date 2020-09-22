@@ -27,7 +27,7 @@ tab = MyTable( name= 'My Demo Table',
 )
 
 # %%
-tab | ( columnWidth=25 ) | show
+tab | ( columnWidth=( 6, 6, 3, rowdesc=20, ) ) | show
 
 # %%
 tab[ 2 ]

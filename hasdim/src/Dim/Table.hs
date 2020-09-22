@@ -21,6 +21,8 @@ import qualified Data.Vector.Mutable           as MV
 
 import           Data.Dynamic
 
+import           Data.Lossless.Decimal         as D
+
 import           Language.Edh.EHI
 import           Language.Edh.Batteries
 
@@ -443,82 +445,112 @@ createTableClass !colClass !clsOuterScope =
         exit' $ T.pack (show colKey) <> "=" <> data'type'identifier dt <> ", "
 
 
-  tabShowProc :: "columnWidth" ?: Int -> RestKwArgs -> EdhHostProc
-  tabShowProc (defaultArg 10 -> !colWidth) _kwargs !exit !ets =
-    if colWidth <= 0 || colWidth > 2000
-      then throwEdh ets UsageError $ "invalid columnWidth: " <> T.pack
-        (show colWidth)
-      else
-        withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
-          $ \_hsv tab@(Table !trcv !tcols) -> do
-              !tcc        <- iopdSize tcols
-              !trc        <- readTMVar trcv
-              !cap        <- tableRowCapacity tab
-              !colEntries <- iopdToList tcols
-              let !titleLine =
-                    T.concat
-                      $   centerBriefAlign colWidth
-                      .   attrKeyStr
-                      .   fst
-                      <$> colEntries
-                  !totalWidth = T.length titleLine
-              seqcontSTM
-                  ((<$> colEntries) $ \(_colKey, !colObj) !cellRdrExit ->
-                    castTableColumn colObj >>= \(Column !dt _clv !csv) -> do
-                      !cs <- readTVar csv
-                      cellRdrExit $ flat'array'read dt ets cs
-                  )
-                $ \(cellReaders :: [Int -> (EdhValue -> STM ()) -> STM ()]) ->
-                    let
-                      rowLine :: Int -> (Text -> STM ()) -> STM ()
-                      rowLine !i !rowLineExit = readCells "|" cellReaders
-                       where
-                        readCells !line [] = rowLineExit line
-                        readCells !line (colReader : rest) =
-                          colReader i $ \ !cellVal ->
-                            edhValueStr ets cellVal
-                              $ \ !cellStr -> readCells
-                                  (line <> centerBriefAlign colWidth cellStr)
-                                  rest
-                      rowLines :: [Int] -> ([Text] -> STM ()) -> STM ()
-                      rowLines !rowIdxs !rowLinesExit = go [] rowIdxs
-                       where
-                        go !rls [] = rowLinesExit $ reverse rls
-                        go !rls (rowIdx : rest) =
-                          rowLine rowIdx $ \ !line -> go (line : rls) rest
-                      dataLines :: ([Text] -> STM ()) -> STM ()
-                      dataLines !dataLinesExit = if trc <= 20
-                        -- TODO make this tunable
-                        then rowLines [0 .. trc - 1] dataLinesExit
-                        else rowLines [0 .. 10] $ \ !headLines ->
-                          rowLines [trc - 11 .. trc - 1] $ \ !tailLines ->
-                            dataLinesExit $ headLines <> ["..."] <> tailLines
-                    in
-                      dataLines $ \ !dls ->
-                        exitEdh ets exit
-                          $  EdhString
-                          $  T.replicate (totalWidth + 1) "-"
-                          <> "\n|"
-                          <> centerBriefAlign
-                               totalWidth
-                               (  "table "
-                               <> T.pack (show trc)
-                               <> "/"
-                               <> T.pack (show cap)
-                               <> " * "
-                               <> T.pack (show tcc)
-                               )
-                          <> "\n|"
-                          <> T.replicate (totalWidth - 1) "-"
-                          <> "|\n|"
-                          <> titleLine
-                          <> "\n|"
-                          <> T.replicate (totalWidth - 1) "-"
-                          <> "|\n"
+  tabShowProc :: "columnWidth" ?: PackedArgs -> EdhHostProc
+  tabShowProc (defaultArg (PackedArgs (ArgsPack [] odEmpty)) -> PackedArgs (ArgsPack !posWidth !kwWidth)) !exit !ets
+    = withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>")
+      $ \_hsv (Table !trcv !tcols) -> prepareCols tcols $ \ !colSpecs -> do
+          !tcc <- iopdSize tcols
+          !trc <- readTMVar trcv
+          let !titleLine =
+                T.concat $ (<$> colSpecs) $ \(!title, !colWidth, _cellRdr) ->
+                  centerBriefAlign (colWidth + 1) $ title
+              !totalWidth = T.length titleLine
+          let
+            rowLine :: Int -> (Text -> STM ()) -> STM ()
+            rowLine !i !rowLineExit = readCells "|" colSpecs
+             where
+              readCells !line [] = rowLineExit line
+              readCells !line ((_title, !colWidth, !cellRdr) : rest) =
+                cellRdr i $ \ !cellVal ->
+                  edhValueStr ets cellVal
+                    $ \ !cellStr -> readCells
+                        (line <> centerBriefAlign (colWidth + 1) cellStr)
+                        rest
+            rowLines :: [Int] -> ([Text] -> STM ()) -> STM ()
+            rowLines !rowIdxs !rowLinesExit = go [] rowIdxs
+             where
+              go !rls [] = rowLinesExit $ reverse rls
+              go !rls (rowIdx : rest) =
+                rowLine rowIdx $ \ !line -> go (line : rls) rest
+            dataLines :: ([Text] -> STM ()) -> STM ()
+            dataLines !dataLinesExit = if trc <= 20
+              -- TODO make this tunable
+              then rowLines [0 .. trc - 1] dataLinesExit
+              else rowLines [0 .. 10] $ \ !headLines ->
+                rowLines [trc - 11 .. trc - 1] $ \ !tailLines ->
+                  dataLinesExit $ headLines <> ["..."] <> tailLines
+          dataLines $ \ !dls ->
+            exitEdh ets exit
+              $  EdhString
+              $  T.replicate (totalWidth + 1) "-"
+              <> "\n|"
+              <> centerBriefAlign
+                   totalWidth
+                   (  "table of "
+                   <> T.pack (show tcc)
+                   <> " columns * "
+                   <> T.pack (show trc)
+                   <> " rows"
+                   )
+              <> "\n|"
+              <> T.replicate (totalWidth - 1) "-"
+              <> "|\n|"
+              <> titleLine
+              <> "\n|"
+              <> T.replicate (totalWidth - 1) "-"
+              <> "|\n"
 
-                          <> T.unlines dls
+              <> T.unlines dls
 
-                          <> T.replicate (totalWidth + 1) "-"
+              <> T.replicate (totalWidth + 1) "-"
+   where
+    prepareCols
+      :: IOPD AttrKey Object
+      -> (  [(Text -- ^ column title
+                  , Int -- ^ display width 
+                          -- | cell reader
+                       , Int -> (EdhValue -> STM ()) -> STM ())]
+         -> STM ()
+         )
+      -> STM ()
+    prepareCols !tcols !colsExit =
+      iopdToList tcols >>= prepareSpecs [] posWidth kwWidth
+     where
+      prepareSpecs
+        :: [(Text, Int, Int -> (EdhValue -> STM ()) -> STM ())]
+        -> [EdhValue]
+        -> KwArgs
+        -> [(AttrKey, Object)]
+        -> STM ()
+      prepareSpecs !specs _ _ [] = colsExit $! reverse specs
+      prepareSpecs !specs !pos'w !kw'w ((!colKey, !colObj) : rest) = do
+        (Column !dt _clv !csv) <- castTableColumn colObj
+        !cs                    <- readTVar csv
+        let !title   = attrKeyStr colKey
+            !cellRdr = flat'array'read dt ets cs
+        case odTakeOut colKey kw'w of
+          (Just !cwVal, !kw'w') -> parseColWidth cwVal $ \ !colWidth ->
+            prepareSpecs ((title, colWidth, cellRdr) : specs) pos'w kw'w' rest
+          (Nothing, !kw'w') -> case pos'w of
+            [] -> prepareSpecs ((title, 10, cellRdr) : specs) pos'w kw'w' rest
+            [!cwVal] -> parseColWidth cwVal $ \ !colWidth -> prepareSpecs
+              ((title, colWidth, cellRdr) : specs)
+              pos'w
+              kw'w'
+              rest
+            cwVal : pos'w' -> parseColWidth cwVal $ \ !colWidth ->
+              prepareSpecs ((title, colWidth, cellRdr) : specs)
+                           pos'w'
+                           kw'w'
+                           rest
+      parseColWidth :: EdhValue -> (Int -> STM ()) -> STM ()
+      parseColWidth !cwVal !cwExit = case edhUltimate cwVal of
+        EdhDecimal !d -> case D.decimalToInteger d of
+          Just !i | i > 0 && i < 2000 -> cwExit $ fromInteger i
+          _                           -> edhValueDesc ets cwVal $ \ !cwDesc ->
+            throwEdh ets UsageError $ "invalid columnWidth: " <> cwDesc
+        _ -> edhValueDesc ets cwVal $ \ !cwDesc ->
+          throwEdh ets UsageError $ "invalid columnWidth: " <> cwDesc
 
 
   tabDescProc :: RestKwArgs -> EdhHostProc
@@ -548,14 +580,19 @@ createTableClass !colClass !clsOuterScope =
 
 
 centerBriefAlign :: Int -> Text -> Text
-centerBriefAlign !colWidth !txt | colWidth <= 5 = T.take colWidth txt
-centerBriefAlign !colWidth !txt                 = if len < colWidth
+centerBriefAlign !dispWidth !txt | dispWidth < 4 =
+  let !txt' = T.take dispWidth txt
+      !len  = T.length txt'
+  in  if len < dispWidth
+        then txt' <> T.replicate (dispWidth - len) " "
+        else txt'
+centerBriefAlign !dispWidth !txt = if len < dispWidth
   then
-    let (!margin, !rightPadding) = quotRem (colWidth - len) 2
-    in  T.pack (replicate margin ' ')
+    let (!margin, !rightPadding) = quotRem (dispWidth - len) 2
+    in  T.replicate margin " "
         <> txt
-        <> T.pack (replicate (margin - 1 + rightPadding) ' ')
+        <> T.replicate (margin - 1 + rightPadding) " "
         <> "|"
-  else T.take (colWidth - 4) txt <> "...|"
+  else T.take (dispWidth - 4) txt <> "...|"
   where !len = T.length txt
 
