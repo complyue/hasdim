@@ -265,9 +265,9 @@ elemCmpColumn !dtYesNo !ets !cmp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !c
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> (data'type'identifier dt1)
+      <> data'type'identifier dt1
       <> " vs "
-      <> (data'type'identifier dt2)
+      <> data'type'identifier dt2
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -324,9 +324,9 @@ elemOpColumn !ets !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !csv2) !na
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> (data'type'identifier dt1)
+      <> data'type'identifier dt1
       <> " vs "
-      <> (data'type'identifier dt2)
+      <> data'type'identifier dt2
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -460,9 +460,9 @@ elemInpColumn !ets !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !clv2 !csv2) !n
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> (data'type'identifier dt1)
+      <> data'type'identifier dt1
       <> " vs "
-      <> (data'type'identifier dt2)
+      <> data'type'identifier dt2
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -499,9 +499,9 @@ elemInpSliceColumn !ets !slice !getOp (Column !dt1 !clv1 !csv1) (Column !dt2 !cl
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> (data'type'identifier dt1)
+      <> data'type'identifier dt1
       <> " vs "
-      <> (data'type'identifier dt2)
+      <> data'type'identifier dt2
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -530,9 +530,9 @@ elemInpMaskedColumn !ets (Column _ !mclv !mcsv) !getOp (Column !dt1 !clv1 !csv1)
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> (data'type'identifier dt1)
+      <> data'type'identifier dt1
       <> " vs "
-      <> (data'type'identifier dt2)
+      <> data'type'identifier dt2
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -573,9 +573,9 @@ elemInpFancyColumn !ets (Column _ !iclv !icsv) !getOp (Column !dt1 !clv1 !csv1) 
     then
       throwEdh ets UsageError
       $  "column dtype mismatch: "
-      <> (data'type'identifier dt1)
+      <> data'type'identifier dt1
       <> " vs "
-      <> (data'type'identifier dt2)
+      <> data'type'identifier dt2
     else do
       !cl1 <- readTMVar clv1
       !cl2 <- readTMVar clv2
@@ -838,7 +838,7 @@ createColumnClass !defaultDt !clsOuterScope =
             <> ", length="
             <> T.pack (show cl)
             <> ", dtype="
-            <> (data'type'identifier dt) -- assuming the identifier is available as attr
+            <> data'type'identifier dt -- assuming the identifier is available as attr
             <> ")"
 
   colShowProc :: EdhHostProc
@@ -957,9 +957,9 @@ createColumnClass !defaultDt !clsOuterScope =
           then
             throwEdh ets UsageError
             $  "assigning column of dtype="
-            <> (data'type'identifier dtOther)
+            <> data'type'identifier dtOther
             <> " to dtype="
-            <> (data'type'identifier dt)
+            <> data'type'identifier dt
             <> " not supported."
           else castObjectStore' idxVal >>= \case
             Just (_, !idxCol) ->
@@ -1001,9 +1001,9 @@ createColumnClass !defaultDt !clsOuterScope =
                 then
                   throwEdh ets UsageError
                   $  "assigning column of dtype="
-                  <> (data'type'identifier dtOther)
+                  <> data'type'identifier dtOther
                   <> " to "
-                  <> (data'type'identifier dt)
+                  <> data'type'identifier dt
                   <> " not supported."
                 else do
                   !cl      <- readTMVar clv
@@ -1173,10 +1173,10 @@ createColumnClass !defaultDt !clsOuterScope =
     -- "decimal" -> toDyn ((.&.) :: D.Decimal -> D.Decimal -> D.Decimal)
     "box" ->
       let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-          edhOp !x !y =
-              logicalAndProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+          edhOp !x !y = logicalAndProc (LitExpr $ ValueLiteral x)
+                                       (LitExpr $ ValueLiteral y)
       in  toDyn edhOp
-    _       -> toDyn nil -- means not applicable here
+    _ -> toDyn nil -- means not applicable here
   bitOrOp :: Text -> Dynamic
   bitOrOp = \case
     -- "float64" -> toDyn ((.|.) :: Double -> Double -> Double)
@@ -1190,10 +1190,10 @@ createColumnClass !defaultDt !clsOuterScope =
     -- "decimal" -> toDyn ((.|.) :: D.Decimal -> D.Decimal -> D.Decimal)
     "box" ->
       let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-          edhOp !x !y =
-              logicalOrProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+          edhOp !x !y = logicalOrProc (LitExpr $ ValueLiteral x)
+                                      (LitExpr $ ValueLiteral y)
       in  toDyn edhOp
-    _       -> toDyn nil -- means not applicable here
+    _ -> toDyn nil -- means not applicable here
 
   addOp :: Text -> Dynamic
   addOp = \case
