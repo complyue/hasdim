@@ -340,9 +340,7 @@ createTableClass !colClass !clsOuterScope =
           !trc <- tableRowCount tab
           edhRegulateSlice ets trc (start, stop, step)
             $ \(!iStart, !iStop, !iStep) -> do
-                let (q, r)    = quotRem (iStop - iStart) iStep
-                    !sliceLen = if r == 0 then abs q else 1 + abs q
-                !trcVarNew <- newTMVar sliceLen
+                !trcVarNew <- newEmptyTMVar
                 !tcolsNew  <- iopdEmpty
                 let sliceCols [] =
                       edhCloneHostObj ets
@@ -352,11 +350,12 @@ createTableClass !colClass !clsOuterScope =
                         $ \ !newTabObj -> exitEdh ets exit $ EdhObject newTabObj
                     sliceCols ((!key, !thatCol) : rest) =
                       castTableColumn' thatCol >>= \(!thisCol, !col) ->
-                        unsafeSliceColumn col iStart iStop iStep $ \ !colNew ->
-                          edhCloneHostObj ets thisCol thatCol colNew
-                            $ \ !newColObj -> do
-                                iopdInsert key newColObj tcolsNew
-                                sliceCols rest
+                        unsafeSliceColumn' trcVarNew col iStart iStop iStep
+                          $ \ !colNew ->
+                              edhCloneHostObj ets thisCol thatCol colNew
+                                $ \ !newColObj -> do
+                                    iopdInsert key newColObj tcolsNew
+                                    sliceCols rest
                 iopdToList (table'columns tab) >>= sliceCols
    where
     !thisTab = edh'scope'this $ contextScope $ edh'context ets

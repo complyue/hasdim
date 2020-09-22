@@ -115,23 +115,27 @@ unsafeFillColumn !ets (Column !dt _ !csv) !val !idxs !exit =
     >>= \ !cs -> flat'array'update dt ets [ (i, sv) | i <- idxs ] cs exit
 
 unsafeSliceColumn :: Column -> Int -> Int -> Int -> (Column -> STM ()) -> STM ()
-unsafeSliceColumn (Column !dt !clv (csv :: TVar FlatArray)) !start !stop !step !exit
+unsafeSliceColumn !col !start !stop !step !exit = newEmptyTMVar
+  >>= \ !clvNew -> unsafeSliceColumn' clvNew col start stop step exit
+unsafeSliceColumn'
+  :: TMVar Int -> Column -> Int -> Int -> Int -> (Column -> STM ()) -> STM ()
+unsafeSliceColumn' !clvNew (Column !dt !clv (csv :: TVar FlatArray)) !start !stop !step !exit
   = do
     !cl <- readTMVar clv
     readTVar csv >>= \case
       cs@(DeviceArray !cap (fp :: ForeignPtr a)) ->
         if start >= cap || stop == start
           then do
-            !clv' <- newTMVar 0
+            void $ tryPutTMVar clvNew 0
             !csv' <- newTVar (emptyDeviceArray @a)
-            exit $ Column dt clv' csv'
+            exit $ Column dt clvNew csv'
           else if step == 1
             then do
               let !len = max 0 $ min cl stop - start
                   !cs' = unsafeSliceFlatArray cs start (cap - start)
-              !clv' <- newTMVar len
+              void $ tryPutTMVar clvNew len
               !csv' <- newTVar cs'
-              exit $ Column dt clv' csv'
+              exit $ Column dt clvNew csv'
             else do
               let (q, r) = quotRem (stop - start) step
                   !len   = if r == 0 then abs q else 1 + abs q
@@ -148,21 +152,21 @@ unsafeSliceColumn (Column !dt !clv (csv :: TVar FlatArray)) !start !stop !step !
                 return fp'
               let !cs' = DeviceArray len fp'
               !csv' <- newTVar cs'
-              !clv' <- newTMVar len
-              exit $ Column dt clv' csv'
+              void $ tryPutTMVar clvNew len
+              exit $ Column dt clvNew csv'
       cs@(HostArray !cap (ha :: MV.IOVector a)) ->
         if start >= cap || stop == start
           then do
-            !clv' <- newTMVar 0
+            void $ tryPutTMVar clvNew 0
             !csv' <- newTVar (emptyHostArray @a)
-            exit $ Column dt clv' csv'
+            exit $ Column dt clvNew csv'
           else if step == 1
             then do
               let !len = max 0 $ min cl stop - start
                   !cs' = unsafeSliceFlatArray cs start (cap - start)
-              !clv' <- newTMVar len
+              void $ tryPutTMVar clvNew len
               !csv' <- newTVar cs'
-              exit $ Column dt clv' csv'
+              exit $ Column dt clvNew csv'
             else do
               let (q, r) = quotRem (stop - start) step
                   !len   = if r == 0 then abs q else 1 + abs q
@@ -178,8 +182,8 @@ unsafeSliceColumn (Column !dt !clv (csv :: TVar FlatArray)) !start !stop !step !
                 return ha'
               let !cs' = HostArray len ha'
               !csv' <- newTVar cs'
-              !clv' <- newTMVar len
-              exit $ Column dt clv' csv'
+              void $ tryPutTMVar clvNew len
+              exit $ Column dt clvNew csv'
 
 
 extractColumnBool
@@ -968,147 +972,10 @@ createColumnClass !defaultDt !clsOuterScope =
     exitWithNewClone !colResult = edhCloneHostObj ets thisCol thatCol colResult
       $ \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
-  colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
-  colIdxWriteProc !idxVal !other !exit !ets =
-    withThisHostObj ets $ \_hsv col@(Column !dt !clv _csv) ->
-      castObjectStore' (edhUltimate other) >>= \case
-        -- assign column to column
-        Just (_, colOther@(Column !dtOther !clvOther _)) -> if dtOther /= dt
-          then
-            throwEdh ets UsageError
-            $  "assigning column of dtype="
-            <> data'type'identifier dtOther
-            <> " to dtype="
-            <> data'type'identifier dt
-            <> " not supported."
-          else castObjectStore' idxVal >>= \case
-            Just (_, !idxCol) ->
-              case data'type'identifier $ column'data'type idxCol of
-                "yesno" -> -- yesno index
-                  elemInpMaskedColumn ets
-                                      idxCol
-                                      assignOp
-                                      col
-                                      colOther
-                                      (exitEdh ets exit edhNA)
-                    $ exitEdh ets exit
-                    $ EdhObject thatCol
-                "intp" -> -- fancy index
-                  elemInpFancyColumn ets
-                                     idxCol
-                                     assignOp
-                                     col
-                                     colOther
-                                     (exitEdh ets exit edhNA)
-                    $ exitEdh ets exit
-                    $ EdhObject thatCol
-                !badDti ->
-                  throwEdh ets UsageError
-                    $  "invalid dtype="
-                    <> badDti
-                    <> " for a column as an index to another column"
-            Nothing -> parseEdhIndex ets idxVal $ \case
-              Left  !err         -> throwEdh ets UsageError err
-              Right (EdhIndex _) -> throwEdh
-                ets
-                UsageError
-                "can not assign a column to a single index of another column"
-              Right EdhAny -> throwEdh
-                ets
-                UsageError
-                "can not assign a column to every element of another column"
-              Right EdhAll -> if dtOther /= dt
-                then
-                  throwEdh ets UsageError
-                  $  "assigning column of dtype="
-                  <> data'type'identifier dtOther
-                  <> " to "
-                  <> data'type'identifier dt
-                  <> " not supported."
-                else do
-                  !cl      <- readTMVar clv
-                  !clOther <- readTMVar clvOther
-                  if clOther /= cl
-                    then
-                      throwEdh ets UsageError
-                      $  "column length mismatch: "
-                      <> T.pack (show clOther)
-                      <> " vs "
-                      <> T.pack (show cl)
-                    else
-                      elemInpColumn ets
-                                    assignOp
-                                    col
-                                    colOther
-                                    (exitEdh ets exit edhNA)
-                      $ exitEdh ets exit
-                      $ EdhObject thatCol
-              Right (EdhSlice !start !stop !step) -> do
-                !cl <- columnLength col
-                edhRegulateSlice ets cl (start, stop, step) $ \ !slice ->
-                  elemInpSliceColumn ets
-                                     slice
-                                     assignOp
-                                     col
-                                     colOther
-                                     (exitEdh ets exit edhNA)
-                    $ exitEdh ets exit other
 
-        -- assign scalar to column
-        Nothing -> castObjectStore' idxVal >>= \case
-          Just (_, idxCol@(Column !dtIdx _clvIdx _csvIdx)) ->
-            case data'type'identifier dtIdx of
-              "yesno" -> -- yesno index
-                vecInpMaskedColumn ets
-                                   idxCol
-                                   assignOp
-                                   col
-                                   (edhUltimate other)
-                                   (exitEdh ets exit edhNA)
-                  $ exitEdh ets exit
-                  $ EdhObject thatCol
-              "intp" -> -- fancy index
-                vecInpFancyColumn ets
-                                  idxCol
-                                  assignOp
-                                  col
-                                  (edhUltimate other)
-                                  (exitEdh ets exit edhNA)
-                  $ exitEdh ets exit
-                  $ EdhObject thatCol
-              !badDti ->
-                throwEdh ets UsageError
-                  $  "invalid dtype="
-                  <> badDti
-                  <> " for a column as an index to another column"
-          Nothing -> parseEdhIndex ets idxVal $ \case
-            Left !err -> throwEdh ets UsageError err
-            Right (EdhIndex !i) ->
-              unsafeWriteColumnCell ets col i (edhUltimate other)
-                $ exitEdh ets exit
-            Right EdhAny -> do
-              !cl <- columnLength col
-              unsafeFillColumn ets col (edhUltimate other) [0 .. cl - 1]
-                $ exitEdh ets exit
-                $ EdhObject thatCol
-            Right EdhAll -> do
-              !cl <- columnLength col
-              unsafeFillColumn ets col (edhUltimate other) [0 .. cl - 1]
-                $ exitEdh ets exit
-                $ EdhObject thatCol
-            Right (EdhSlice !start !stop !step) -> do
-              !cl <- columnLength col
-              edhRegulateSlice ets cl (start, stop, step)
-                $ \(!iStart, !iStop, !iStep) ->
-                    vecInpSliceColumn ets
-                                      (iStart, iStop, iStep)
-                                      assignOp
-                                      col
-                                      (edhUltimate other)
-                                      (exitEdh ets exit edhNA)
-                      $ exitEdh ets exit
-                      $ EdhObject thatCol
-    where thatCol = edh'scope'that $ contextScope $ edh'context ets
+  colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
+  colIdxWriteProc !idxVal !other !exit !ets = withThisHostObj ets
+    $ \_hsv !col -> idxAssignColumn col idxVal other exit ets
 
 
   colCmpProc :: (Ordering -> Bool) -> EdhValue -> EdhHostProc
@@ -1386,6 +1253,139 @@ createColumnClass !defaultDt !clsOuterScope =
               powProc (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
       in  toDyn edhOp
     _ -> toDyn nil -- means not applicable here
+
+
+  idxAssignColumn :: Column -> EdhValue -> EdhValue -> EdhHostProc
+  idxAssignColumn col@(Column !dt !clv _csv) !idxVal !other !exit !ets =
+    castObjectStore' (edhUltimate other) >>= \case
+          -- assign column to column
+      Just (_, colOther@(Column !dtOther !clvOther _)) -> if dtOther /= dt
+        then
+          throwEdh ets UsageError
+          $  "assigning column of dtype="
+          <> data'type'identifier dtOther
+          <> " to dtype="
+          <> data'type'identifier dt
+          <> " not supported."
+        else castObjectStore' idxVal >>= \case
+          Just (_, !idxCol) ->
+            case data'type'identifier $ column'data'type idxCol of
+              "yesno" -> -- yesno index
+                elemInpMaskedColumn ets
+                                    idxCol
+                                    assignOp
+                                    col
+                                    colOther
+                                    (exitEdh ets exit edhNA)
+                  $ exitEdh ets exit other
+              "intp" -> -- fancy index
+                elemInpFancyColumn ets
+                                   idxCol
+                                   assignOp
+                                   col
+                                   colOther
+                                   (exitEdh ets exit edhNA)
+                  $ exitEdh ets exit other
+              !badDti ->
+                throwEdh ets UsageError
+                  $  "invalid dtype="
+                  <> badDti
+                  <> " for a column as an index to another column"
+          Nothing -> parseEdhIndex ets idxVal $ \case
+            Left  !err         -> throwEdh ets UsageError err
+            Right (EdhIndex _) -> throwEdh
+              ets
+              UsageError
+              "can not assign a column to a single index of another column"
+            Right EdhAny -> throwEdh
+              ets
+              UsageError
+              "can not assign a column to every element of another column"
+            Right EdhAll -> if dtOther /= dt
+              then
+                throwEdh ets UsageError
+                $  "assigning column of dtype="
+                <> data'type'identifier dtOther
+                <> " to "
+                <> data'type'identifier dt
+                <> " not supported."
+              else do
+                !cl      <- readTMVar clv
+                !clOther <- readTMVar clvOther
+                if clOther /= cl
+                  then
+                    throwEdh ets UsageError
+                    $  "column length mismatch: "
+                    <> T.pack (show clOther)
+                    <> " vs "
+                    <> T.pack (show cl)
+                  else
+                    elemInpColumn ets
+                                  assignOp
+                                  col
+                                  colOther
+                                  (exitEdh ets exit edhNA)
+                      $ exitEdh ets exit other
+            Right (EdhSlice !start !stop !step) -> do
+              !cl <- columnLength col
+              edhRegulateSlice ets cl (start, stop, step) $ \ !slice ->
+                elemInpSliceColumn ets
+                                   slice
+                                   assignOp
+                                   col
+                                   colOther
+                                   (exitEdh ets exit edhNA)
+                  $ exitEdh ets exit other
+
+      -- assign scalar to column
+      Nothing -> castObjectStore' idxVal >>= \case
+        Just (_, idxCol@(Column !dtIdx _clvIdx _csvIdx)) ->
+          case data'type'identifier dtIdx of
+            "yesno" -> -- yesno index
+              vecInpMaskedColumn ets
+                                 idxCol
+                                 assignOp
+                                 col
+                                 (edhUltimate other)
+                                 (exitEdh ets exit edhNA)
+                $ exitEdh ets exit other
+            "intp" -> -- fancy index
+              vecInpFancyColumn ets
+                                idxCol
+                                assignOp
+                                col
+                                (edhUltimate other)
+                                (exitEdh ets exit edhNA)
+                $ exitEdh ets exit other
+            !badDti ->
+              throwEdh ets UsageError
+                $  "invalid dtype="
+                <> badDti
+                <> " for a column as an index to another column"
+        Nothing -> parseEdhIndex ets idxVal $ \case
+          Left !err -> throwEdh ets UsageError err
+          Right (EdhIndex !i) ->
+            unsafeWriteColumnCell ets col i (edhUltimate other)
+              $ exitEdh ets exit
+          Right EdhAny -> do
+            !cl <- columnLength col
+            unsafeFillColumn ets col (edhUltimate other) [0 .. cl - 1]
+              $ exitEdh ets exit other
+          Right EdhAll -> do
+            !cl <- columnLength col
+            unsafeFillColumn ets col (edhUltimate other) [0 .. cl - 1]
+              $ exitEdh ets exit other
+          Right (EdhSlice !start !stop !step) -> do
+            !cl <- columnLength col
+            edhRegulateSlice ets cl (start, stop, step)
+              $ \(!iStart, !iStop, !iStep) ->
+                  vecInpSliceColumn ets
+                                    (iStart, iStop, iStep)
+                                    assignOp
+                                    col
+                                    (edhUltimate other)
+                                    (exitEdh ets exit edhNA)
+                    $ exitEdh ets exit other
 
 
 arangeProc
