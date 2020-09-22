@@ -1238,11 +1238,13 @@ edhDataOperations !def'val = FlatOp vecExtractBool
               go i | i >= cap = exit
               go i            = do
                 !mv <- unsafeIOToSTM $ peekElemOff mp i
-                when (mv /= 0) $ do
-                  !ev <- unsafeIOToSTM $ MV.unsafeRead ha i
-                  runEdhTx ets $ op ev v $ \ !rv _ets -> do
-                    unsafeIOToSTM $ MV.unsafeWrite ha i rv
-                    go (i + 1)
+                if mv /= 0
+                  then do
+                    !ev <- unsafeIOToSTM $ MV.unsafeRead ha i
+                    runEdhTx ets $ op ev v $ \ !rv _ets -> do
+                      unsafeIOToSTM $ MV.unsafeWrite ha i rv
+                      go (i + 1)
+                  else go (i + 1)
           go 0
   vecInpMasked _ _ _ _ _ _ = error "bug: not an Edh array"
   -- vectorized operation, inplace modifying the array, with a fancy index
