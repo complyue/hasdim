@@ -133,8 +133,8 @@ createTableClass !colClass !clsOuterScope =
                , ("__mark__", EdhMethod, wrapHostProc tabMarkRowCntProc)
                , ("[]"      , EdhMethod, wrapHostProc tabIdxReadProc)
                , ("[=]"     , EdhMethod, wrapHostProc tabIdxWriteProc)
-               , ("@"       , EdhMethod, wrapHostProc tabAttrReadProc)
-               , ("@="      , EdhMethod, wrapHostProc tabAttrWriteProc)
+               , ("(@)"       , EdhMethod, wrapHostProc tabAttrReadProc)
+               , ("(@=)"      , EdhMethod, wrapHostProc tabAttrWriteProc)
                , ("__repr__", EdhMethod, wrapHostProc tabReprProc)
                , ("__show__", EdhMethod, wrapHostProc tabShowProc)
                , ("__desc__", EdhMethod, wrapHostProc tabDescProc)
@@ -442,35 +442,42 @@ createTableClass !colClass !clsOuterScope =
 
   tabAttrWriteProc :: EdhValue -> "toVal" ?: EdhValue -> EdhHostProc
   tabAttrWriteProc !attrKey (optionalArg -> !maybeAttrVal) !exit !ets =
-    withThisHostObj ets $ \_hsv tab@(Table !trcv !tcols) -> case maybeAttrVal of
-      Nothing -> edhValueAsAttrKey ets attrKey $ \ !key -> iopdDelete key tcols
-      Just !attrVal -> case edhUltimate attrVal of
-        EdhObject !colObj -> castObjectStore colObj >>= \case
-          Nothing                               -> badCol attrVal
-          Just (!thisCol, Column !dt !clv !csv) -> do
-            !cl  <- readTMVar clv
-            !trc <- readTMVar trcv
-            if cl < trc
-              then
-                throwEdh ets UsageError
-                $  "no enough data in column: column length "
-                <> T.pack (show cl)
-                <> " vs table row count "
-                <> T.pack (show trc)
-              else do
-                !tcap <- tableRowCapacity tab
-                !ca   <- readTVar csv
-                !tca  <- unsafeIOToSTM $ dupFlatArray ca cl tcap
-                !tcol <- Column dt trcv <$> newTVar tca
-                edhCloneHostObj ets thisCol colObj tcol $ \ !newColObj ->
-                  edhValueAsAttrKey ets attrKey $ \ !key -> do
+    edhValueAsAttrKey ets attrKey $ \ !key ->
+      withThisHostObj ets $ \_hsv tab@(Table !trcv !tcols) ->
+        case maybeAttrVal of
+          Nothing       -> iopdDelete key tcols
+          Just !attrVal -> case edhUltimate attrVal of
+            EdhObject !obj -> castObjectStore obj >>= \case
+              Just (!thisCol, Column !dt !clv !csv) -> do
+                !cl  <- readTMVar clv
+                !trc <- readTMVar trcv
+                if cl < trc
+                  then
+                    throwEdh ets UsageError
+                    $  "no enough data in column: column length "
+                    <> T.pack (show cl)
+                    <> " vs table row count "
+                    <> T.pack (show trc)
+                  else do
+                    !tcap <- tableRowCapacity tab
+                    !ca   <- readTVar csv
+                    !tca  <- unsafeIOToSTM $ dupFlatArray ca cl tcap
+                    !tcol <- Column dt trcv <$> newTVar tca
+                    edhCloneHostObj ets thisCol obj tcol $ \ !newColObj -> do
+                      iopdInsert key newColObj tcols
+                      exitEdh ets exit $ EdhObject newColObj
+              Nothing -> castObjectStore obj >>= \case
+                Just (_, !dt) -> tableRowCapacity tab >>= \ !cap ->
+                  createColumn ets dt cap trcv $ \ !col -> do
+                    !newColObj <- edhCreateHostObj colClass (toDyn col) []
                     iopdInsert key newColObj tcols
                     exitEdh ets exit $ EdhObject newColObj
-        _ -> badCol attrVal
+                Nothing -> badColSrc attrVal
+            _ -> badColSrc attrVal
    where
-    badCol !badVal = edhValueDesc ets badVal $ \ !badValDesc ->
+    badColSrc !badVal = edhValueDesc ets badVal $ \ !badValDesc ->
       throwEdh ets UsageError
-        $  "can only set column(s) to a table, not "
+        $  "can only set a column or a dtype to a table, not "
         <> badValDesc
 
 

@@ -27,8 +27,6 @@ import           Data.Lossless.Decimal         as D
 
 import           Language.Edh.EHI
 
-import           Language.Edh.Batteries
-
 import           Dim.XCHG
 import           Dim.DataType
 
@@ -685,100 +683,100 @@ createColumnClass !defaultDt !clsOuterScope =
                    EQ -> True
                    _  -> False
                  )
-               , ( "==@"
+               , ( "(==@)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    EQ -> True
                    _  -> False
                  )
-               , ( "!="
+               , ( "(!=)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    EQ -> False
                    _  -> True
                  )
-               , ( "!=@"
+               , ( "(!=@)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    EQ -> False
                    _  -> True
                  )
-               , ( ">="
+               , ( "(>=)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    GT -> True
                    EQ -> True
                    _  -> False
                  )
-               , ( "<="
+               , ( "(<=)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    LT -> True
                    EQ -> True
                    _  -> False
                  )
-               , ( "<"
+               , ( "(<)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    LT -> True
                    _  -> False
                  )
-               , ( ">"
+               , ( "(>)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    GT -> True
                    _  -> False
                  )
-               , ( ">=@"
+               , ( "(>=@)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    LT -> True
                    EQ -> True
                    _  -> False
                  )
-               , ( "<=@"
+               , ( "(<=@)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    GT -> True
                    EQ -> True
                    _  -> False
                  )
-               , ( "<@"
+               , ( "(<@)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    GT -> True
                    _  -> False
                  )
-               , ( ">@"
+               , ( "(>@)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    LT -> True
                    _  -> False
                  )
-               , ("&&" , EdhMethod, wrapHostProc $ colOpProc bitAndOp)
-               , ("&&@", EdhMethod, wrapHostProc $ colOpProc bitAndOp)
-               , ("||" , EdhMethod, wrapHostProc $ colOpProc bitOrOp)
-               , ("||@", EdhMethod, wrapHostProc $ colOpProc bitOrOp)
-               , ("&&=", EdhMethod, wrapHostProc $ colInpProc bitAndOp)
-               , ("||=", EdhMethod, wrapHostProc $ colInpProc bitOrOp)
-               , ("+"  , EdhMethod, wrapHostProc $ colOpProc addOp)
-               , ("+@" , EdhMethod, wrapHostProc $ colOpProc addOp)
-               , ("+=" , EdhMethod, wrapHostProc $ colInpProc addOp)
-               , ("-"  , EdhMethod, wrapHostProc $ colOpProc subtractOp)
-               , ("-@" , EdhMethod, wrapHostProc $ colOpProc subtFromOp)
-               , ("-=" , EdhMethod, wrapHostProc $ colInpProc subtractOp)
-               , ("*"  , EdhMethod, wrapHostProc $ colOpProc mulOp)
-               , ("*@" , EdhMethod, wrapHostProc $ colOpProc mulOp)
-               , ("*=" , EdhMethod, wrapHostProc $ colInpProc mulOp)
-               , ("/"  , EdhMethod, wrapHostProc $ colOpProc divOp)
-               , ("/@" , EdhMethod, wrapHostProc $ colOpProc divByOp)
-               , ("/=" , EdhMethod, wrapHostProc $ colInpProc divOp)
-               , ("//" , EdhMethod, wrapHostProc $ colOpProc divIntOp)
-               , ("//@", EdhMethod, wrapHostProc $ colOpProc divIntByOp)
-               , ("//=", EdhMethod, wrapHostProc $ colInpProc divIntOp)
-               , ("**" , EdhMethod, wrapHostProc $ colOpProc powOp)
-               , ("**@", EdhMethod, wrapHostProc $ colOpProc powToOp)
-               , ("**=", EdhMethod, wrapHostProc $ colInpProc powOp)
+               , ("(&&)" , EdhMethod, wrapHostProc $ colOpProc bitAndOp)
+               , ("(&&@)", EdhMethod, wrapHostProc $ colOpProc bitAndOp)
+               , ("(||)" , EdhMethod, wrapHostProc $ colOpProc bitOrOp)
+               , ("(||@)", EdhMethod, wrapHostProc $ colOpProc bitOrOp)
+               , ("(&&=)", EdhMethod, wrapHostProc $ colInpProc bitAndOp)
+               , ("(||=)", EdhMethod, wrapHostProc $ colInpProc bitOrOp)
+               , ("(+)"  , EdhMethod, wrapHostProc $ colOpProc addOp)
+               , ("(+@)" , EdhMethod, wrapHostProc $ colOpProc addToOp)
+               , ("(+=)" , EdhMethod, wrapHostProc $ colInpProc addOp)
+               , ("(-)"  , EdhMethod, wrapHostProc $ colOpProc subtractOp)
+               , ("(-@)" , EdhMethod, wrapHostProc $ colOpProc subtFromOp)
+               , ("(-=)" , EdhMethod, wrapHostProc $ colInpProc subtractOp)
+               , ("(*)"  , EdhMethod, wrapHostProc $ colOpProc mulOp)
+               , ("(*@)" , EdhMethod, wrapHostProc $ colOpProc mulOp)
+               , ("(*=)" , EdhMethod, wrapHostProc $ colInpProc mulOp)
+               , ("(/)"  , EdhMethod, wrapHostProc $ colOpProc divOp)
+               , ("(/@)" , EdhMethod, wrapHostProc $ colOpProc divByOp)
+               , ("(/=)" , EdhMethod, wrapHostProc $ colInpProc divOp)
+               , ("(//)" , EdhMethod, wrapHostProc $ colOpProc divIntOp)
+               , ("(//@)", EdhMethod, wrapHostProc $ colOpProc divIntByOp)
+               , ("(//=)", EdhMethod, wrapHostProc $ colInpProc divIntOp)
+               , ("(**)" , EdhMethod, wrapHostProc $ colOpProc powOp)
+               , ("(**@)", EdhMethod, wrapHostProc $ colOpProc powToOp)
+               , ("(**=)", EdhMethod, wrapHostProc $ colInpProc powOp)
                ]
              ]
           ++ [ (AttrByName nm, ) <$> mkHostProperty clsScope nm getter setter
@@ -1062,7 +1060,7 @@ bitAndOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            logicalAndProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+            evalInfix "&&" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 bitOrOp :: Text -> Dynamic
@@ -1079,7 +1077,7 @@ bitOrOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            logicalOrProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+            evalInfix "||" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 
@@ -1096,7 +1094,23 @@ addOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            addProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+            evalInfix "+" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+    in  toDyn edhOp
+  _ -> toDyn nil -- means not applicable here
+addToOp :: Text -> Dynamic
+addToOp = \case
+  "float64" -> toDyn ((+) :: Double -> Double -> Double)
+  "float32" -> toDyn ((+) :: Float -> Float -> Float)
+  "int64"   -> toDyn ((+) :: Int64 -> Int64 -> Int64)
+  "int32"   -> toDyn ((+) :: Int32 -> Int32 -> Int32)
+  "int8"    -> toDyn ((+) :: Int8 -> Int8 -> Int8)
+  "byte"    -> toDyn ((+) :: Word8 -> Word8 -> Word8)
+  "intp"    -> toDyn ((+) :: Int -> Int -> Int)
+  "decimal" -> toDyn ((+) :: D.Decimal -> D.Decimal -> D.Decimal)
+  "box" ->
+    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
+        edhOp !x !y =
+            evalInfix "+" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 subtractOp :: Text -> Dynamic
@@ -1112,7 +1126,7 @@ subtractOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            subtProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+            evalInfix "-" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 subtFromOp :: Text -> Dynamic
@@ -1129,7 +1143,7 @@ subtFromOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            subtProc (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
+            evalInfix "-" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 mulOp :: Text -> Dynamic
@@ -1145,7 +1159,7 @@ mulOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            mulProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+            evalInfix "*" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 divOp :: Text -> Dynamic
@@ -1161,7 +1175,7 @@ divOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            divProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+            evalInfix "/" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 divByOp :: Text -> Dynamic
@@ -1178,7 +1192,7 @@ divByOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            divProc (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
+            evalInfix "/" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 divIntOp :: Text -> Dynamic
@@ -1198,7 +1212,7 @@ divIntOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            divIntProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+            evalInfix "//" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 divIntByOp :: Text -> Dynamic
@@ -1218,7 +1232,7 @@ divIntByOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            divIntProc (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
+            evalInfix "//" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 powOp :: Text -> Dynamic
@@ -1234,7 +1248,7 @@ powOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            powProc (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
+            evalInfix "**" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 powToOp :: Text -> Dynamic
@@ -1250,7 +1264,7 @@ powToOp = \case
   "box" ->
     let edhOp :: EdhValue -> EdhValue -> EdhHostProc
         edhOp !x !y =
-            powProc (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
+            evalInfix "**" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
     in  toDyn edhOp
   _ -> toDyn nil -- means not applicable here
 
