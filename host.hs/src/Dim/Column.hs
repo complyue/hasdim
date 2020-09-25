@@ -4,26 +4,9 @@ module Dim.Column where
 import           Prelude
 -- import           Debug.Trace
 
-import           GHC.Conc                       ( unsafeIOToSTM )
-
-import           GHC.Float
-
-import           Foreign                 hiding ( void )
-
-import           Control.Monad
-
 import           Control.Concurrent.STM
 
-import           Data.Text                      ( Text )
-import qualified Data.Text                     as T
-
 import           Data.Dynamic
-
-import qualified Data.Vector.Mutable           as MV
-import qualified Data.Vector.Storable          as VS
-import qualified Data.Vector.Storable.Mutable  as MVS
-
-import           Data.Lossless.Decimal         as D
 
 import           Language.Edh.EHI
 

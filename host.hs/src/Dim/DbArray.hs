@@ -416,14 +416,17 @@ createDbArrayClass !defaultDt !clsOuterScope =
             else newEmptyTMVar >>= \ !asVar -> case maybeShape of
               Nothing -> runEdhTx etsCtor $ edhContIO $ do
                 mmapDbArray asVar dataDir dataPath dt Nothing
-                atomically $ ctorExit =<< HostStore <$> newTVar
+                atomically $ ctorExit $ HostStore
                   (toDyn $ DbArray dataDir dataPath dt asVar)
               Just !shapeVal ->
                 parseArrayShape etsCtor shapeVal $ \ !shape ->
                   runEdhTx etsCtor $ edhContIO $ do
                     mmapDbArray asVar dataDir dataPath dt $ Just shape
-                    atomically $ ctorExit . HostStore =<< newTVar
-                      (toDyn $ DbArray dataDir dataPath dt asVar)
+                    atomically $ ctorExit $ HostStore $ toDyn $ DbArray
+                      dataDir
+                      dataPath
+                      dt
+                      asVar
           HostDataType{} ->
             throwEdh etsCtor UsageError
               $  "can not mmap as host dtype: "
@@ -432,32 +435,32 @@ createDbArrayClass !defaultDt !clsOuterScope =
 
   aryDirGetter :: EdhHostProc
   aryDirGetter !exit !ets = withThisHostObj ets
-    $ \_hsv !ary -> exitEdh ets exit $ EdhString $ db'array'dir ary
+    $ \ !ary -> exitEdh ets exit $ EdhString $ db'array'dir ary
 
   aryPathGetter :: EdhHostProc
   aryPathGetter !exit !ets = withThisHostObj ets
-    $ \_hsv !ary -> exitEdh ets exit $ EdhString $ db'array'path ary
+    $ \ !ary -> exitEdh ets exit $ EdhString $ db'array'path ary
 
   aryDtypeGetter :: EdhHostProc
-  aryDtypeGetter !exit !ets = withThisHostObj ets $ \_hsv !ary ->
+  aryDtypeGetter !exit !ets = withThisHostObj ets $ \ !ary ->
     exitEdh ets exit $ EdhString $ data'type'identifier $ db'array'dtype ary
 
   arySizeGetter :: EdhHostProc
-  arySizeGetter !exit !ets =
-    withThisHostObj ets $ \_hsv (DbArray _ _ _ !das) -> readTMVar das >>= \case
+  arySizeGetter !exit !ets = withThisHostObj ets $ \(DbArray _ _ _ !das) ->
+    readTMVar das >>= \case
       Right (!shape, _, _) ->
         exitEdh ets exit $ EdhDecimal $ fromIntegral $ dbArraySize shape
       Left !err -> throwSTM err
 
   aryShapeGetter :: EdhHostProc
-  aryShapeGetter !exit !ets =
-    withThisHostObj ets $ \_hsv (DbArray _ _ _ !das) -> readTMVar das >>= \case
+  aryShapeGetter !exit !ets = withThisHostObj ets $ \(DbArray _ _ _ !das) ->
+    readTMVar das >>= \case
       Right (!shape, _, _) -> exitEdh ets exit $ edhArrayShape shape
       Left  !err           -> throwSTM err
 
   aryLen1dGetter :: EdhHostProc
-  aryLen1dGetter !exit !ets =
-    withThisHostObj ets $ \_hsv (DbArray _ _ _ !das) -> readTMVar das >>= \case
+  aryLen1dGetter !exit !ets = withThisHostObj ets $ \(DbArray _ _ _ !das) ->
+    readTMVar das >>= \case
       Right (_, !hdrPtr, _) ->
         unsafeIOToSTM (readDbArrayLength hdrPtr)
           >>= exitEdh ets exit
@@ -472,7 +475,7 @@ createDbArrayClass !defaultDt !clsOuterScope =
     case D.decimalToInteger newLen1dNum of
       Nothing -> throwEdh ets UsageError $ "bad len1d value: " <> T.pack
         (show newLen1dNum)
-      Just !newLen1d -> withThisHostObj ets $ \_hsv (DbArray _ _ _ !das) ->
+      Just !newLen1d -> withThisHostObj ets $ \(DbArray _ _ _ !das) ->
         readTMVar das >>= \case
           Right (_, !hdrPtr, _) -> do
             unsafeIOToSTM (writeDbArrayLength hdrPtr $ fromInteger newLen1d)
@@ -483,7 +486,7 @@ createDbArrayClass !defaultDt !clsOuterScope =
 
   aryReprProc :: EdhHostProc
   aryReprProc !exit !ets =
-    withThisHostObj ets $ \_hsv (DbArray !dir !path !dt !das) ->
+    withThisHostObj ets $ \(DbArray !dir !path !dt !das) ->
       readTMVar das >>= \case
         Left !err -> throwSTM err
         Right (!shape, _, _) ->
@@ -502,24 +505,23 @@ createDbArrayClass !defaultDt !clsOuterScope =
 
   aryIdxReadProc :: EdhValue -> EdhHostProc
   aryIdxReadProc !idxVal !exit !ets =
-    withThisHostObj ets $ \_hsv (DbArray _ _ !dt !das) ->
-      readTMVar das >>= \case
-        Left  !err             -> throwSTM err
-        Right (!shape, _, !fa) -> case edhUltimate idxVal of
-          -- TODO support slicing, of coz need to tell a slicing index from
-          --      an element index first
-          EdhArgsPack (ArgsPack !idxs _) ->
-            flatIndexInShape ets idxs shape $ \ !flatIdx ->
-              flat'array'read dt ets fa flatIdx $ \ !rv -> exitEdh ets exit rv
-          idx -> flatIndexInShape ets [idx] shape $ \ !flatIdx ->
+    withThisHostObj ets $ \(DbArray _ _ !dt !das) -> readTMVar das >>= \case
+      Left  !err             -> throwSTM err
+      Right (!shape, _, !fa) -> case edhUltimate idxVal of
+        -- TODO support slicing, of coz need to tell a slicing index from
+        --      an element index first
+        EdhArgsPack (ArgsPack !idxs _) ->
+          flatIndexInShape ets idxs shape $ \ !flatIdx ->
             flat'array'read dt ets fa flatIdx $ \ !rv -> exitEdh ets exit rv
+        idx -> flatIndexInShape ets [idx] shape $ \ !flatIdx ->
+          flat'array'read dt ets fa flatIdx $ \ !rv -> exitEdh ets exit rv
 
 
   aryIdxWriteProc :: EdhValue -> "toVal" ?: EdhValue -> EdhHostProc
   aryIdxWriteProc !idxVal (optionalArg -> !maybeToVal) !exit !ets =
     case maybeToVal of
       Nothing  -> throwEdh ets UsageError "you can not delete array content"
-      Just !dv -> withThisHostObj ets $ \_hsv (DbArray _ _ !dt !das) ->
+      Just !dv -> withThisHostObj ets $ \(DbArray _ _ !dt !das) ->
         readTMVar das >>= \case
           Left  !err            -> throwSTM err
           Right (!shape, _, fa) -> case edhUltimate idxVal of

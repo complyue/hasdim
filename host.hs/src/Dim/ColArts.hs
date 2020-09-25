@@ -577,14 +577,16 @@ createColumnClass !defaultDt !clsOuterScope =
       Just (_, !dt) ->
         runEdhTx etsCtor
           $ createInMemColumn dt ctorCap ctorLen
-          $ ((ctorExit . HostStore =<<) . newTVar . toDyn)
+          $ ctorExit
+          . HostStore
+          . toDyn
 
   dtYesNo = makeDeviceDataType @YesNo "yesno"
 
   colGrowProc :: "newCap" !: Int -> EdhHostProc
   colGrowProc (mandatoryArg -> !newCap) !exit !ets = if newCap < 0
     then throwEdh ets UsageError $ "invalid newCap: " <> T.pack (show newCap)
-    else withThisHostObj ets $ \_hsv (Column !col) ->
+    else withThisHostObj ets $ \(Column !col) ->
       runEdhTx ets
         $ grow'column'capacity col newCap
         $ const
@@ -595,29 +597,28 @@ createColumnClass !defaultDt !clsOuterScope =
         $ edh'context ets
 
   colCapProc :: EdhHostProc
-  colCapProc !exit !ets = withThisHostObj ets $ \_hsv !col ->
-    columnCapacity col
-      >>= \ !cap -> exitEdh ets exit $ EdhDecimal $ fromIntegral cap
+  colCapProc !exit !ets = withThisHostObj ets $ \ !col -> columnCapacity col
+    >>= \ !cap -> exitEdh ets exit $ EdhDecimal $ fromIntegral cap
 
   colLenProc :: EdhHostProc
-  colLenProc !exit !ets = withThisHostObj ets $ \_hsv (Column !col) ->
+  colLenProc !exit !ets = withThisHostObj ets $ \(Column !col) ->
     read'column'length col
       >>= \ !len -> exitEdh ets exit $ EdhDecimal $ fromIntegral len
 
   colMarkLenProc :: "newLen" !: Int -> EdhHostProc
   colMarkLenProc (mandatoryArg -> !newLen) !exit !ets =
-    withThisHostObj ets $ \_hsv (Column !col) ->
+    withThisHostObj ets $ \(Column !col) ->
       runEdhTx ets $ mark'column'length col newLen $ exitEdh ets exit nil
 
   colDtypeProc :: EdhHostProc
-  colDtypeProc !exit !ets = withThisHostObj ets $ \_hsv (Column !col) ->
+  colDtypeProc !exit !ets = withThisHostObj ets $ \(Column !col) ->
     exitEdh ets exit $ EdhString $ data'type'identifier $ data'type'of'column
       col
 
   colReprProc :: EdhHostProc
   colReprProc !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Column>")
-      $ \_hsv (Column !col) -> do
+      $ \(Column !col) -> do
           let !dt = data'type'of'column col
           !cs <- view'column'data col
           !cl <- read'column'length col
@@ -632,7 +633,7 @@ createColumnClass !defaultDt !clsOuterScope =
             <> ")"
 
   colShowProc :: EdhHostProc
-  colShowProc !exit !ets = withThisHostObj ets $ \_hsv (Column !col) -> do
+  colShowProc !exit !ets = withThisHostObj ets $ \(Column !col) -> do
     let !dt = data'type'of'column col
     !cs <- view'column'data col
     !cl <- read'column'length col
@@ -701,7 +702,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
   colIdxReadProc :: EdhValue -> EdhHostProc
   colIdxReadProc !idxVal !exit !ets =
-    withThisHostObj ets $ \_hsv col'@(Column !col) ->
+    withThisHostObj ets $ \col'@(Column !col) ->
       castObjectStore' idxVal >>= \case
         Just (_, idxCol'@(Column !idxCol)) ->
           case data'type'identifier $ data'type'of'column idxCol of
@@ -736,12 +737,12 @@ createColumnClass !defaultDt !clsOuterScope =
 
 
   colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
-  colIdxWriteProc !idxVal !other !exit !ets = withThisHostObj ets
-    $ \_hsv !col -> idxAssignColumn col idxVal other exit ets
+  colIdxWriteProc !idxVal !other !exit !ets =
+    withThisHostObj ets $ \ !col -> idxAssignColumn col idxVal other exit ets
 
 
   colCmpProc :: (Ordering -> Bool) -> EdhValue -> EdhHostProc
-  colCmpProc !cmp !other !exit !ets = withThisHostObj ets $ \_hsv !col ->
+  colCmpProc !cmp !other !exit !ets = withThisHostObj ets $ \ !col ->
     let !otherVal = edhUltimate other
     in  castObjectStore' otherVal >>= \case
           Just (_, colOther@Column{}) ->
@@ -756,7 +757,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
 
   colOpProc :: (Text -> Dynamic) -> EdhValue -> EdhHostProc
-  colOpProc !getOp !other !exit !ets = withThisHostObj ets $ \_hsv !col ->
+  colOpProc !getOp !other !exit !ets = withThisHostObj ets $ \ !col ->
     let !otherVal = edhUltimate other
     in  castObjectStore' otherVal >>= \case
           Just (_, colOther@Column{}) -> elemOpColumn
@@ -779,7 +780,7 @@ createColumnClass !defaultDt !clsOuterScope =
       $ \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
   colInpProc :: (Text -> Dynamic) -> EdhValue -> EdhHostProc
-  colInpProc !getOp !other !exit !ets = withThisHostObj ets $ \_hsv !col ->
+  colInpProc !getOp !other !exit !ets = withThisHostObj ets $ \ !col ->
     let !otherVal = edhUltimate other
     in  castObjectStore' otherVal >>= \case
           Just (_, colOther@Column{}) ->

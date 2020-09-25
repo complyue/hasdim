@@ -200,12 +200,12 @@ createDataTypeClass !clsOuterScope =
   -- | host constructor dtype()
   dtypeAllocator :: EdhObjectAllocator
   -- not really constructable from Edh code, this only creates bogus dtype obj
-  dtypeAllocator !ctorExit _ = ctorExit =<< HostStore <$> newTVar (toDyn nil)
+  dtypeAllocator !ctorExit _ = ctorExit $ HostStore  (toDyn nil)
 
   dtypeEqProc :: EdhValue -> EdhHostProc
   dtypeEqProc !other !exit !ets = castObjectStore' other >>= \case
     Nothing            -> exitEdh ets exit $ EdhBool False
-    Just (_, !dtOther) -> withThisHostObj ets $ \_hsv !dt ->
+    Just (_, !dtOther) -> withThisHostObj ets $ \ !dt ->
       exitEdh ets exit
         $  EdhBool
         $  data'type'identifier dtOther
@@ -213,7 +213,7 @@ createDataTypeClass !clsOuterScope =
 
   dtypeIdentProc :: EdhHostProc
   dtypeIdentProc !exit !ets = withThisHostObj ets
-    $ \_hsv !dt -> exitEdh ets exit $ EdhString $ data'type'identifier dt
+    $ \ !dt -> exitEdh ets exit $ EdhString $ data'type'identifier dt
 
 
 makeDeviceDataType
@@ -329,12 +329,12 @@ createDMRPClass !clsOuterScope =
   -- | host constructor dmrp()
   dmrpAllocator :: EdhObjectAllocator
   -- not really constructable from Edh code, this only creates bogus dmrp obj
-  dmrpAllocator !ctorExit _ = ctorExit =<< HostStore <$> newTVar (toDyn nil)
+  dmrpAllocator !ctorExit _ = ctorExit $ HostStore  (toDyn nil)
 
   dmrpReprProc :: EdhHostProc
   dmrpReprProc !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-dmrp>")
-      $ \_hsv (DataManiRoutinePack !ident !cate _) ->
+      $ \(DataManiRoutinePack !ident !cate _) ->
           exitEdh ets exit $ EdhString $ "<dmrp/" <> ident <> "#" <> cate <> ">"
 
 
@@ -1457,12 +1457,12 @@ createNumDataTypeClass !clsOuterScope =
   -- | host constructor numdt()
   numdtAllocator :: EdhObjectAllocator
   -- not really constructable from Edh code, this only creates bogus numdt obj
-  numdtAllocator !ctorExit _ = ctorExit =<< HostStore <$> newTVar (toDyn nil)
+  numdtAllocator !ctorExit _ = ctorExit $ HostStore  (toDyn nil)
 
   numdtEqProc :: EdhValue -> EdhHostProc
   numdtEqProc !other !exit !ets = castObjectStore' other >>= \case
     Nothing            -> exitEdh ets exit $ EdhBool False
-    Just (_, !dtOther) -> withThisHostObj ets $ \_hsv !dt ->
+    Just (_, !dtOther) -> withThisHostObj ets $ \ !dt ->
       exitEdh ets exit
         $  EdhBool
         $  num'type'identifier dtOther
@@ -1471,7 +1471,7 @@ createNumDataTypeClass !clsOuterScope =
   numdtIdentProc :: EdhHostProc
   numdtIdentProc !exit !ets =
     withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-numdt>")
-      $ \_hsv !dt ->
+      $ \ !dt ->
           exitEdh ets exit
             $  EdhString
             $  "<numeric-dtype:"
