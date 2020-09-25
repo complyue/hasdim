@@ -1,6 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
-module Dim.Array where
+module Dim.DbArray where
 
 import           Prelude
 -- import           Debug.Trace

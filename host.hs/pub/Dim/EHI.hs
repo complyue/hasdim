@@ -5,7 +5,7 @@ module Dim.EHI
   , module Dim.XCHG
   , module Dim.DataType
   , module Dim.Table
-  , module Dim.Array
+  , module Dim.DbArray
   )
 where
 
@@ -26,9 +26,9 @@ import qualified Data.Lossless.Decimal         as D
 
 import           Dim.XCHG
 import           Dim.DataType
-import           Dim.Column
+import           Dim.ColArts
 import           Dim.Table
-import           Dim.Array
+import           Dim.DbArray
 
 
 builtinDataTypes :: Object -> STM [(DataTypeIdent, Object)]

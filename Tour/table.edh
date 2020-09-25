@@ -48,14 +48,8 @@ tab[ where $ tab.sq > 5 && tab.sq < 20 ] | show
 tab.rowdesc|show
 
 # %%
-mark( tab.sq, 7 )
+mark( tab, 7 )
 tab|show
-
-# %%
-tab[ 6 ]
-
-# %%
-tab|desc
 
 # %%
 tab.sq|desc
@@ -84,5 +78,5 @@ tab[ 2:5 ] =( sq=33 )
 tab|show
 
 # %%
-tab[ 2:5 ] =( rownum=arange( 99:96, dtype=i4 ) )
+tab[ 2:5 ] =( rownum= '#' + arange( 99:96, dtype=box ) )
 tab|show

@@ -171,9 +171,11 @@ library hasdim-poc
 
 library hasdim-internal
   exposed-modules:
-    Dim.Array
+    Dim.ColArts
     Dim.Column
     Dim.DataType
+    Dim.DbArray
+    Dim.InMem
     Dim.Table
     Dim.XCHG
 
