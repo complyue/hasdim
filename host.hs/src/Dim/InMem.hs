@@ -89,6 +89,7 @@ instance ManagedColumn InMemColumn where
     do
       !cs <- readTVar csv
       !cl <- readTVar clv
+
       if stop < start || start < 0 || stop > cl
         then
           throwEdh ets UsageError
@@ -151,6 +152,7 @@ instance ManagedColumn InMemColumn where
     = do
       !cs <- readTVar csv
       !cl <- readTVar clv
+
       resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp ->
         do
           let !fa = unsafeSliceFlatArray cs 0 cl
@@ -172,10 +174,11 @@ instance ManagedColumn InMemColumn where
 
   extract'column'fancy (InMemColumn !dt !csv !clv) (Column !colIdx) !naExit !exit !ets
     = do
-      !icl <- read'column'length colIdx
-      !ics <- view'column'data colIdx
       !cs  <- readTVar csv
       !cl  <- readTVar clv
+
+      !icl <- read'column'length colIdx
+      !ics <- view'column'data colIdx
       resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp ->
         do
           let !ifa = unsafeSliceFlatArray ics 0 icl
@@ -184,6 +187,4 @@ instance ManagedColumn InMemColumn where
             !csvRtn <- newTVar rfa
             !clvRtn <- newTVar icl
             exit True $ Column $ InMemColumn dt csvRtn clvRtn
-
-
 

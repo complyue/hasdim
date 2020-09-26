@@ -175,6 +175,8 @@ library hasdim-internal
     Dim.Column
     Dim.DataType
     Dim.DbArray
+    Dim.DbArts
+    Dim.DiskBack
     Dim.InMem
     Dim.Table
     Dim.XCHG
