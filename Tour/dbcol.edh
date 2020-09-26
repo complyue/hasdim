@@ -35,6 +35,9 @@ col = dba.asColumn()
 col | show
 
 # %%
+case col of { { DbArray: dba' } } -> dba' is dba
+
+# %%
 col[] = arange( len( col ), dtype=f4 )
 col | show
 
