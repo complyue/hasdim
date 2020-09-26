@@ -67,26 +67,23 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
       else castObjectStore dto >>= \case
         Nothing       -> throwEdh etsCtor UsageError "invalid dtype"
         Just (_, !dt) -> case data'type'proxy dt of
-          DeviceDataType{} -> if dataDir == "" || dataPath == ""
-            then throwEdh etsCtor UsageError "missing dataDir/dataPath"
-            else newEmptyTMVar >>= \ !asVar -> case maybeShape of
-              Nothing -> runEdhTx etsCtor $ edhContIO $ do
-                mmapDbArray asVar dataDir dataPath dt Nothing
-                atomically $ ctorExit $ HostStore
-                  (toDyn $ DbArray dataDir dataPath dt asVar)
-              Just !shapeVal ->
-                parseArrayShape etsCtor shapeVal $ \ !shape ->
-                  runEdhTx etsCtor $ edhContIO $ do
-                    mmapDbArray asVar dataDir dataPath dt $ Just shape
-                    atomically $ ctorExit $ HostStore $ toDyn $ DbArray
-                      dataDir
-                      dataPath
-                      dt
-                      asVar
+          DeviceDataType{} -> case maybeShape of
+            Nothing        -> runEdhTx etsCtor $ edhContIO $ goMemMap dt Nothing
+            Just !shapeVal -> parseArrayShape etsCtor shapeVal $ \ !shape ->
+              runEdhTx etsCtor $ edhContIO $ goMemMap dt $ Just shape
           HostDataType{} ->
             throwEdh etsCtor UsageError
               $  "can not mmap as host dtype: "
               <> data'type'identifier dt
+   where
+    goMemMap :: DataType -> Maybe ArrayShape -> IO ()
+    goMemMap !dt !mmapShape = do
+      !asVar <- newEmptyTMVarIO
+      mmapDbArray asVar dataDir dataPath dt mmapShape
+      atomically $ readTMVar asVar >>= \case
+        Left !err -> throwSTM err
+        Right{} ->
+          ctorExit $ HostStore $ toDyn $ DbArray dataDir dataPath dt asVar
 
 
   aryDirGetter :: EdhHostProc

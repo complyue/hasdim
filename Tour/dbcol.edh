@@ -1,11 +1,25 @@
 
+# %{
 # %%
-dba = DbArray(
-  dataDir = '/var/tmp/demo',
-  dataPath = 'poc/test',
-  dtype = f4,
-  shape = 10,
-)
+{
+  dba = DbArray(
+    dataDir = '/var/tmp/demo',
+    dataPath = 'poc/test',
+    dtype = f4,
+  )
+}
+# %%
+$=> # load whatever exists, or create one with len1d=10
+# %%
+{
+  dba = DbArray(
+    dataDir = '/var/tmp/demo',
+    dataPath = 'poc/test',
+    dtype = f4,
+    shape = 10,
+  )
+}
+# %}
 
 # %%
 dba | show

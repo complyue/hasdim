@@ -177,9 +177,9 @@ installDimBatteries !world = do
 
     let !moduArts =
           moduArts0
-            ++ [ (AttrByName "DbArray", EdhObject dbArrayClass)
-               , (AttrByName "Column" , EdhObject columnClass)
+            ++ [ (AttrByName "Column" , EdhObject columnClass)
                , (AttrByName "Table"  , EdhObject tableClass)
+               , (AttrByName "DbArray", EdhObject dbArrayClass)
                ]
 
     !artsDict <- EdhDict
