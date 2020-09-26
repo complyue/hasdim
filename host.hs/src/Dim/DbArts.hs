@@ -6,37 +6,15 @@ import           Prelude
 -- import           Debug.Trace
 
 import           GHC.Conc                       ( unsafeIOToSTM )
-
-import           Foreign.ForeignPtr.Unsafe
-import           Foreign                 hiding ( void )
-import qualified Data.ByteString               as B
-import qualified Data.ByteString.Internal      as B
-
-import           System.FilePath
-import           System.Directory
-import           System.IO
-import           System.IO.MMap
-
-import           Control.Monad
-import           Control.Exception
 import           Control.Concurrent.STM
-
-import           Data.List.NonEmpty             ( NonEmpty(..) )
-import qualified Data.List.NonEmpty            as NE
 
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
-import           Data.Proxy
 import           Data.Dynamic
-
-import qualified Data.Vector.Storable          as VS
-import qualified Data.Vector.Storable.Mutable  as MVS
-
 
 import qualified Data.Lossless.Decimal         as D
 import           Language.Edh.EHI
 
-import           Dim.XCHG
 import           Dim.DataType
 import           Dim.DbArray
 
@@ -52,6 +30,9 @@ createDbArrayClass !defaultDt !clsOuterScope =
                [ ("[]"      , EdhMethod, wrapHostProc aryIdxReadProc)
                , ("[=]"     , EdhMethod, wrapHostProc aryIdxWriteProc)
                , ("__repr__", EdhMethod, wrapHostProc aryReprProc)
+               , ("__show__", EdhMethod, wrapHostProc aryShowProc)
+               , ("__len__" , EdhMethod, wrapHostProc aryLen1dGetter)
+               , ("__mark__", EdhMethod, wrapHostProc aryLen1dSetter)
                ]
              ]
           ++ [ (AttrByName nm, ) <$> mkHostProperty clsScope nm getter setter
@@ -169,10 +150,71 @@ createDbArrayClass !defaultDt !clsOuterScope =
             <> ", "
             <> T.pack (show path)
             <> ", dtype="
-            <> (data'type'identifier dt)
+            <> data'type'identifier dt
             <> ", shape="
             <> T.pack (show shape)
             <> ")"
+
+  aryShowProc :: EdhHostProc
+  aryShowProc !exit !ets =
+    withThisHostObj ets $ \(DbArray _dir _path !dt !das) ->
+      readTMVar das >>= \case
+        Left  !err                -> throwSTM err
+        Right (_shape, !hdr, !fa) -> do
+          !len <- unsafeIOToSTM $ readDbArrayLength hdr
+          showData (fromIntegral len) $ flat'array'read dt ets fa
+   where
+    !thisObj = edh'scope'this $ contextScope $ edh'context ets
+
+    exitWithDetails :: Text -> STM ()
+    exitWithDetails !details = edhValueRepr ets (EdhObject thisObj)
+      $ \ !repr -> exitEdh ets exit $ EdhString $ repr <> "\n" <> details
+
+    showData :: Int -> (Int -> (EdhValue -> STM ()) -> STM ()) -> STM ()
+    showData !len !readElem = go 0 [] 0 ""
+     where
+      go :: Int -> [Text] -> Int -> Text -> STM ()
+      -- TODO don't generate all lines for large columns
+      go !i !cumLines !lineIdx !line | i >= len =
+        exitWithDetails $ if T.null line && null cumLines
+          then "Zero-Length Array"
+          else
+            "# flat length = " <> T.pack (show len) <> "\n" <> if null cumLines
+              then line
+              else
+                let !fullLines =
+                      line
+                        :  " # " -- todo make this tunable ?
+                        <> T.pack (show lineIdx)
+                        <> " ~ "
+                        <> T.pack (show $ i - 1)
+                        :  cumLines
+                    !lineCnt = length fullLines
+                in  if lineCnt > 20
+                      then
+                        T.unlines
+                        $  reverse
+                        $  take 10 fullLines
+                        ++ ["# ... "] -- todo make this tunable
+                        ++ drop (lineCnt - 10) fullLines
+                      else T.unlines $ reverse fullLines
+      go !i !cumLines !lineIdx !line = readElem i $ \ !elemVal ->
+        edhValueRepr ets elemVal $ \ !elemRepr ->
+          let !tentLine = line <> elemRepr <> ", "
+          in  if T.length tentLine > 79 -- todo make this tunable ?
+                then go
+                  (i + 1)
+                  ( line
+                  : (  " # " -- todo make this tunable ?
+                    <> T.pack (show lineIdx)
+                    <> " ~ "
+                    <> T.pack (show $ i - 1)
+                    )
+                  : cumLines
+                  )
+                  i
+                  (elemRepr <> ", ")
+                else go (i + 1) cumLines lineIdx tentLine
 
 
   aryIdxReadProc :: EdhValue -> EdhHostProc

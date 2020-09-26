@@ -1,0 +1,18 @@
+
+# %%
+dba = DbArray(
+  dataDir = '/var/tmp/demo',
+  dataPath = 'poc/test',
+  dtype = f4,
+  shape = 10,
+)
+
+# %%
+dba | show
+
+# %%
+len( dba )
+
+# %%
+mark( dba, 5 )
+len( dba )

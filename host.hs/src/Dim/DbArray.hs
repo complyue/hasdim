@@ -5,8 +5,6 @@ module Dim.DbArray where
 import           Prelude
 -- import           Debug.Trace
 
-import           GHC.Conc                       ( unsafeIOToSTM )
-
 import           Foreign.ForeignPtr.Unsafe
 import           Foreign                 hiding ( void )
 import qualified Data.ByteString               as B

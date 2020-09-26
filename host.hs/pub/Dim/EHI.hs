@@ -29,6 +29,7 @@ import           Dim.DataType
 import           Dim.ColArts
 import           Dim.Table
 import           Dim.DbArray
+import           Dim.DbArts
 
 
 builtinDataTypes :: Object -> STM [(DataTypeIdent, Object)]
