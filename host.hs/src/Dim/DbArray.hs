@@ -513,7 +513,7 @@ createDbArrayClass !defaultDt !clsOuterScope =
         EdhArgsPack (ArgsPack !idxs _) ->
           flatIndexInShape ets idxs shape $ \ !flatIdx ->
             flat'array'read dt ets fa flatIdx $ \ !rv -> exitEdh ets exit rv
-        idx -> flatIndexInShape ets [idx] shape $ \ !flatIdx ->
+        !idx -> flatIndexInShape ets [idx] shape $ \ !flatIdx ->
           flat'array'read dt ets fa flatIdx $ \ !rv -> exitEdh ets exit rv
 
 
