@@ -141,11 +141,11 @@ installDimBatteries !world = do
 
     let !moduScope = contextScope $ edh'context ets
 
-    !dbArrayClass <- createDbArrayClass defaultDataType moduScope
     !dmrpClass    <- createDMRPClass moduScope
     !numdtClass   <- createNumDataTypeClass moduScope
     !columnClass  <- createColumnClass defaultDataType moduScope
     !tableClass   <- createTableClass columnClass moduScope
+    !dbArrayClass <- createDbArrayClass columnClass defaultDataType moduScope
 
     !moduArts0    <-
       sequence

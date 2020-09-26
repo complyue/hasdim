@@ -17,10 +17,12 @@ import           Language.Edh.EHI
 
 import           Dim.DataType
 import           Dim.DbArray
+import           Dim.Column
+import           Dim.DiskBack
 
 
-createDbArrayClass :: Object -> Scope -> STM Object
-createDbArrayClass !defaultDt !clsOuterScope =
+createDbArrayClass :: Object -> Object -> Scope -> STM Object
+createDbArrayClass !columnClass !defaultDt !clsOuterScope =
   mkHostClass clsOuterScope "DbArray" (allocEdhObj arrayAllocator) []
     $ \ !clsScope -> do
         !mths <-
@@ -33,6 +35,7 @@ createDbArrayClass !defaultDt !clsOuterScope =
                , ("__show__", EdhMethod, wrapHostProc aryShowProc)
                , ("__len__" , EdhMethod, wrapHostProc aryLen1dGetter)
                , ("__mark__", EdhMethod, wrapHostProc aryLen1dSetter)
+               , ("asColumn", EdhMethod, wrapHostProc aryAsColProc)
                ]
              ]
           ++ [ (AttrByName nm, ) <$> mkHostProperty clsScope nm getter setter
@@ -248,4 +251,12 @@ createDbArrayClass !defaultDt !clsOuterScope =
             !idx -> flatIndexInShape ets [idx] shape $ \ !flatIdx ->
               flat'array'write dt ets fa flatIdx dv
                 $ \ !rv -> exitEdh ets exit rv
+
+
+  aryAsColProc :: EdhHostProc
+  aryAsColProc !exit !ets = withThisHostObj ets $ \dba@DbArray{} ->
+    edhCreateHostObj columnClass (toDyn $ Column $ DbColumn dba 0) [thatObj]
+      >>= exitEdh ets exit
+      .   EdhObject
+    where !thatObj = edh'scope'that $ contextScope $ edh'context ets
 

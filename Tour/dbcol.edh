@@ -11,8 +11,20 @@ dba = DbArray(
 dba | show
 
 # %%
-len( dba )
+mark( dba, 5 )
 
 # %%
-mark( dba, 5 )
-len( dba )
+dba | show
+
+# %%
+col = dba.asColumn()
+col | show
+
+# %%
+col[] = arange( len( col ), dtype=f4 )
+col | show
+
+# %%
+grow( col, 20 )
+mark( col, 15 )
+col | show
