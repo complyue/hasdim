@@ -8,8 +8,8 @@
     dtype = f4,
   )
 }
-# %%
-$=> # load whatever exists, or create one with len1d=10
+# %# load however long if exists, or create one with len1d=10
+$=> # catch exception when data file does not exist
 # %%
 {
   dba = DbArray(
@@ -45,3 +45,6 @@ col | show
 grow( col, 20 )
 mark( col, 15 )
 col | show
+
+# %%
+dba | show
