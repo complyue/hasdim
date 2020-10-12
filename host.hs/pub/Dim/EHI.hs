@@ -27,6 +27,7 @@ import qualified Data.Lossless.Decimal         as D
 import           Dim.XCHG
 import           Dim.DataType
 import           Dim.ColArts
+import           Dim.Float
 import           Dim.Table
 import           Dim.DbArray
 import           Dim.DbArts
@@ -94,6 +95,9 @@ installDimBatteries !world = do
           )
         , ( symbolName resolveNumDataTypeEffId
           , EdhSymbol resolveNumDataTypeEffId
+          )
+        , ( symbolName resolveFloatDataOperatorEffId
+          , EdhSymbol resolveFloatDataOperatorEffId
           )
         ]
     !artsDict <- EdhDict
@@ -163,6 +167,10 @@ installDimBatteries !world = do
              , resolveNumDataTypeEffId
              , wrapHostProc $ resolveNumDataTypeProc numdtClass
              )
+           , ( EdhMethod
+             , resolveFloatDataOperatorEffId
+             , wrapHostProc $ resolveFloatDataOperatorProc numdtClass
+             )
            ]
          ]
       ++ [ (AttrByName nm, ) <$> mkHostProc moduScope mc nm hp
@@ -172,6 +180,25 @@ installDimBatteries !world = do
              , wrapHostProc $ arangeProc defaultRangeDataType columnClass
              )
            , (EdhMethod, "where", wrapHostProc whereProc)
+           , ( EdhMethod
+             , "pi"
+             , wrapHostProc $ piProc defaultDataType columnClass
+             )
+           , (EdhMethod, "exp"  , wrapHostProc $ floatOpProc float'exp)
+           , (EdhMethod, "log"  , wrapHostProc $ floatOpProc float'log)
+           , (EdhMethod, "sqrt" , wrapHostProc $ floatOpProc float'sqrt)
+           , (EdhMethod, "sin"  , wrapHostProc $ floatOpProc float'sin)
+           , (EdhMethod, "cos"  , wrapHostProc $ floatOpProc float'cos)
+           , (EdhMethod, "tan"  , wrapHostProc $ floatOpProc float'tan)
+           , (EdhMethod, "asin" , wrapHostProc $ floatOpProc float'asin)
+           , (EdhMethod, "acos" , wrapHostProc $ floatOpProc float'acos)
+           , (EdhMethod, "atan" , wrapHostProc $ floatOpProc float'atan)
+           , (EdhMethod, "sinh" , wrapHostProc $ floatOpProc float'sinh)
+           , (EdhMethod, "cosh" , wrapHostProc $ floatOpProc float'cosh)
+           , (EdhMethod, "tanh" , wrapHostProc $ floatOpProc float'tanh)
+           , (EdhMethod, "asinh", wrapHostProc $ floatOpProc float'asinh)
+           , (EdhMethod, "acosh", wrapHostProc $ floatOpProc float'acosh)
+           , (EdhMethod, "atanh", wrapHostProc $ floatOpProc float'atanh)
            ]
          ]
 

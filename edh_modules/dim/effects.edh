@@ -10,5 +10,6 @@ export import (
   @resolveDataComparator,
   @resolveDataOperator,
   @resolveNumDataType,
+  @resolveFloatDataOperator,
   **_
 ) 'dim/RT'

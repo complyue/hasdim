@@ -3,6 +3,15 @@ export {
 
   import * 'dim/dtypes'
 
-  import ( Table, Column, arange, where, DbArray, **_ ) 'dim/RT'
+  import (
+    Table, Column,
+    arange, where,
+    pi,
+    exp, log, sqrt,
+    sin, cos, tan, asin, acos, atan,
+    sinh, cosh, tanh, asinh, acosh, atanh,
+    DbArray,
+    **_
+  ) 'dim/RT'
 
 }
