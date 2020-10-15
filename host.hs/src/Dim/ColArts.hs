@@ -7,6 +7,7 @@ import           Prelude
 import           GHC.Float
 
 import           Foreign                 hiding ( void )
+import qualified Data.ByteString.Internal      as B
 
 import           Control.Concurrent.STM
 
@@ -443,6 +444,7 @@ createColumnClass !defaultDt !clsOuterScope =
                , ("__mark__", EdhMethod, wrapHostProc colMarkLenProc)
                , ("[]"      , EdhMethod, wrapHostProc colIdxReadProc)
                , ("[=]"     , EdhMethod, wrapHostProc colIdxWriteProc)
+               , ("__blob__", EdhMethod, wrapHostProc colBlobProc)
                , ("__repr__", EdhMethod, wrapHostProc colReprProc)
                , ("__show__", EdhMethod, wrapHostProc colShowProc)
                , ("__desc__", EdhMethod, wrapHostProc colDescProc)
@@ -614,6 +616,22 @@ createColumnClass !defaultDt !clsOuterScope =
   colDtypeProc !exit !ets = withThisHostObj ets $ \(Column !col) ->
     exitEdh ets exit $ EdhString $ data'type'identifier $ data'type'of'column
       col
+
+  colBlobProc :: EdhHostProc
+  colBlobProc !exit !ets =
+    withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Column>")
+      $ \(Column !col) -> case data'type'proxy $ data'type'of'column col of
+          DeviceDataType _ !item'size _item'align -> do
+            !cs <- view'column'data col
+            !cl <- read'column'length col
+            case cs of
+              DeviceArray _cap !fp ->
+                exitEdh ets exit $ EdhBlob $ B.fromForeignPtr
+                  (castForeignPtr fp)
+                  0
+                  (cl * item'size)
+              _ -> exitEdh ets exit edhNA
+          _ -> exitEdh ets exit edhNA
 
   colReprProc :: EdhHostProc
   colReprProc !exit !ets =
