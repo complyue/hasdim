@@ -557,7 +557,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
  where
 
-  -- | host constructor Column(capacity, length=None, dtype=float64)
+  -- | host constructor Column(capacity, length=None, dtype=float64, ***_)
   columnAllocator
     :: "capacity" !: Int
     -> "length" ?: Int

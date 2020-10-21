@@ -52,14 +52,15 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
 
  where
 
-  -- | host constructor DbArray(dataDir, dataPath, dtype=float64, shape=None)
+  -- | host constructor DbArray(dataDir, dataPath, dtype=float64, shape=None, ***_)
   arrayAllocator
     :: "dataDir" !: Text
     -> "dataPath" !: Text
     -> "dtype" ?: Object
     -> "shape" ?: EdhValue
+    -> ArgsPack -- allow/ignore arbitrary ctor args for descendant classes
     -> EdhObjectAllocator
-  arrayAllocator (mandatoryArg -> !dataDir) (mandatoryArg -> !dataPath) (defaultArg defaultDt -> !dto) (optionalArg -> !maybeShape) !ctorExit !etsCtor
+  arrayAllocator (mandatoryArg -> !dataDir) (mandatoryArg -> !dataPath) (defaultArg defaultDt -> !dto) (optionalArg -> !maybeShape) _ctorOtherArgs !ctorExit !etsCtor
     = if edh'in'tx etsCtor
       then throwEdh etsCtor
                     UsageError
