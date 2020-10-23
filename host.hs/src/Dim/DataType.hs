@@ -29,7 +29,6 @@ import qualified Data.Vector.Storable.Mutable  as MVS
 
 import           Language.Edh.EHI
 import qualified Data.Lossless.Decimal         as D
-import           Language.Edh.Batteries
 
 import           Dim.XCHG
 
