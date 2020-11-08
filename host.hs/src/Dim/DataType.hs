@@ -431,7 +431,7 @@ edhDataOrdering = FlatOrd vecCmp elemCmp
         go i | i >= cap = exit $ DeviceArray cap rfp
         go i            = do
           !ev <- unsafeIOToSTM $ MV.unsafeRead ha i
-          doEdhComparison ets ev sv $ \ !maybeOrd -> do
+          edhCompareValue ets ev sv $ \ !maybeOrd -> do
             case maybeOrd of
               Nothing -> unsafeIOToSTM $ pokeElemOff rp i 0
               Just !ord ->
@@ -453,7 +453,7 @@ edhDataOrdering = FlatOrd vecCmp elemCmp
             go i             = do
               !ev1 <- unsafeIOToSTM $ MV.unsafeRead ha1 i
               !ev2 <- unsafeIOToSTM $ MV.unsafeRead ha2 i
-              doEdhComparison ets ev1 ev2 $ \ !maybeOrd -> do
+              edhCompareValue ets ev1 ev2 $ \ !maybeOrd -> do
                 case maybeOrd of
                   Nothing -> unsafeIOToSTM $ pokeElemOff rp i 0
                   Just !ord ->
