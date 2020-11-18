@@ -454,7 +454,7 @@ createColumnClass !defaultDt !clsOuterScope =
                    EQ -> True
                    _  -> False
                  )
-               , ( "(==@)"
+               , ( "(==.)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    EQ -> True
@@ -466,7 +466,7 @@ createColumnClass !defaultDt !clsOuterScope =
                    EQ -> False
                    _  -> True
                  )
-               , ( "(!=@)"
+               , ( "(!=.)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    EQ -> False
@@ -498,55 +498,55 @@ createColumnClass !defaultDt !clsOuterScope =
                    GT -> True
                    _  -> False
                  )
-               , ( "(>=@)"
+               , ( "(>=.)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    LT -> True
                    EQ -> True
                    _  -> False
                  )
-               , ( "(<=@)"
+               , ( "(<=.)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    GT -> True
                    EQ -> True
                    _  -> False
                  )
-               , ( "(<@)"
+               , ( "(<.)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    GT -> True
                    _  -> False
                  )
-               , ( "(>@)"
+               , ( "(>.)"
                  , EdhMethod
                  , wrapHostProc $ colCmpProc $ \case
                    LT -> True
                    _  -> False
                  )
                , ("(&&)" , EdhMethod, wrapHostProc $ colOpProc bitAndOp)
-               , ("(&&@)", EdhMethod, wrapHostProc $ colOpProc bitAndOp)
+               , ("(&&.)", EdhMethod, wrapHostProc $ colOpProc bitAndOp)
                , ("(||)" , EdhMethod, wrapHostProc $ colOpProc bitOrOp)
-               , ("(||@)", EdhMethod, wrapHostProc $ colOpProc bitOrOp)
+               , ("(||.)", EdhMethod, wrapHostProc $ colOpProc bitOrOp)
                , ("(&&=)", EdhMethod, wrapHostProc $ colInpProc bitAndOp)
                , ("(||=)", EdhMethod, wrapHostProc $ colInpProc bitOrOp)
                , ("(+)"  , EdhMethod, wrapHostProc $ colOpProc addOp)
-               , ("(+@)" , EdhMethod, wrapHostProc $ colOpProc addToOp)
+               , ("(+.)" , EdhMethod, wrapHostProc $ colOpProc addToOp)
                , ("(+=)" , EdhMethod, wrapHostProc $ colInpProc addOp)
                , ("(-)"  , EdhMethod, wrapHostProc $ colOpProc subtractOp)
-               , ("(-@)" , EdhMethod, wrapHostProc $ colOpProc subtFromOp)
+               , ("(-.)" , EdhMethod, wrapHostProc $ colOpProc subtFromOp)
                , ("(-=)" , EdhMethod, wrapHostProc $ colInpProc subtractOp)
                , ("(*)"  , EdhMethod, wrapHostProc $ colOpProc mulOp)
-               , ("(*@)" , EdhMethod, wrapHostProc $ colOpProc mulOp)
+               , ("(*.)" , EdhMethod, wrapHostProc $ colOpProc mulOp)
                , ("(*=)" , EdhMethod, wrapHostProc $ colInpProc mulOp)
                , ("(/)"  , EdhMethod, wrapHostProc $ colOpProc divOp)
-               , ("(/@)" , EdhMethod, wrapHostProc $ colOpProc divByOp)
+               , ("(/.)" , EdhMethod, wrapHostProc $ colOpProc divByOp)
                , ("(/=)" , EdhMethod, wrapHostProc $ colInpProc divOp)
                , ("(//)" , EdhMethod, wrapHostProc $ colOpProc divIntOp)
-               , ("(//@)", EdhMethod, wrapHostProc $ colOpProc divIntByOp)
+               , ("(//.)", EdhMethod, wrapHostProc $ colOpProc divIntByOp)
                , ("(//=)", EdhMethod, wrapHostProc $ colInpProc divIntOp)
                , ("(**)" , EdhMethod, wrapHostProc $ colOpProc powOp)
-               , ("(**@)", EdhMethod, wrapHostProc $ colOpProc powToOp)
+               , ("(**.)", EdhMethod, wrapHostProc $ colOpProc powToOp)
                , ("(**=)", EdhMethod, wrapHostProc $ colInpProc powOp)
                ]
              ]
