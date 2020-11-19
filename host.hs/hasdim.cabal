@@ -21,43 +21,9 @@ source-repository head
   location: https://github.com/e-wrks/hasdim
   subdir:   host.hs
 
-library
-  exposed-modules:    Dim.EHI
-  hs-source-dirs:     pub
-  default-language:   Haskell2010
-  default-extensions:
-    NoImplicitPrelude
-    BangPatterns
-    ConstraintKinds
-    DataKinds
-    FlexibleContexts
-    FlexibleInstances
-    GADTs
-    KindSignatures
-    LambdaCase
-    OverloadedStrings
-    ScopedTypeVariables
-    TupleSections
-    TypeApplications
-    TypeOperators
-    ViewPatterns
-
-  ghc-options:        -Wall
-  build-depends:
-    , base                  >=4.12
-    , bytestring
-    , edh
-    , hasdim-internal
-    , lossless-decimal
-    , mtl
-    , stm                   >=2.5
-    , text
-    , transformers
-    , unordered-containers
-
 executable hasdim
   main-is:            Main.hs
-  hs-source-dirs:     runmodu
+  hs-source-dirs:     repl
   other-modules:      Repl
   default-language:   Haskell2010
   default-extensions:
@@ -124,53 +90,44 @@ executable rundim
     , text
     , transformers
 
-library hasdim-poc
-  exposed-modules:    Schema
-  hs-source-dirs:     poc
+executable rundimm
+  main-is:            Main.hs
+  hs-source-dirs:     runmodu
   default-language:   Haskell2010
   default-extensions:
     NoImplicitPrelude
     BangPatterns
-    ConstrainedClassMethods
+    ConstraintKinds
+    DataKinds
     FlexibleContexts
     FlexibleInstances
     GADTs
+    KindSignatures
     LambdaCase
     OverloadedStrings
-    RankNTypes
     ScopedTypeVariables
     TupleSections
-    TypeFamilies
-    UndecidableInstances
+    TypeApplications
+    TypeOperators
+    ViewPatterns
 
-  ghc-options:        -Wall
+  ghc-options:        -Wall -threaded -rtsopts
   build-depends:
-    , base                  >=4.12
-    , binary
+    , base              >=4.12
     , bytestring
-    , clock
-    , containers
-    , directory
     , edh
-    , filepath
-    , hasdim-internal
-    , hashable
+    , hasdim
     , lossless-decimal
-    , mmap                  >=0.5.4
     , mtl
     , nedh
-    , primitive             >=0.2.1
-    , scientific
-    , stm                   >=2.5
+    , stm               >=2.5
     , text
-    , time
     , transformers
-    , unix
-    , unordered-containers
-    , vector                >=0.5
 
-library hasdim-internal
+library
   exposed-modules:
+    Dim.EHI
+  other-modules:
     Dim.ColArts
     Dim.Column
     Dim.DataType
