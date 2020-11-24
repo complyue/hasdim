@@ -129,7 +129,7 @@ coerceEdhToFloat' !ets !v !naExit !exit = case edhUltimate v of
         throwEdh ets UsageError $ "malformed __float__ magic: " <> badDesc
   _ -> naExit
   where
-    exitWithMagicResult :: EdhTxExit
+    exitWithMagicResult :: EdhTxExit EdhValue
     exitWithMagicResult (EdhDecimal !d) _ets = exitWith d
     exitWithMagicResult !badVal _ets = edhValueDesc ets badVal $ \ !badDesc ->
       throwEdh ets UsageError $ "bad value returned from __float__(): " <> badDesc
@@ -178,7 +178,7 @@ coerceEdhToIntegral' !ets !v !naExit !exit = case edhUltimate v of
         throwEdh ets UsageError $ "malformed __int__ magic: " <> badDesc
   _ -> naExit
   where
-    exitWithMagicResult :: EdhTxExit
+    exitWithMagicResult :: EdhTxExit EdhValue
     exitWithMagicResult (EdhDecimal !d) _ets = exitWith d
     exitWithMagicResult !badVal _ets = edhValueDesc ets badVal $ \ !badDesc ->
       throwEdh ets UsageError $ "bad value returned from __int__(): " <> badDesc
