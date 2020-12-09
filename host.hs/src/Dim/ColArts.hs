@@ -1281,7 +1281,7 @@ arangeProc !defaultDt !colClass (mandatoryArg -> !rngSpec) (defaultArg defaultDt
       !badRngSpec -> edhValueRepr ets badRngSpec $ \ !rngRepr ->
         throwEdh ets UsageError $
           "invalid range of "
-            <> T.pack (edhTypeNameOf badRngSpec)
+            <>  edhTypeNameOf badRngSpec
             <> ": "
             <> rngRepr
   where

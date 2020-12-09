@@ -514,7 +514,7 @@ resolveDataComparator' !ets !dti _ !naExit !exit =
         !badDtVal ->
           throwEdhTx UsageError $
             "bad return type from @resolveDataComparator(dti): "
-              <> T.pack (edhTypeNameOf badDtVal)
+              <> edhTypeNameOf badDtVal
 
 resolveDataComparatorEffId :: Symbol
 resolveDataComparatorEffId = globalSymbol "@resolveDataComparator"
@@ -1521,7 +1521,7 @@ resolveDataOperator' !ets !dti _ !naExit !exit =
         !badDtVal ->
           throwEdhTx UsageError $
             "bad return type from @resolveDataOperator(dti): "
-              <> T.pack (edhTypeNameOf badDtVal)
+              <> edhTypeNameOf badDtVal
 
 resolveDataOperatorEffId :: Symbol
 resolveDataOperatorEffId = globalSymbol "@resolveDataOperator"
@@ -1622,7 +1622,7 @@ resolveNumDataType' !ets !dti !naExit !exit =
         !badDtVal ->
           throwEdhTx UsageError $
             "bad return type from @resolveNumDataType(dti): "
-              <> T.pack (edhTypeNameOf badDtVal)
+              <> edhTypeNameOf badDtVal
 
 resolveNumDataTypeEffId :: Symbol
 resolveNumDataTypeEffId = globalSymbol "@resolveNumDataType"

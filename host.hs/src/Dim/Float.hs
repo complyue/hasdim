@@ -120,7 +120,7 @@ resolveFloatDataOperator' !ets !dti !naExit !exit =
         !badDtVal ->
           throwEdhTx UsageError $
             "bad return type from @resolveFloatDataOperator(dti): "
-              <> T.pack (edhTypeNameOf badDtVal)
+              <> edhTypeNameOf badDtVal
 
 resolveFloatDataOperatorEffId :: Symbol
 resolveFloatDataOperatorEffId = globalSymbol "@resolveFloatDataOperator"

@@ -16,8 +16,8 @@ error( 'Missing host module: ' ++ __name__ )
 
 export { # effect identifiers
 
-  resolveDataComparator = Symbol( '@resolveDataComparator' )
-  resolveDataOperator = Symbol( '@resolveDataOperator' )
-  resolveNumDataType = Symbol( '@resolveNumDataType' )
+  symbol @resolveDataComparator
+  symbol @resolveDataOperator
+  symbol @resolveNumDataType
 
 }

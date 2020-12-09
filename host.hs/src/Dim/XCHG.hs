@@ -95,10 +95,7 @@ coerceEdhToFloat !ets !v =
   coerceEdhToFloat' ets v $
     edhValueRepr ets v $ \ !r ->
       throwEdh ets UsageError $
-        "float expected but given a "
-          <> T.pack (edhTypeNameOf v)
-          <> ": "
-          <> r
+        "float expected but given a " <> edhTypeNameOf v <> ": " <> r
 
 coerceEdhToFloat' ::
   (RealFloat a) =>
@@ -144,10 +141,7 @@ coerceEdhToIntegral !ets !v =
   coerceEdhToIntegral' ets v $
     edhValueRepr ets v $ \ !r ->
       throwEdh ets UsageError $
-        "integer expected but given a "
-          <> T.pack (edhTypeNameOf v)
-          <> ": "
-          <> r
+        "integer expected but given a " <> edhTypeNameOf v <> ": " <> r
 
 coerceEdhToIntegral' ::
   (Integral a) =>
