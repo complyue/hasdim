@@ -1,15 +1,256 @@
-
-{#
+{##
  # This is the sentinel file stand in place of a host module that
  # should have been installed by the host interpreter, which contains
- # host procedures, classes and other artifacts defined via EHI,
- # and obviously, written in the host language (i.e. Haskell)
+ # host procedures, classes and other artifacts defined via EHI
+ # (which is obviously written in the host language i.e. Haskell)
  #
  # Execution of this module file is a sign showing that wrong Edh
  # interpreter is used to run the program.
  #}
-error( 'Missing host module: ' ++ __name__ )
+if running!true # should be treated as false for proper control-flow analysis
+then error( 'Missing host module: ' ++ __name__ )
 
-# TODO mockups of procedures and other artifacts can be written in
-#      this source file, to give meaningful information to IDEs and/or
-#      other tools, for purpose of, e.g. auto completion.
+# rest of the source here serves as meta documentation for aforementioned
+# host artifacts, and is meant to be leveraged by IDE tools (such as els)
+# with source code analysis capabilities, to aid the developers
+
+import * './symbols'
+import * './dtypes'
+
+export {
+
+  {##
+   # Data Manipulation Routine Pack
+   #}
+  class DMRP pass
+
+  {##
+   # Numeric Data Type
+   #}
+  class NumDataType pass
+
+
+  ; @resolveDataComparator :: ( StringType ) -> DMRP
+  {##
+   # The ultimate fallback to have trivial data types resolved
+   #}
+  method @resolveDataComparator( dti ) pass
+
+  ; @resolveDataOperator :: ( StringType ) -> DMRP
+  {##
+   # The ultimate fallback to have trivial data types resolved
+   #}
+  method @resolveDataOperator( dti ) pass
+
+  ; @resolveNumDataType :: ( StringType ) -> DMRP
+  {##
+   # The ultimate fallback to have trivial data types resolved
+   #}
+  method @resolveNumDataType( dti ) pass
+
+  ; @resolveFloatDataOperator :: ( StringType ) -> DMRP
+  {##
+   # The ultimate fallback to have trivial data types resolved
+   #}
+  method @resolveFloatDataOperator( dti ) pass
+
+
+  arange :: (
+    start!int!DecimalType : stop!int!DecimalType : step!int!DecimalType,
+    dtype!ObjectType || None,
+  ) -> Column
+  arange :: (
+    start!int!DecimalType : stop!int!DecimalType,
+    dtype!ObjectType || None,
+  ) -> Column
+  arange :: (
+    stop!int!DecimalType,
+    dtype!ObjectType || None,
+  ) -> Column
+  {##
+   # Similar to Numpy's `arange()``, but the range needs to be specified with
+   # pairs if not simply a positive integer for max value.
+   #}
+  method arange( rangeSpec, dtype as _ = intp ) pass
+
+  where :: ( bool'index!Column ) -> Column
+  {##
+   # Similar to Numpy's `where()`, but limited to bool index input as currently
+   # implemented
+   #
+   # see: https://numpy.org/doc/stable/reference/generated/numpy.where.html
+   #}
+  method where( colBoolIdx ) pass
+
+  pi :: ( capacity!int!DecimalType, float!dtype!ObjectType || None ) -> Column
+  {##
+   # Create a column object with the specified capacity and every element
+   # filled with mathematic constant π, per the specified dtype
+   #}
+  method pi( cap as _, dtype as _ = float64 ) pass
+
+  exp :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `exp`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:exp
+     )
+   #}
+  method exp( colObj ) pass
+
+  log :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `log`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:log
+     )
+   #}
+  method log( colObj ) pass
+
+  sqrt :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `sqrt`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:sqrt
+     )
+   #}
+  method sqrt( colObj ) pass
+
+  sin :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `sin`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:sin
+     )
+   #}
+  method sin( colObj ) pass
+
+  cos :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `cos`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:cos
+     )
+   #}
+  method cos( colObj ) pass
+
+  tan :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `tan`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:tan
+     )
+   #}
+  method tan( colObj ) pass
+
+  asin :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `asin`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:asin
+     )
+   #}
+  method asin( colObj ) pass
+
+  acos :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `acos`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:acos
+     )
+   #}
+  method acos( colObj ) pass
+
+  atan :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `atan`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:atan
+     )
+   #}
+  method atan( colObj ) pass
+
+  sinh :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `sinh`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:sinh
+     )
+   #}
+  method sinh( colObj ) pass
+
+  cosh :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `cosh`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:cosh
+     )
+   #}
+  method cosh( colObj ) pass
+
+  tanh :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `tanh`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:tanh
+     )
+   #}
+  method tanh( colObj ) pass
+
+  asinh :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `asinh`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:asinh
+     )
+   #}
+  method asinh( colObj ) pass
+
+  acosh :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `acosh`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:acosh
+     )
+   #}
+  method acosh( colObj ) pass
+
+  atanh :: ( float!Column ) -> float!Column
+  {##
+   # Vectorized [floating point `atanh`](
+        https://hackage.haskell.org/package/base/docs/Prelude.html#v:atanh
+     )
+   #}
+  method atanh( colObj ) pass
+
+
+  {##
+   # A Column object is a 1d vector of specific data type (`dtype`), it has a
+   # fixed capacity, and a dynamic valid data length.
+   #
+   # Its capacity can be observed via the builtin `cap` method, and growed by
+   # the builtin `grow` method.
+   #
+   # Its valid data length can be observed via the builtin `len` method, and
+   # changed by the builtin `mark` method.
+   #
+   # Otherwise it is similar to a Numpy `ndarray`, with various vectorized
+   # operations to be performed against Column objects.
+   #}
+  class Column {
+
+    __init__ :: (
+      capacity!int!DecimalType,
+      length!int!DecimalType || None,
+      dtype!ObjectType || None,
+    ) -> nil
+    {##
+     # Construct a new Column object with specified capacity
+     #
+     # The valid data length defaults to the capacity if not specified
+     #
+     # The data type defaults to float64 if not specified
+     #}
+    method __init__(
+      capacity, length= None, dtype as _ = float64,
+      ***_ # allow/ignore arbitrary ctor args for descendant classes
+    ) pass
+
+  }
+
+  class Table {
+
+  }
+
+  class DbArray {
+
+  }
+
+
+}

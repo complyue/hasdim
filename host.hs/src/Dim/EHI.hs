@@ -42,9 +42,7 @@ builtinDataTypes !dtClass =
         mkHostTypeWithAlias @EdhValue
           "box"
           edhNA
-          [ -- kinda for numpy compat,
-            "object" -- not all values
-            -- are objects in Edh
+          [ "object" -- for numpy compat, not all values are objects in Edh
           ]
       ]
   where
@@ -124,6 +122,7 @@ installDimBatteries !world = do
             HashStore !hs -> hs
             _ -> error "bug: module not bearing hash store"
 
+      {- HLINT ignore "Redundant <$>" -}
       !defaultDataType <-
         fromJust <$> iopdLookup (AttrByName "float64") dtypesModuStore >>= \case
           EdhObject !dto -> return dto

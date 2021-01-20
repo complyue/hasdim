@@ -31,8 +31,8 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
         sequence $
           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
             | (nm, vc, hp) <-
-                [ ("[]", EdhMethod, wrapHostProc aryIdxReadProc),
-                  ("[=]", EdhMethod, wrapHostProc aryIdxWriteProc),
+                [ ("([])", EdhMethod, wrapHostProc aryIdxReadProc),
+                  ("([=])", EdhMethod, wrapHostProc aryIdxWriteProc),
                   ("__repr__", EdhMethod, wrapHostProc aryReprProc),
                   ("__show__", EdhMethod, wrapHostProc aryShowProc),
                   ("__len__", EdhMethod, wrapHostProc aryLen1dGetter),
@@ -59,35 +59,46 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
       "shape" ?: EdhValue ->
       ArgsPack -> -- allow/ignore arbitrary ctor args for descendant classes
       EdhObjectAllocator
-    arrayAllocator (mandatoryArg -> !dataDir) (mandatoryArg -> !dataPath) (defaultArg defaultDt -> !dto) (optionalArg -> !maybeShape) _ctorOtherArgs !ctorExit !etsCtor =
-      if edh'in'tx etsCtor
-        then
-          throwEdh
-            etsCtor
-            UsageError
-            "you don't create Array within a transaction"
-        else
-          castObjectStore dto >>= \case
-            Nothing -> throwEdh etsCtor UsageError "invalid dtype"
-            Just (_, !dt) -> case data'type'proxy dt of
-              DeviceDataType {} -> case maybeShape of
-                Nothing -> runEdhTx etsCtor $ edhContIO $ goMemMap dt Nothing
-                Just !shapeVal -> parseArrayShape etsCtor shapeVal $ \ !shape ->
-                  runEdhTx etsCtor $ edhContIO $ goMemMap dt $ Just shape
-              HostDataType {} ->
-                throwEdh etsCtor UsageError $
-                  "can not mmap as host dtype: "
-                    <> data'type'identifier dt
-      where
-        goMemMap :: DataType -> Maybe ArrayShape -> IO ()
-        goMemMap !dt !mmapShape = do
-          !asVar <- newEmptyTMVarIO
-          mmapDbArray asVar dataDir dataPath dt mmapShape
-          atomically $
-            readTMVar asVar >>= \case
-              Left !err -> throwSTM err
-              Right {} ->
-                ctorExit $ HostStore $ toDyn $ DbArray dataDir dataPath dt asVar
+    arrayAllocator
+      (mandatoryArg -> !dataDir)
+      (mandatoryArg -> !dataPath)
+      (defaultArg defaultDt -> !dto)
+      (optionalArg -> !maybeShape)
+      _ctorOtherArgs
+      !ctorExit
+      !etsCtor =
+        if edh'in'tx etsCtor
+          then
+            throwEdh
+              etsCtor
+              UsageError
+              "you don't create Array within a transaction"
+          else
+            castObjectStore dto >>= \case
+              Nothing -> throwEdh etsCtor UsageError "invalid dtype"
+              Just (_, !dt) -> case data'type'proxy dt of
+                DeviceDataType {} -> case maybeShape of
+                  Nothing -> runEdhTx etsCtor $ edhContIO $ goMemMap dt Nothing
+                  Just !shapeVal -> parseArrayShape etsCtor shapeVal $
+                    \ !shape ->
+                      runEdhTx etsCtor $ edhContIO $ goMemMap dt $ Just shape
+                HostDataType {} ->
+                  throwEdh etsCtor UsageError $
+                    "can not mmap as host dtype: "
+                      <> data'type'identifier dt
+        where
+          goMemMap :: DataType -> Maybe ArrayShape -> IO ()
+          goMemMap !dt !mmapShape = do
+            !asVar <- newEmptyTMVarIO
+            mmapDbArray asVar dataDir dataPath dt mmapShape
+            atomically $
+              readTMVar asVar >>= \case
+                Left !err -> throwSTM err
+                Right {} ->
+                  ctorExit $
+                    HostStore $
+                      toDyn $
+                        DbArray dataDir dataPath dt asVar
 
     aryDirGetter :: EdhHostProc
     aryDirGetter !exit !ets = withThisHostObj ets $
@@ -204,7 +215,8 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
                                     T.unlines $
                                       reverse $
                                         take 10 fullLines
-                                          ++ ["# ... "] -- todo make this tunable
+                                          -- todo make this tunable
+                                          ++ ["# ... "]
                                           ++ drop (lineCnt - 10) fullLines
                                   else T.unlines $ reverse fullLines
             go !i !cumLines !lineIdx !line = readElem i $ \ !elemVal ->
@@ -236,7 +248,8 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
             --      an element index first
             EdhArgsPack (ArgsPack !idxs _) ->
               flatIndexInShape ets idxs shape $ \ !flatIdx ->
-                flat'array'read dt ets fa flatIdx $ \ !rv -> exitEdh ets exit rv
+                flat'array'read dt ets fa flatIdx $ \ !rv ->
+                  exitEdh ets exit rv
             !idx -> flatIndexInShape ets [idx] shape $ \ !flatIdx ->
               flat'array'read dt ets fa flatIdx $ \ !rv -> exitEdh ets exit rv
 
@@ -248,8 +261,8 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
           readTMVar das >>= \case
             Left !err -> throwSTM err
             Right (!shape, _, fa) -> case edhUltimate idxVal of
-              -- TODO support slicing assign, of coz need to tell a slicing index
-              --      from an element index first
+              -- TODO support slicing assign, of coz need to tell a slicing
+              --      index from an element index first
               EdhArgsPack (ArgsPack !idxs _) ->
                 flatIndexInShape ets idxs shape $ \ !flatIdx ->
                   flat'array'write dt ets fa flatIdx dv $

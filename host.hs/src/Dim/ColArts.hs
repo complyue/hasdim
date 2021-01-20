@@ -201,30 +201,37 @@ vecInpMaskedColumn ::
   STM () ->
   STM () ->
   STM ()
-vecInpMaskedColumn !ets (Column !colMask) !getOp (Column !col) !v !naExit !exit =
-  do
+vecInpMaskedColumn
+  !ets
+  (Column !colMask)
+  !getOp
+  (Column !col)
+  !v
+  !naExit
+  !exit = do
     !cl <- read'column'length col
     !cs <- view'column'data col
-    resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp -> do
-      let !fa = unsafeSliceFlatArray cs 0 cl
-      let !dop = getOp (data'type'identifier dt)
-      case fromDynamic dop of
-        Just EdhNil -> naExit
-        _ -> do
-          !mcl <- read'column'length colMask
-          if mcl /= cl
-            then
-              throwEdh ets UsageError $
-                "index length mismatch: "
-                  <> T.pack (show mcl)
-                  <> " vs "
-                  <> T.pack (show cl)
-            else do
-              !mcs <- view'column'data colMask
-              let !ma = unsafeSliceFlatArray mcs 0 mcl
-              flat'inp'vectorized'masked dtOp ets ma fa dop v exit
-  where
-    !dt = data'type'of'column col
+    resolveDataOperator' ets (data'type'identifier dt) cs naExit $
+      \ !dtOp -> do
+        let !fa = unsafeSliceFlatArray cs 0 cl
+        let !dop = getOp (data'type'identifier dt)
+        case fromDynamic dop of
+          Just EdhNil -> naExit
+          _ -> do
+            !mcl <- read'column'length colMask
+            if mcl /= cl
+              then
+                throwEdh ets UsageError $
+                  "index length mismatch: "
+                    <> T.pack (show mcl)
+                    <> " vs "
+                    <> T.pack (show cl)
+              else do
+                !mcs <- view'column'data colMask
+                let !ma = unsafeSliceFlatArray mcs 0 mcl
+                flat'inp'vectorized'masked dtOp ets ma fa dop v exit
+    where
+      !dt = data'type'of'column col
 
 vecInpFancyColumn ::
   EdhThreadState ->
@@ -302,30 +309,37 @@ elemInpSliceColumn ::
   STM () ->
   STM () ->
   STM ()
-elemInpSliceColumn !ets !slice !getOp (Column !col1) (Column !col2) !naExit !exit =
-  if data'type'identifier dt1 /= data'type'identifier dt2
-    then
-      throwEdh ets UsageError $
-        "column dtype mismatch: "
-          <> data'type'identifier dt1
-          <> " vs "
-          <> data'type'identifier dt2
-    else do
-      !cl1 <- read'column'length col1
-      !cl2 <- read'column'length col2
-      !cs1 <- view'column'data col1
-      !cs2 <- view'column'data col2
-      resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
-        \ !dtOp -> do
-          let !fa1 = unsafeSliceFlatArray cs1 0 cl1
-              !fa2 = unsafeSliceFlatArray cs2 0 cl2
-          let !dop = getOp (data'type'identifier dt1)
-          case fromDynamic dop of
-            Just EdhNil -> naExit
-            _ -> flat'inp'element'wise'slice dtOp ets slice fa1 dop fa2 exit
-  where
-    !dt1 = data'type'of'column col1
-    !dt2 = data'type'of'column col2
+elemInpSliceColumn
+  !ets
+  !slice
+  !getOp
+  (Column !col1)
+  (Column !col2)
+  !naExit
+  !exit =
+    if data'type'identifier dt1 /= data'type'identifier dt2
+      then
+        throwEdh ets UsageError $
+          "column dtype mismatch: "
+            <> data'type'identifier dt1
+            <> " vs "
+            <> data'type'identifier dt2
+      else do
+        !cl1 <- read'column'length col1
+        !cl2 <- read'column'length col2
+        !cs1 <- view'column'data col1
+        !cs2 <- view'column'data col2
+        resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
+          \ !dtOp -> do
+            let !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                !fa2 = unsafeSliceFlatArray cs2 0 cl2
+            let !dop = getOp (data'type'identifier dt1)
+            case fromDynamic dop of
+              Just EdhNil -> naExit
+              _ -> flat'inp'element'wise'slice dtOp ets slice fa1 dop fa2 exit
+    where
+      !dt1 = data'type'of'column col1
+      !dt2 = data'type'of'column col2
 
 elemInpMaskedColumn ::
   EdhThreadState ->
@@ -336,42 +350,49 @@ elemInpMaskedColumn ::
   STM () ->
   STM () ->
   STM ()
-elemInpMaskedColumn !ets (Column !colMask) !getOp (Column !col1) (Column !col2) !naExit !exit =
-  if data'type'identifier dt1 /= data'type'identifier dt2
-    then
-      throwEdh ets UsageError $
-        "column dtype mismatch: "
-          <> data'type'identifier dt1
-          <> " vs "
-          <> data'type'identifier dt2
-    else do
-      !cl1 <- read'column'length col1
-      !cl2 <- read'column'length col2
-      if cl1 /= cl2
-        then
-          throwEdh ets UsageError $
-            "column length mismatch: "
-              <> T.pack (show cl1)
-              <> " vs "
-              <> T.pack (show cl2)
-        else do
-          !mcl <- read'column'length colMask
-          !mcs <- view'column'data colMask
-          !cs1 <- view'column'data col1
-          !cs2 <- view'column'data col2
-          resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
-            \ !dtOp -> do
-              let !ma = unsafeSliceFlatArray mcs 0 mcl
-                  !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                  !fa2 = unsafeSliceFlatArray cs2 0 cl2
-              let !dop = getOp (data'type'identifier dt1)
-              case fromDynamic dop of
-                Just EdhNil -> naExit
-                _ ->
-                  flat'inp'element'wise'masked dtOp ets ma fa1 dop fa2 exit
-  where
-    !dt1 = data'type'of'column col1
-    !dt2 = data'type'of'column col2
+elemInpMaskedColumn
+  !ets
+  (Column !colMask)
+  !getOp
+  (Column !col1)
+  (Column !col2)
+  !naExit
+  !exit =
+    if data'type'identifier dt1 /= data'type'identifier dt2
+      then
+        throwEdh ets UsageError $
+          "column dtype mismatch: "
+            <> data'type'identifier dt1
+            <> " vs "
+            <> data'type'identifier dt2
+      else do
+        !cl1 <- read'column'length col1
+        !cl2 <- read'column'length col2
+        if cl1 /= cl2
+          then
+            throwEdh ets UsageError $
+              "column length mismatch: "
+                <> T.pack (show cl1)
+                <> " vs "
+                <> T.pack (show cl2)
+          else do
+            !mcl <- read'column'length colMask
+            !mcs <- view'column'data colMask
+            !cs1 <- view'column'data col1
+            !cs2 <- view'column'data col2
+            resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
+              \ !dtOp -> do
+                let !ma = unsafeSliceFlatArray mcs 0 mcl
+                    !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                    !fa2 = unsafeSliceFlatArray cs2 0 cl2
+                let !dop = getOp (data'type'identifier dt1)
+                case fromDynamic dop of
+                  Just EdhNil -> naExit
+                  _ ->
+                    flat'inp'element'wise'masked dtOp ets ma fa1 dop fa2 exit
+    where
+      !dt1 = data'type'of'column col1
+      !dt2 = data'type'of'column col2
 
 elemInpFancyColumn ::
   EdhThreadState ->
@@ -382,41 +403,48 @@ elemInpFancyColumn ::
   STM () ->
   STM () ->
   STM ()
-elemInpFancyColumn !ets (Column !colIdx) !getOp (Column !col1) (Column !col2) !naExit !exit =
-  if data'type'identifier dt1 /= data'type'identifier dt2
-    then
-      throwEdh ets UsageError $
-        "column dtype mismatch: "
-          <> data'type'identifier dt1
-          <> " vs "
-          <> data'type'identifier dt2
-    else do
-      !cl1 <- read'column'length col1
-      !cl2 <- read'column'length col2
-      if cl1 /= cl2
-        then
-          throwEdh ets UsageError $
-            "column length mismatch: "
-              <> T.pack (show cl1)
-              <> " vs "
-              <> T.pack (show cl2)
-        else do
-          !icl <- read'column'length colIdx
-          !ics <- view'column'data colIdx
-          !cs1 <- view'column'data col1
-          !cs2 <- view'column'data col2
-          resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
-            \ !dtOp -> do
-              let !ia = unsafeSliceFlatArray ics 0 icl
-                  !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                  !fa2 = unsafeSliceFlatArray cs2 0 cl2
-              let !dop = getOp (data'type'identifier dt1)
-              case fromDynamic dop of
-                Just EdhNil -> naExit
-                _ -> flat'inp'element'wise'fancy dtOp ets ia fa1 dop fa2 exit
-  where
-    !dt1 = data'type'of'column col1
-    !dt2 = data'type'of'column col2
+elemInpFancyColumn
+  !ets
+  (Column !colIdx)
+  !getOp
+  (Column !col1)
+  (Column !col2)
+  !naExit
+  !exit =
+    if data'type'identifier dt1 /= data'type'identifier dt2
+      then
+        throwEdh ets UsageError $
+          "column dtype mismatch: "
+            <> data'type'identifier dt1
+            <> " vs "
+            <> data'type'identifier dt2
+      else do
+        !cl1 <- read'column'length col1
+        !cl2 <- read'column'length col2
+        if cl1 /= cl2
+          then
+            throwEdh ets UsageError $
+              "column length mismatch: "
+                <> T.pack (show cl1)
+                <> " vs "
+                <> T.pack (show cl2)
+          else do
+            !icl <- read'column'length colIdx
+            !ics <- view'column'data colIdx
+            !cs1 <- view'column'data col1
+            !cs2 <- view'column'data col2
+            resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
+              \ !dtOp -> do
+                let !ia = unsafeSliceFlatArray ics 0 icl
+                    !fa1 = unsafeSliceFlatArray cs1 0 cl1
+                    !fa2 = unsafeSliceFlatArray cs2 0 cl2
+                let !dop = getOp (data'type'identifier dt1)
+                case fromDynamic dop of
+                  Just EdhNil -> naExit
+                  _ -> flat'inp'element'wise'fancy dtOp ets ia fa1 dop fa2 exit
+    where
+      !dt1 = data'type'of'column col1
+      !dt2 = data'type'of'column col2
 
 nonzeroIdxColumn :: EdhThreadState -> Column -> (Column -> STM ()) -> STM ()
 nonzeroIdxColumn !ets (Column !colMask) !exit =
@@ -443,8 +471,8 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("__grow__", EdhMethod, wrapHostProc colGrowProc),
                   ("__len__", EdhMethod, wrapHostProc colLenProc),
                   ("__mark__", EdhMethod, wrapHostProc colMarkLenProc),
-                  ("[]", EdhMethod, wrapHostProc colIdxReadProc),
-                  ("[=]", EdhMethod, wrapHostProc colIdxWriteProc),
+                  ("([])", EdhMethod, wrapHostProc colIdxReadProc),
+                  ("([=])", EdhMethod, wrapHostProc colIdxWriteProc),
                   ("__blob__", EdhMethod, wrapHostProc colBlobProc),
                   ("__repr__", EdhMethod, wrapHostProc colReprProc),
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
@@ -574,31 +602,39 @@ createColumnClass !defaultDt !clsOuterScope =
       "dtype" ?: Object ->
       ArgsPack -> -- allow/ignore arbitrary ctor args for descendant classes
       EdhObjectAllocator
-    columnAllocator (mandatoryArg -> !ctorCap) (defaultArg ctorCap -> !ctorLen) (defaultArg defaultDt -> dto) _ctorOtherArgs !ctorExit !etsCtor
-      | ctorCap <= 0 =
-        throwEdh etsCtor UsageError $
-          "column capacity should be a positive interger, not "
-            <> T.pack (show ctorCap)
-      | ctorLen < 0 =
-        throwEdh etsCtor UsageError $
-          "column length should be zero or a positive integer, not "
-            <> T.pack (show ctorLen)
-      | otherwise =
-        castObjectStore dto >>= \case
-          Nothing -> throwEdh etsCtor UsageError "invalid dtype"
-          Just (_, !dt) ->
-            runEdhTx etsCtor $
-              createInMemColumn dt ctorCap ctorLen $
-                ctorExit
-                  . HostStore
-                  . toDyn
+    columnAllocator
+      (mandatoryArg -> !ctorCap)
+      (defaultArg ctorCap -> !ctorLen)
+      (defaultArg defaultDt -> dto)
+      _ctorOtherArgs
+      !ctorExit
+      !etsCtor
+        | ctorCap <= 0 =
+          throwEdh etsCtor UsageError $
+            "column capacity should be a positive interger, not "
+              <> T.pack (show ctorCap)
+        | ctorLen < 0 =
+          throwEdh etsCtor UsageError $
+            "column length should be zero or a positive integer, not "
+              <> T.pack (show ctorLen)
+        | otherwise =
+          castObjectStore dto >>= \case
+            Nothing -> throwEdh etsCtor UsageError "invalid dtype"
+            Just (_, !dt) ->
+              runEdhTx etsCtor $
+                createInMemColumn dt ctorCap ctorLen $
+                  ctorExit
+                    . HostStore
+                    . toDyn
 
     dtYesNo = makeDeviceDataType @YesNo "yesno"
 
     colGrowProc :: "newCap" !: Int -> EdhHostProc
     colGrowProc (mandatoryArg -> !newCap) !exit !ets =
       if newCap < 0
-        then throwEdh ets UsageError $ "invalid newCap: " <> T.pack (show newCap)
+        then
+          throwEdh ets UsageError $
+            "invalid newCap: " <> T.pack (show newCap)
         else withThisHostObj ets $ \(Column !col) ->
           runEdhTx ets $
             grow'column'capacity col newCap $
@@ -664,7 +700,8 @@ createColumnClass !defaultDt !clsOuterScope =
                 <> ", length="
                 <> T.pack (show cl)
                 <> ", dtype="
-                <> data'type'identifier dt -- assuming the identifier is available as attr
+                -- assuming the identifier is available as attr
+                <> data'type'identifier dt
                 <> ")"
 
     colShowProc :: EdhHostProc
@@ -818,8 +855,9 @@ createColumnClass !defaultDt !clsOuterScope =
       where
         !thisCol = edh'scope'this $ contextScope $ edh'context ets
         !thatCol = edh'scope'that $ contextScope $ edh'context ets
-        exitWithNewClone !colResult = edhCloneHostObj ets thisCol thatCol colResult $
-          \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
+        exitWithNewClone !colResult =
+          edhCloneHostObj ets thisCol thatCol colResult $
+            \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
     colInpProc :: (Text -> Dynamic) -> EdhValue -> EdhHostProc
     colInpProc !getOp !other !exit !ets = withThisHostObj ets $ \ !col ->
@@ -1249,52 +1287,61 @@ arangeProc ::
   "rangeSpec" !: EdhValue ->
   "dtype" ?: Object ->
   EdhHostProc
-arangeProc !defaultDt !colClass (mandatoryArg -> !rngSpec) (defaultArg defaultDt -> !dto) !exit !ets =
-  castObjectStore dto >>= \case
-    Nothing -> throwEdh ets UsageError "invalid dtype"
-    Just (_, !dt) -> case edhUltimate rngSpec of
-      EdhPair (EdhPair (EdhDecimal !startN) (EdhDecimal !stopN)) (EdhDecimal stepN) ->
-        case D.decimalToInteger startN of
-          Just !start -> case D.decimalToInteger stopN of
-            Just !stop -> case D.decimalToInteger stepN of
-              Just !step ->
-                createRangeCol
-                  dt
-                  (fromInteger start)
-                  (fromInteger stop)
-                  (fromInteger step)
-              _ -> throwEdh ets UsageError "step is not an integer"
-            _ -> throwEdh ets UsageError "stop is not an integer"
-          _ -> throwEdh ets UsageError "start is not an integer"
-      EdhPair (EdhDecimal !startN) (EdhDecimal !stopN) ->
-        case D.decimalToInteger startN of
-          Just !start -> case D.decimalToInteger stopN of
-            Just !stop ->
-              createRangeCol dt (fromInteger start) (fromInteger stop) $
-                if stop >= start then 1 else -1
-            _ -> throwEdh ets UsageError "stop is not an integer"
-          _ -> throwEdh ets UsageError "start is not an integer"
-      EdhDecimal !stopN -> case D.decimalToInteger stopN of
-        Just !stop ->
-          createRangeCol dt 0 (fromInteger stop) $ if stop >= 0 then 1 else -1
-        _ -> throwEdh ets UsageError "stop is not an integer"
-      !badRngSpec -> edhValueRepr ets badRngSpec $ \ !rngRepr ->
-        throwEdh ets UsageError $
-          "invalid range of "
-            <>  edhTypeNameOf badRngSpec
-            <> ": "
-            <> rngRepr
-  where
-    createRangeCol :: DataType -> Int -> Int -> Int -> STM ()
-    createRangeCol !dt !start !stop !step =
-      resolveNumDataType ets (data'type'identifier dt) $ \ !ndt ->
-        flat'new'range'array ndt ets start stop step $ \ !cs -> do
-          !csv <- newTVar cs
-          !clv <- newTVar $ flatArrayCapacity cs
-          let !col = Column $ InMemColumn dt csv clv
-          edhCreateHostObj colClass (toDyn col) []
-            >>= exitEdh ets exit
-              . EdhObject
+arangeProc
+  !defaultDt
+  !colClass
+  (mandatoryArg -> !rngSpec)
+  (defaultArg defaultDt -> !dto)
+  !exit
+  !ets =
+    castObjectStore dto >>= \case
+      Nothing -> throwEdh ets UsageError "invalid dtype"
+      Just (_, !dt) -> case edhUltimate rngSpec of
+        EdhPair
+          (EdhPair (EdhDecimal !startN) (EdhDecimal !stopN))
+          (EdhDecimal stepN) ->
+            case D.decimalToInteger startN of
+              Just !start -> case D.decimalToInteger stopN of
+                Just !stop -> case D.decimalToInteger stepN of
+                  Just !step ->
+                    createRangeCol
+                      dt
+                      (fromInteger start)
+                      (fromInteger stop)
+                      (fromInteger step)
+                  _ -> throwEdh ets UsageError "step is not an integer"
+                _ -> throwEdh ets UsageError "stop is not an integer"
+              _ -> throwEdh ets UsageError "start is not an integer"
+        EdhPair (EdhDecimal !startN) (EdhDecimal !stopN) ->
+          case D.decimalToInteger startN of
+            Just !start -> case D.decimalToInteger stopN of
+              Just !stop ->
+                createRangeCol dt (fromInteger start) (fromInteger stop) $
+                  if stop >= start then 1 else -1
+              _ -> throwEdh ets UsageError "stop is not an integer"
+            _ -> throwEdh ets UsageError "start is not an integer"
+        EdhDecimal !stopN -> case D.decimalToInteger stopN of
+          Just !stop ->
+            createRangeCol dt 0 (fromInteger stop) $
+              if stop >= 0 then 1 else -1
+          _ -> throwEdh ets UsageError "stop is not an integer"
+        !badRngSpec -> edhValueRepr ets badRngSpec $ \ !rngRepr ->
+          throwEdh ets UsageError $
+            "invalid range of "
+              <> edhTypeNameOf badRngSpec
+              <> ": "
+              <> rngRepr
+    where
+      createRangeCol :: DataType -> Int -> Int -> Int -> STM ()
+      createRangeCol !dt !start !stop !step =
+        resolveNumDataType ets (data'type'identifier dt) $ \ !ndt ->
+          flat'new'range'array ndt ets start stop step $ \ !cs -> do
+            !csv <- newTVar cs
+            !clv <- newTVar $ flatArrayCapacity cs
+            let !col = Column $ InMemColumn dt csv clv
+            edhCreateHostObj colClass (toDyn col) []
+              >>= exitEdh ets exit
+                . EdhObject
 
 -- TODO impl. `linspace` following:
 --      https://numpy.org/doc/stable/reference/generated/numpy.linspace.html
@@ -1322,8 +1369,10 @@ whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit !ets
                 edhCreateHostObj (edh'obj'class colBoolIdx) (toDyn colResult) []
                   >>= exitEdh ets exit
                     . EdhObject
-whereProc (ArgsPack [EdhObject !_colBoolIdx, !_trueData, !_falseData] !kwargs) _exit !ets
-  | odNull kwargs =
-    throwEdh ets UsageError "not implemented yet."
+whereProc
+  (ArgsPack [EdhObject !_colBoolIdx, !_trueData, !_falseData] !kwargs)
+  _exit
+  !ets
+    | odNull kwargs = throwEdh ets UsageError "not implemented yet."
 whereProc !apk _ !ets =
   throwEdh ets UsageError $ "invalid args to where()" <> T.pack (show apk)

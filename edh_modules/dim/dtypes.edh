@@ -1,15 +1,113 @@
-
-{#
+{##
  # This is the sentinel file stand in place of a host module that
  # should have been installed by the host interpreter, which contains
- # host procedures, classes and other artifacts defined via EHI,
- # and obviously, written in the host language (i.e. Haskell)
+ # host procedures, classes and other artifacts defined via EHI
+ # (which is obviously written in the host language i.e. Haskell)
  #
  # Execution of this module file is a sign showing that wrong Edh
  # interpreter is used to run the program.
  #}
-error( 'Missing host module: ' ++ __name__ )
+if running!true # should be treated as false for proper control-flow analysis
+then error( 'Missing host module: ' ++ __name__ )
 
-# TODO mockups of procedures and other artifacts can be written in
-#      this source file, to give meaningful information to IDEs and/or
-#      other tools, for purpose of, e.g. auto completion.
+# rest of the source here serves as meta documentation for aforementioned
+# host artifacts, and is meant to be leveraged by IDE tools (such as els)
+# with source code analysis capabilities, to aid the developers
+
+export {
+
+  {##
+   # Data type objects work similarly as in Python with Numpy
+   #}
+  class dtype pass
+
+  {##
+   # Data type for 64-bit precision floating point numeric values
+   #
+   # Most probably complying to IEEE 754 of double-precision binary format, as
+   # supported by the underlying host hardware
+   #}
+  float64 = dtype()
+  {##
+   # Alias for `float64`
+   #}
+  f8 = float64
+
+  {##
+   # Data type for 32-bit precision floating point numeric values
+   #
+   # Most probably complying to IEEE 754 of double-precision binary format, as
+   # supported by the underlying host hardware
+   #}
+  float32 = dtype()
+  {##
+   # Alias for `float32`
+   #}
+  f4 = float32
+
+  {##
+   # Data type for 64-bit signed integer values
+   #}
+  int64 = dtype()
+  {##
+   # Alias for `int64`
+   #}
+  i8 = int64
+
+  {##
+   # Data type for 32-bit signed integer values
+   #}
+  int32 = dtype()
+  {##
+   # Alias for `int32`
+   #}
+  i4 = int32
+
+  {##
+   # Data type for 8-bit signed integer values
+   #}
+  int8 = dtype()
+  {##
+   # Alias for `int8`
+   #}
+  byte = int8
+
+  {##
+   # Data type for signed integer values native to the host hardware for
+   # indexing
+   #
+   # Usually 64-bit wide on 64-bit hardware, or 32-bit wide on 32-bit hardware
+   #}
+  intp = dtype()
+
+  {##
+   # Data type for Boolean values
+   #}
+  yesno = dtype()
+  {##
+   # Alias for `yesno`
+   #
+   # This is for Numpy compatibility
+   #}
+  bool = yesno
+
+  {##
+   # Data type for lossless decimal values
+   #}
+  decimal = dtype()
+
+  {##
+   # Data type for boxed values
+   #
+   # `box` is almost the same as `object` in Numpy, except not all values are
+   # objects in Edh
+   #}
+  box = dtype()
+  {##
+   # Alias for `box`
+   #
+   # This is for Numpy compatibility
+   #}
+  object = box
+
+}
