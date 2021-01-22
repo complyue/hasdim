@@ -134,14 +134,14 @@ createTableClass !colClass !clsOuterScope =
 
     tableAllocator ::
       "capacity" !: Int ->
-      "columns" !: KeywordArgs ->
       "row'count" ?: Int ->
+      "columns" !: KeywordArgs ->
       ArgsPack -> -- allow/ignore arbitrary ctor args for descendant classes
       EdhObjectAllocator
     tableAllocator
       (mandatoryArg -> !ctorCap)
-      (mandatoryArg -> KeywordArgs !colSpecs)
       (defaultArg ctorCap -> !ctorCnt)
+      (mandatoryArg -> KeywordArgs !colSpecs)
       _ctorOtherArgs
       !ctorExit
       !etsCtor

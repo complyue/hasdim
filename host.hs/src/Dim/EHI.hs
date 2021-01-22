@@ -90,8 +90,7 @@ installDimBatteries !world = do
               )
             ]
       !artsDict <-
-        EdhDict
-          <$> createEdhDict [(EdhString k, v) | (k, v) <- moduArts]
+        EdhDict <$> createEdhDict [(EdhString k, v) | (k, v) <- moduArts]
       flip iopdUpdate (edh'scope'entity moduScope) $
         [(AttrByName k, v) | (k, v) <- moduArts]
           ++ [(AttrByName "__exports__", artsDict)]
@@ -108,8 +107,7 @@ installDimBatteries !world = do
           ("dtype", EdhObject dtClass) :
             [(k, EdhObject dto) | (k, dto) <- dtAlias]
     !artsDict <-
-      EdhDict
-        <$> createEdhDict [(EdhString k, v) | (k, v) <- moduArts]
+      EdhDict <$> createEdhDict [(EdhString k, v) | (k, v) <- moduArts]
     flip iopdUpdate (edh'scope'entity moduScope) $
       [(AttrByName k, v) | (k, v) <- moduArts]
         ++ [(AttrByName "__exports__", artsDict)]

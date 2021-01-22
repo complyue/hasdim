@@ -242,11 +242,249 @@ export {
       ***_ # allow/ignore arbitrary ctor args for descendant classes
     ) pass
 
+    # Respond to `cap()` by returning capacity of this column object
+    method __cap__() pass
+    # Respond to `grow()` by growing capacity of this column object
+    method __grow__() pass
+    # Respond to `len()` by returning valid data length of this column object
+    method __len__() pass
+    # Respond to `mark()` by updating valid data length of this column object
+    method __mark__() pass
+
+    # Respond to indexing against this column object
+    method ([]) ( ix ) pass
+    # Respond to indexed assignment to this column object
+    method ([=]) ( ix, data_ ) pass
+
+    # Respond to `blob()` by returning the binary data from this column object
+    method __blob__() pass
+
+    # Respond to `repr()` by returning the string representation of this
+    # column object
+    method __repr__() pass
+
+    # Responding to `show()` by returning a string with the summary of this
+    # column object
+    method __show__() pass
+
+    # Responding to `desc()` by returning a string with the descriptive
+    # statistics of this column object
+    method __desc__() pass
+
+    # Elementwise comparison to another column object, or vectorized comparison
+    # to another scalar value
+    method (==) ( other ) pass
+    # Vectorized comparison to another scalar value at lhs of the (==) operator
+    # i.e. this magic method is triggered when this column object is at rhs of
+    # the (==) operator
+    method (==.) ( other ) pass
+
+    # Elementwise comparison to another column object, or vectorized comparison
+    # to another scalar value
+    method (!=) ( other ) pass
+    # Vectorized comparison to another scalar value at lhs of the (!=) operator
+    # i.e. this magic method is triggered when this column object is at rhs of
+    # the (!=) operator
+    method (!=.) ( other ) pass
+
+    # Elementwise comparison to another column object, or vectorized comparison
+    # to another scalar value
+    method (>=) ( other ) pass
+    # Vectorized comparison to another scalar value at lhs of the (>=) operator
+    # i.e. this magic method is triggered when this column object is at rhs of
+    # the (>=) operator
+    method (>=.) ( other ) pass
+
+    # Elementwise comparison to another column object, or vectorized comparison
+    # to another scalar value
+    method (<=) ( other ) pass
+    # Vectorized comparison to another scalar value at lhs of the (<=) operator
+    # i.e. this magic method is triggered when this column object is at rhs of
+    # the (<=) operator
+    method (<=.) ( other ) pass
+
+    # Elementwise comparison to another column object, or vectorized comparison
+    # to another scalar value
+    method (<) ( other ) pass
+    # Vectorized comparison to another scalar value at lhs of the (<) operator
+    # i.e. this magic method is triggered when this column object is at rhs of
+    # the (<) operator
+    method (<.) ( other ) pass
+
+    # Elementwise comparison to another column object, or vectorized comparison
+    # to another scalar value
+    method (>) ( other ) pass
+    # Vectorized comparison to another scalar value at lhs of the (>) operator
+    # i.e. this magic method is triggered when this column object is at rhs of
+    # the (>) operator
+    method (>.) ( other ) pass
+
+    # Elementwise bit AND to another column object, or vectorized bit AND
+    # to another scalar value
+    method (&&) ( other ) pass
+    # Vectorized bit AND to another scalar value at lhs of the (&&) operator
+    # i.e. this magic method is triggered when this column object is at rhs of
+    # the (&&) operator
+    method (&&.) ( other ) pass
+    # Elementwise bit AND to another column object, or vectorized bit AND
+    # to another scalar value, with this column object updated inplace
+    method (&&=) ( other ) pass
+
+    # Elementwise bit OR to another column object, or vectorized bit OR
+    # to another scalar value
+    method (||) ( other ) pass
+    # Vectorized bit OR to another scalar value at lhs of the (||) operator
+    # i.e. this magic method is triggered when this column object is at rhs of
+    # the (||) operator
+    method (||.) ( other ) pass
+    # Elementwise bit OR to another column object, or vectorized bit OR
+    # to another scalar value, with this column object updated inplace
+    method (||=) ( other ) pass
+
+    # Elementwise ADD to another column object, or vectorized ADD
+    # to another scalar value
+    method (+) ( other ) pass
+    # Vectorized ADD to another scalar value at lhs of the (+) operator
+    # i.e. this magic method is triggered when this column object is at rhs of
+    # the (+) operator
+    method (+.) ( other ) pass
+    # Elementwise ADD to another column object, or vectorized ADD
+    # to another scalar value, with this column object updated inplace
+    method (+=) ( other ) pass
+
+    # Elementwise SUBTRACT to another column object, or vectorized SUBTRACT
+    # to another scalar value
+    method (-) ( other ) pass
+    # Vectorized SUBTRACT to another scalar value at lhs of the (-) operator
+    # i.e. this magic method is triggered when this column object is at rhs of
+    # the (-) operator
+    method (-.) ( other ) pass
+    # Elementwise SUBTRACT to another column object, or vectorized SUBTRACT
+    # to another scalar value, with this column object updated inplace
+    method (-=) ( other ) pass
+
+    # Elementwise MULTIPLICATION to another column object, or vectorized
+    # MULTIPLICATION to another scalar value
+    method (*) ( other ) pass
+    # Vectorized MULTIPLICATION to another scalar value at lhs of the (*)
+    # operator i.e. this magic method is triggered when this column object is
+    # at rhs of the (*) operator
+    method (*.) ( other ) pass
+    # Elementwise MULTIPLICATION to another column object, or vectorized
+    # MULTIPLICATION to another scalar value, with this column object updated
+    # inplace
+    method (*=) ( other ) pass
+
+    # Elementwise DIVISION to another column object, or vectorized
+    # DIVISION to another scalar value
+    method (/) ( other ) pass
+    # Vectorized DIVISION to another scalar value at lhs of the (/)
+    # operator i.e. this magic method is triggered when this column object is
+    # at rhs of the (/) operator
+    method (/.) ( other ) pass
+    # Elementwise DIVISION to another column object, or vectorized
+    # DIVISION to another scalar value, with this column object updated
+    # inplace
+    method (/=) ( other ) pass
+
+    # Elementwise INT-DIVISION to another column object, or vectorized
+    # INT-DIVISION to another scalar value
+    method (//) ( other ) pass
+    # Vectorized INT-DIVISION to another scalar value at lhs of the (//)
+    # operator i.e. this magic method is triggered when this column object is
+    # at rhs of the (//) operator
+    method (//.) ( other ) pass
+    # Elementwise INT-DIVISION to another column object, or vectorized
+    # INT-DIVISION to another scalar value, with this column object updated
+    # inplace
+    method (//=) ( other ) pass
+
+    # Elementwise POWER-RAISE to another column object, or vectorized
+    # POWER-RAISE to another scalar value
+    method (**) ( other ) pass
+    # Vectorized POWER-RAISE to another scalar value at lhs of the (**)
+    # operator i.e. this magic method is triggered when this column object is
+    # at rhs of the (**) operator
+    method (**.) ( other ) pass
+    # Elementwise POWER-RAISE to another column object, or vectorized
+    # POWER-RAISE to another scalar value, with this column object updated
+    # inplace
+    method (**=) ( other ) pass
+
+
+    {##
+     # Obtain the dtype (in string form being the data type identifier) of
+     # this column object, readonly
+     #}
+    property$ method dtype() pass
+
   }
 
+
+  {##
+   # Table follows the idea of DataFrame as in R and Python Pandas
+   #
+   # A table object groups multiple column objects together, with their
+   # capacity and valid data length grown/shrunk in a lockstep fashion
+   #}
   class Table {
 
+    __init__ :: (
+      capacity!int!DecimalType,
+      row'count!int!DecimalType || None,
+      **( column'id= Column, ),
+    ) -> nil
+    {##
+     # Construct a new Table object with specified capacity
+     #
+     # The valid data length defaults to the capacity if not specified
+     #
+     # The data type defaults to float64 if not specified
+     #}
+    method __init__(
+      capacity, row'count= None, **columns,
+      ***_ # allow/ignore arbitrary ctor args for descendant classes
+    ) pass
+
+    # Respond to `cap()` by returning capacity of this table object
+    method __cap__() pass
+    # Respond to `grow()` by growing capacity of this table object
+    method __grow__() pass
+    # Respond to `len()` by returning valid data length of this table object
+    method __len__() pass
+    # Respond to `mark()` by updating valid data length of this table object
+    method __mark__() pass
+
+    # Respond to indexing against this table object
+    method ([]) ( ix ) pass
+    # Respond to indexed assignment to this table object
+    method ([=]) ( ix, data_ ) pass
+
+    # Respond to attribute extraction against this table object
+    #
+    # Columns in this table are available via their associated ids as the key
+    method (@) ( key ) pass
+    # Respond to attribute assignment/deletion to/from this table object
+    #
+    # A column object or dtype object can be specified as the value, for a
+    # dtype object, a new zero-initialized column object will be allocated and
+    # put into this table object
+    method (@=) ( key, val ) pass
+
+    # Respond to `repr()` by returning the string representation of this
+    # table object
+    method __repr__() pass
+
+    # Responding to `show()` by returning a string with the summary of this
+    # table object
+    method __show__() pass
+
+    # Responding to `desc()` by returning a string with the descriptive
+    # statistics of this table object
+    method __desc__() pass
+
   }
+
 
   class DbArray {
 
