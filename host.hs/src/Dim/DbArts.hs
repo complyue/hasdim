@@ -31,12 +31,12 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
         sequence $
           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
             | (nm, vc, hp) <-
-                [ ("([])", EdhMethod, wrapHostProc aryIdxReadProc),
+                [ ("__len__", EdhMethod, wrapHostProc aryLen1dGetter),
+                  ("__mark__", EdhMethod, wrapHostProc aryLen1dSetter),
+                  ("([])", EdhMethod, wrapHostProc aryIdxReadProc),
                   ("([=])", EdhMethod, wrapHostProc aryIdxWriteProc),
                   ("__repr__", EdhMethod, wrapHostProc aryReprProc),
                   ("__show__", EdhMethod, wrapHostProc aryShowProc),
-                  ("__len__", EdhMethod, wrapHostProc aryLen1dGetter),
-                  ("__mark__", EdhMethod, wrapHostProc aryLen1dSetter),
                   ("asColumn", EdhMethod, wrapHostProc aryAsColProc)
                 ]
           ]
