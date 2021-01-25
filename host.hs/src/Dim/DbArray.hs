@@ -99,10 +99,10 @@ parseArrayShape ::
   EdhThreadState -> EdhValue -> (ArrayShape -> STM ()) -> STM ()
 parseArrayShape !ets !val !exit = case val of
   EdhArgsPack (ArgsPack [!dim1] _) ->
-    parseDim dim1 $ \pd -> exit $ ArrayShape $ pd :| []
-  EdhArgsPack (ArgsPack (dim1 : dims) _) -> parseDim dim1 $ \pd ->
-    seqcontSTM (parseDim <$> dims) $ \pds -> exit $ ArrayShape $ pd :| pds
-  !dim1 -> parseDim dim1 $ \pd -> exit $ ArrayShape $ pd :| []
+    parseDim dim1 $ \ !pd -> exit $ ArrayShape $ pd :| []
+  EdhArgsPack (ArgsPack (dim1 : dims) _) -> parseDim dim1 $ \ !pd ->
+    seqcontSTM (parseDim <$> dims) $ \ !pds -> exit $ ArrayShape $ pd :| pds
+  !dim1 -> parseDim dim1 $ \ !pd -> exit $ ArrayShape $ pd :| []
   where
     parseDim :: EdhValue -> ((DimName, DimSize) -> STM ()) -> STM ()
     parseDim v@(EdhDecimal d) !exit' = case D.decimalToInteger d of

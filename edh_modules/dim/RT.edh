@@ -485,10 +485,92 @@ export {
 
   }
 
+  DimSpec
+  :=: positive!int!DecimalType
+  || dimName!StringType : positive!int!DecimalType
+  Shape :=: ( *DimSpec, )
 
+  {##
+   # Disk backed Array
+   #}
   class DbArray {
+
+    __init__ :: (
+      dataDir!dir!StringType,
+      dataPath!path!StringType,
+      dtype!ObjectType= float64,
+      shape!Shape= None,
+    ) -> nil
+    {##
+     # Construct a new array backed by the specified data file on disk
+     #
+     # `dataPath` is relative to `dataDir`
+     #
+     # The data type defaults to float64 if not specified
+     #
+     # If not specified, the shape defaults to a value calculated from the
+     # actual file length, together with itemsize from the dtype
+     #}
+    method __init__(
+      dataDir, dataPath, dtype as _ = None, shape= None,
+      ***_ # allow/ignore arbitrary ctor args for descendant classes
+    ) pass
+
+    # Respond to `len()` by returning valid data length of this dba object
+    method __len__() pass
+    # Respond to `mark()` by updating valid data length of this dba object
+    method __mark__() pass
+
+    # Respond to indexing against this dba object
+    method ([]) ( ix ) pass
+    # Respond to indexed assignment to this dba object
+    method ([=]) ( ix, data_ ) pass
+
+    # Respond to `repr()` by returning the string representation of this
+    # dba object
+    method __repr__() pass
+    # Responding to `show()` by returning a string with the summary of this
+    # dba object
+    method __show__() pass
+
+    asColumn :: () ->Column
+    {##
+     # View this dba as a `Column` object
+     #
+     # Data read/write are mmap'ed to the backing data file
+     #}
+    method asColumn() pass
 
   }
 
+  {##
+   # Directory containing the data file backing this dba
+   #}
+  property$ method dir() pass
+
+  {##
+   # Relative file name (within the `dir`) of the data file backing this dba
+   #}
+  property$ method path() pass
+
+  {##
+   # Data type identifier of this dba
+   #}
+  property$ method dtype() pass
+
+  {##
+   # Flat size of all dimensions
+   #}
+  property$ method size() pass
+
+  {##
+   # Shape (i.e. dimensions) of this dba
+   #}
+  property$ method shape() pass
+
+  {##
+   # Valid data length of the 1st dimension
+   #}
+  property$ method len1d() pass
 
 }
