@@ -1,8 +1,15 @@
-
-# this module is supposed to be imported like:
-#
-#  effect import * 'dim/effects'
-#
+{##
+ # This module exposes supporting effects for trivial `dtype`s, meant to be
+ # used as fallback to more tricky `dtype` supports, and may already been
+ # sufficient for usual use cases
+ #
+ # This module is supposed to be imported like:
+ #
+```
+  effect import * 'dim/effects'
+```
+ #
+ #}
 
 import * 'dim/symbols'
 

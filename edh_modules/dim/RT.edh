@@ -512,7 +512,7 @@ export {
      # actual file length, together with itemsize from the dtype
      #}
     method __init__(
-      dataDir, dataPath, dtype as _ = None, shape= None,
+      dataDir, dataPath, dtype as _ = None, shape as _ = None,
       ***_ # allow/ignore arbitrary ctor args for descendant classes
     ) pass
 
