@@ -23,7 +23,7 @@ main =
       let !consoleOut = consoleIO console . ConsoleOut
           !consoleShutdown = consoleIO console ConsoleShutdown
           consoleErr msg =
-            consoleLogger console 50 Nothing $ ArgsPack [EdhString msg] odEmpty
+            consoleLogger console 50 Nothing msg
           runIt = do
             world <- createEdhWorld console
             installEdhBatteries world
@@ -37,23 +37,25 @@ main =
             runEdhModule world moduSpec edhModuleAsIs >>= \case
               Left !err -> do
                 -- program crash on error
-                atomically $ consoleErr $
-                  T.pack $
-                    "Edh crashed with an error:\n"
-                      <> show err
-                      <> "\n"
+                atomically $
+                  consoleErr $
+                    T.pack $
+                      "Edh crashed with an error:\n"
+                        <> show err
+                        <> "\n"
                 consoleShutdown
               Right !phv -> case edhUltimate phv of
                 -- clean program halt, all done
                 EdhNil -> return ()
                 -- unclean program exit
                 _ -> do
-                  atomically $ consoleErr $
-                    (<> "\n") $
-                      "Edh halted with a result:\n"
-                        <> case phv of
-                          EdhString msg -> msg
-                          _ -> T.pack $ show phv
+                  atomically $
+                    consoleErr $
+                      (<> "\n") $
+                        "Edh halted with a result:\n"
+                          <> case phv of
+                            EdhString msg -> msg
+                            _ -> T.pack $ show phv
                   consoleShutdown
 
       void $
