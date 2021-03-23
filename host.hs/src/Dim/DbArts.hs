@@ -95,10 +95,8 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
               readTMVar asVar >>= \case
                 Left !err -> throwSTM err
                 Right {} ->
-                  ctorExit $
-                    HostStore $
-                      toDyn $
-                        DbArray dataDir dataPath dt asVar
+                  ctorExit Nothing $
+                    HostStore $ toDyn $ DbArray dataDir dataPath dt asVar
 
     aryDirGetter :: EdhHostProc
     aryDirGetter !exit !ets = withThisHostObj ets $

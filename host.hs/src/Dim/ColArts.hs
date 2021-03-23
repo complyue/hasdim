@@ -623,9 +623,7 @@ createColumnClass !defaultDt !clsOuterScope =
             Just (_, !dt) ->
               runEdhTx etsCtor $
                 createInMemColumn dt ctorCap ctorLen $
-                  ctorExit
-                    . HostStore
-                    . toDyn
+                  ctorExit Nothing . HostStore . toDyn
 
     dtYesNo = makeDeviceDataType @YesNo "yesno"
 

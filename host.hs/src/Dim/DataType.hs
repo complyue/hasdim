@@ -201,7 +201,7 @@ createDataTypeClass !clsOuterScope =
   where
     dtypeAllocator :: EdhObjectAllocator
     -- not really constructable from Edh code, this only creates bogus dtype obj
-    dtypeAllocator !ctorExit _ = ctorExit $ HostStore (toDyn nil)
+    dtypeAllocator !ctorExit _ = ctorExit Nothing $ HostStore (toDyn nil)
 
     dtypeEqProc :: EdhValue -> EdhHostProc
     dtypeEqProc !other !exit !ets =
@@ -330,7 +330,7 @@ createDMRPClass !clsOuterScope =
   where
     dmrpAllocator :: EdhObjectAllocator
     -- not really constructable from Edh code, this only creates bogus dmrp obj
-    dmrpAllocator !ctorExit _ = ctorExit $ HostStore (toDyn nil)
+    dmrpAllocator !ctorExit _ = ctorExit Nothing $ HostStore (toDyn nil)
 
     dmrpReprProc :: EdhHostProc
     dmrpReprProc !exit !ets =
@@ -1574,7 +1574,7 @@ createNumDataTypeClass !clsOuterScope =
   where
     numdtAllocator :: EdhObjectAllocator
     -- not really constructable from Edh code, this only creates bogus numdt obj
-    numdtAllocator !ctorExit _ = ctorExit $ HostStore (toDyn nil)
+    numdtAllocator !ctorExit _ = ctorExit Nothing $ HostStore (toDyn nil)
 
     numdtEqProc :: EdhValue -> EdhHostProc
     numdtEqProc !other !exit !ets =

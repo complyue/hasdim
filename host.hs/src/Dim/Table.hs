@@ -156,9 +156,7 @@ createTableClass !colClass !clsOuterScope =
         | otherwise =
           odMapContSTM' parseColSpec colSpecs $ \ !colCreators ->
             createTable etsCtor ctorCap ctorCnt colCreators $
-              ctorExit
-                . HostStore
-                . toDyn
+              ctorExit Nothing . HostStore . toDyn
         where
           parseColSpec ::
             (AttrKey, EdhValue) ->
