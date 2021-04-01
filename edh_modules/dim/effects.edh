@@ -11,12 +11,4 @@
  #
  #}
 
-import * 'dim/symbols'
-
-export import (
-  @resolveDataComparator,
-  @resolveDataOperator,
-  @resolveNumDataType,
-  @resolveFloatDataOperator,
-  **_
-) 'dim/RT'
+export import * 'dim/dtypes/effects'

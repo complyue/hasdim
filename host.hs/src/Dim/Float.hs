@@ -6,8 +6,6 @@ module Dim.Float where
 
 import Control.Concurrent.STM (STM, newTVar)
 import Data.Dynamic (Dynamic, Typeable, fromDynamic, toDyn)
-import Data.Text (Text)
-import qualified Data.Text as T
 import Dim.Column
 import Dim.DataType
 import Dim.InMem
@@ -97,54 +95,14 @@ resolveFloatDataOperator !ets !dti =
 
 resolveFloatDataOperator' ::
   EdhThreadState -> DataTypeIdent -> STM () -> (FloatOp -> STM ()) -> STM ()
-resolveFloatDataOperator' !ets !dti !naExit !exit =
-  runEdhTx ets $
-    performEdhEffect
-      (AttrBySym resolveFloatDataOperatorEffId)
-      [EdhString dti]
-      []
-      $ \case
-        EdhNil -> const naExit
-        EdhObject !dmrpo -> \_ets ->
-          castObjectStore dmrpo >>= \case
-            Nothing -> naExit
-            Just (_, DataManiRoutinePack _dmrp'dti _dmrp'cate !drp) ->
-              case fromDynamic drp of
-                Nothing ->
-                  throwEdh ets UsageError $
-                    "bug: data manipulation routine pack obtained for dtype "
-                      <> dti
-                      <> " is of wrong type: "
-                      <> T.pack (show drp)
-                Just !rp -> exit rp
-        !badDtVal ->
-          throwEdhTx UsageError $
-            "bad return type from @resolveFloatDataOperator(dti): "
-              <> edhTypeNameOf badDtVal
-
-resolveFloatDataOperatorEffId :: Symbol
-resolveFloatDataOperatorEffId = globalSymbol "@resolveFloatDataOperator"
-
--- | The ultimate fallback to have trivial data types resolved
-resolveFloatDataOperatorProc :: Object -> "dti" !: Text -> EdhHostProc
-resolveFloatDataOperatorProc !dmrpClass (mandatoryArg -> !dti) !exit !ets =
-  case dti of
-    "float64" -> exitWith (floatOperations @Double)
-    "float32" -> exitWith (floatOperations @Float)
-    _ ->
-      throwEdh ets UsageError $
-        "no effective support for such operation on dtype="
-          <> dti
-          <> ", please find some framework/lib to provide such effectful support"
-  where
-    exitWith :: FloatOp -> STM ()
-    exitWith !drp =
-      edhCreateHostObj
-        dmrpClass
-        (toDyn $ DataManiRoutinePack dti "op" (toDyn drp))
-        []
-        >>= exitEdh ets exit
-          . EdhObject
+resolveFloatDataOperator' !ets !dti !naExit !exit = runEdhTx ets $
+  behaveEdhEffect' (AttrByName $ "__FloatDataOperator_" <> dti <> "__") $ \case
+    Just (EdhObject !foObj) -> case edh'obj'store foObj of
+      HostStore !dd -> case fromDynamic dd of
+        Nothing -> const naExit
+        Just (fo :: FloatOp) -> const $ exit fo
+      _ -> const naExit
+    _ -> const naExit
 
 piProc :: Object -> Object -> Int -> "dtype" ?: Object -> EdhHostProc
 piProc !defaultDt !colClass !cap (defaultArg defaultDt -> !dto) !exit !ets =

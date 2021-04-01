@@ -10,7 +10,6 @@ module Dim.DataType where
 import Control.Concurrent.STM (STM)
 import Control.Monad
 import Data.Dynamic (Dynamic, fromDynamic, toDyn)
-import qualified Data.Lossless.Decimal as D
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Proxy (..), Typeable, cast)
@@ -307,37 +306,6 @@ makeHostDataType !dti !def'val =
         updateArray ets rest'upds ary exit
     updateArray _ _ _ _ = error "bug: not a host array"
 
--- | A pack of data manipulation routines, per operational category, per data
--- type identifier
-data DataManiRoutinePack where
-  DataManiRoutinePack ::
-    { data'mpk'identifier :: DataTypeIdent,
-      data'mpk'category :: Text,
-      data'mpk'routines :: Dynamic
-    } ->
-    DataManiRoutinePack
-
-createDMRPClass :: Scope -> STM Object
-createDMRPClass !clsOuterScope =
-  mkHostClass clsOuterScope "DMRP" (allocEdhObj dmrpAllocator) [] $
-    \ !clsScope -> do
-      !mths <-
-        sequence
-          [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
-            | (nm, vc, hp) <- [("__repr__", EdhMethod, wrapHostProc dmrpReprProc)]
-          ]
-      iopdUpdate mths $ edh'scope'entity clsScope
-  where
-    dmrpAllocator :: EdhObjectAllocator
-    -- not really constructable from Edh code, this only creates bogus dmrp obj
-    dmrpAllocator !ctorExit _ = ctorExit Nothing $ HostStore (toDyn nil)
-
-    dmrpReprProc :: EdhHostProc
-    dmrpReprProc !exit !ets =
-      withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-dmrp>") $
-        \(DataManiRoutinePack !ident !cate _) ->
-          exitEdh ets exit $ EdhString $ "<dmrp/" <> ident <> "#" <> cate <> ">"
-
 data FlatOrd where
   FlatOrd ::
     { flat'cmp'vectorized ::
@@ -489,8 +457,7 @@ resolveDataComparator ::
 resolveDataComparator !ets !dti !fa =
   resolveDataComparator' ets dti fa $
     throwEdh ets UsageError $
-      "ordering not supported by dtype: "
-        <> dti
+      "ordering not supported by dtype: " <> dti
 
 resolveDataComparator' ::
   EdhThreadState ->
@@ -499,54 +466,14 @@ resolveDataComparator' ::
   STM () ->
   (FlatOrd -> STM ()) ->
   STM ()
-resolveDataComparator' !ets !dti _ !naExit !exit =
-  runEdhTx ets $
-    performEdhEffect (AttrBySym resolveDataComparatorEffId) [EdhString dti] [] $
-      \case
-        EdhNil -> \_ets -> naExit
-        EdhObject !dmrpo -> \_ets ->
-          castObjectStore dmrpo >>= \case
-            Nothing -> naExit
-            Just (_, DataManiRoutinePack _dmrp'dti _dmrp'cate !drp) ->
-              case fromDynamic drp of
-                Nothing -> naExit
-                Just !rp -> exit rp
-        !badDtVal ->
-          throwEdhTx UsageError $
-            "bad return type from @resolveDataComparator(dti): "
-              <> edhTypeNameOf badDtVal
-
-resolveDataComparatorEffId :: Symbol
-resolveDataComparatorEffId = globalSymbol "@resolveDataComparator"
-
--- | The ultimate fallback to have trivial data types resolved
-resolveDataComparatorProc :: Object -> "dti" !: Text -> EdhHostProc
-resolveDataComparatorProc !dmrpClass (mandatoryArg -> !dti) !exit !ets =
-  case dti of
-    "float64" -> exitWith $ deviceDataOrdering @Double
-    "float32" -> exitWith $ deviceDataOrdering @Float
-    "int64" -> exitWith $ deviceDataOrdering @Int64
-    "int32" -> exitWith $ deviceDataOrdering @Int32
-    "int8" -> exitWith $ deviceDataOrdering @Int8
-    "byte" -> exitWith $ deviceDataOrdering @Int8
-    "intp" -> exitWith $ deviceDataOrdering @Int
-    "yesno" -> exitWith $ deviceDataOrdering @YesNo
-    "decimal" -> exitWith $ hostDataOrdering @D.Decimal
-    "box" -> exitWith $ edhDataOrdering
-    _ ->
-      throwEdh ets UsageError $
-        "no effective support for comparison on dtype="
-          <> dti
-          <> ", please find some framework/lib to provide such effectful support"
-  where
-    exitWith :: FlatOrd -> STM ()
-    exitWith !drp =
-      edhCreateHostObj
-        dmrpClass
-        (toDyn $ DataManiRoutinePack dti "cmp" (toDyn drp))
-        []
-        >>= exitEdh ets exit
-          . EdhObject
+resolveDataComparator' !ets !dti _ !naExit !exit = runEdhTx ets $
+  behaveEdhEffect' (AttrByName $ "__DataComparator_" <> dti <> "__") $ \case
+    Just (EdhObject !foObj) -> case edh'obj'store foObj of
+      HostStore !dd -> case fromDynamic dd of
+        Nothing -> const naExit
+        Just (fo :: FlatOrd) -> const $ exit fo
+      _ -> const naExit
+    _ -> const naExit
 
 data FlatOp where
   FlatOp ::
@@ -1366,7 +1293,7 @@ edhDataOperations !def'val =
             let (ip :: Ptr Int) = unsafeForeignPtrToPtr (castForeignPtr ifp)
                 go i | i >= icap = exit
                 go i =
-                  (unsafeIOToSTM $ peekElemOff ip i) >>= \ !idx ->
+                  unsafeIOToSTM (peekElemOff ip i) >>= \ !idx ->
                     if idx < 0 || idx >= cap
                       then
                         throwEdh ets EvalError $
@@ -1464,7 +1391,7 @@ edhDataOperations !def'val =
                   go :: Int -> STM ()
                   go i | i >= len = exit
                   go i =
-                    (unsafeIOToSTM $ peekElemOff ip i) >>= \ !idx ->
+                    unsafeIOToSTM (peekElemOff ip i) >>= \ !idx ->
                       if idx < 0 || idx >= cap1
                         then
                           throwEdh ets EvalError $
@@ -1501,100 +1428,14 @@ resolveDataOperator' ::
   STM () ->
   (FlatOp -> STM ()) ->
   STM ()
-resolveDataOperator' !ets !dti _ !naExit !exit =
-  runEdhTx ets $
-    performEdhEffect (AttrBySym resolveDataOperatorEffId) [EdhString dti] [] $
-      \case
-        EdhNil -> const naExit
-        EdhObject !dmrpo -> \_ets ->
-          castObjectStore dmrpo >>= \case
-            Nothing -> naExit
-            Just (_, DataManiRoutinePack _dmrp'dti _dmrp'cate !drp) ->
-              case fromDynamic drp of
-                Nothing ->
-                  throwEdh ets UsageError $
-                    "bug: data manipulation routine pack obtained for dtype "
-                      <> dti
-                      <> " is of wrong type: "
-                      <> T.pack (show drp)
-                Just !rp -> exit rp
-        !badDtVal ->
-          throwEdhTx UsageError $
-            "bad return type from @resolveDataOperator(dti): "
-              <> edhTypeNameOf badDtVal
-
-resolveDataOperatorEffId :: Symbol
-resolveDataOperatorEffId = globalSymbol "@resolveDataOperator"
-
--- | The ultimate fallback to have trivial data types resolved
-resolveDataOperatorProc :: Object -> "dti" !: Text -> EdhHostProc
-resolveDataOperatorProc !dmrpClass (mandatoryArg -> !dti) !exit !ets =
-  case dti of
-    "float64" -> exitWith (deviceDataOperations @Double)
-    "float32" -> exitWith (deviceDataOperations @Float)
-    "int64" -> exitWith (deviceDataOperations @Int64)
-    "int32" -> exitWith (deviceDataOperations @Int32)
-    "int8" -> exitWith (deviceDataOperations @Int8)
-    "byte" -> exitWith (deviceDataOperations @Int8)
-    "intp" -> exitWith (deviceDataOperations @Int)
-    "yesno" -> exitWith (deviceDataOperations @YesNo)
-    "decimal" -> exitWith (hostDataOperations @D.Decimal D.nan)
-    "box" -> exitWith (edhDataOperations edhNA)
-    _ ->
-      throwEdh ets UsageError $
-        "no effective support for such operation on dtype="
-          <> dti
-          <> ", please find some framework/lib to provide such effectful support"
-  where
-    exitWith :: FlatOp -> STM ()
-    exitWith !drp =
-      edhCreateHostObj
-        dmrpClass
-        (toDyn $ DataManiRoutinePack dti "op" (toDyn drp))
-        []
-        >>= exitEdh ets exit
-          . EdhObject
-
-createNumDataTypeClass :: Scope -> STM Object
-createNumDataTypeClass !clsOuterScope =
-  mkHostClass clsOuterScope "NumDataType" (allocEdhObj numdtAllocator) [] $
-    \ !clsScope -> do
-      !mths <-
-        sequence $
-          [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
-            | (nm, vc, hp) <-
-                [ ("__eq__", EdhMethod, wrapHostProc numdtEqProc),
-                  ("__repr__", EdhMethod, wrapHostProc numdtIdentProc)
-                ]
-          ]
-            ++ [ (AttrByName nm,) <$> mkHostProperty clsScope nm getter setter
-                 | (nm, getter, setter) <- [("id", numdtIdentProc, Nothing)]
-               ]
-      iopdUpdate mths $ edh'scope'entity clsScope
-  where
-    numdtAllocator :: EdhObjectAllocator
-    -- not really constructable from Edh code, this only creates bogus numdt obj
-    numdtAllocator !ctorExit _ = ctorExit Nothing $ HostStore (toDyn nil)
-
-    numdtEqProc :: EdhValue -> EdhHostProc
-    numdtEqProc !other !exit !ets =
-      castObjectStore' other >>= \case
-        Nothing -> exitEdh ets exit $ EdhBool False
-        Just (_, !dtOther) -> withThisHostObj ets $ \ !dt ->
-          exitEdh ets exit $
-            EdhBool $
-              num'type'identifier dtOther
-                == num'type'identifier dt
-
-    numdtIdentProc :: EdhHostProc
-    numdtIdentProc !exit !ets =
-      withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-numdt>") $
-        \ !dt ->
-          exitEdh ets exit $
-            EdhString $
-              "<numeric-dtype:"
-                <> num'type'identifier dt
-                <> ">"
+resolveDataOperator' !ets !dti _ !naExit !exit = runEdhTx ets $
+  behaveEdhEffect' (AttrByName $ "__DataOperator_" <> dti <> "__") $ \case
+    Just (EdhObject !foObj) -> case edh'obj'store foObj of
+      HostStore !dd -> case fromDynamic dd of
+        Nothing -> const naExit
+        Just (fo :: FlatOp) -> const $ exit fo
+      _ -> const naExit
+    _ -> const naExit
 
 resolveNumDataType ::
   EdhThreadState -> DataTypeIdent -> (NumDataType -> STM ()) -> STM ()
@@ -1610,50 +1451,18 @@ resolveNumDataType' ::
   STM () ->
   (NumDataType -> STM ()) ->
   STM ()
-resolveNumDataType' !ets !dti !naExit !exit =
-  runEdhTx ets $
-    performEdhEffect (AttrBySym resolveNumDataTypeEffId) [EdhString dti] [] $
-      \case
-        EdhNil -> \_ets -> naExit
-        EdhObject !ndto -> \_ets ->
-          castObjectStore ndto >>= \case
-            Nothing -> naExit
-            Just (_, !ndt) -> exit ndt
-        !badDtVal ->
-          throwEdhTx UsageError $
-            "bad return type from @resolveNumDataType(dti): "
-              <> edhTypeNameOf badDtVal
-
-resolveNumDataTypeEffId :: Symbol
-resolveNumDataTypeEffId = globalSymbol "@resolveNumDataType"
-
--- | The ultimate fallback to have trivial data types resolved
-resolveNumDataTypeProc :: Object -> "dti" !: Text -> EdhHostProc
-resolveNumDataTypeProc !numdtClass (mandatoryArg -> !dti) !exit !ets =
-  case dti of
-    "float64" -> exitWith $ deviceDataNumbering @Double dti
-    "float32" -> exitWith $ deviceDataNumbering @Float dti
-    "int64" -> exitWith $ deviceDataNumbering @Int64 dti
-    "int32" -> exitWith $ deviceDataNumbering @Int32 dti
-    "int8" -> exitWith $ deviceDataNumbering @Int8 dti
-    "byte" -> exitWith $ deviceDataNumbering @Int8 dti
-    "intp" -> exitWith $ deviceDataNumbering @Int dti
-    "decimal" -> exitWith $ hostDataNumbering @D.Decimal dti D.nan
-    "box" -> exitWith $ edhDataNumbering dti
-    _ ->
-      throwEdh ets UsageError $
-        "no effective support for numbering on dtype="
-          <> dti
-          <> ", please find some framework/lib to provide such effectful support"
-  where
-    exitWith :: NumDataType -> STM ()
-    exitWith !ndt =
-      edhCreateHostObj numdtClass (toDyn ndt) [] >>= exitEdh ets exit . EdhObject
+resolveNumDataType' !ets !dti !naExit !exit = runEdhTx ets $
+  behaveEdhEffect' (AttrByName $ "__NumDataType_" <> dti <> "__") $ \case
+    Just (EdhObject !foObj) -> case edh'obj'store foObj of
+      HostStore !dd -> case fromDynamic dd of
+        Nothing -> const naExit
+        Just (fo :: NumDataType) -> const $ exit fo
+      _ -> const naExit
+    _ -> const naExit
 
 data NumDataType where
   NumDataType ::
-    { num'type'identifier :: !DataTypeIdent,
-      flat'new'range'array ::
+    { flat'new'range'array ::
         EdhThreadState ->
         Int ->
         Int ->
@@ -1669,11 +1478,8 @@ data NumDataType where
     NumDataType
 
 deviceDataNumbering ::
-  forall a.
-  (Num a, EdhXchg a, Storable a, Typeable a) =>
-  DataTypeIdent ->
-  NumDataType
-deviceDataNumbering !dti = NumDataType dti rangeCreator nonzeroCreator
+  forall a. (Num a, EdhXchg a, Storable a, Typeable a) => NumDataType
+deviceDataNumbering = NumDataType rangeCreator nonzeroCreator
   where
     rangeCreator _ !start !stop _ !exit
       | stop == start =
@@ -1715,14 +1521,12 @@ deviceDataNumbering !dti = NumDataType dti rangeCreator nonzeroCreator
     nonzeroCreator _ _ _ = error "bug: not a device array"
 
 hostDataNumbering ::
-  forall a.
-  (Num a, EdhXchg a, Typeable a) =>
-  DataTypeIdent ->
-  a ->
-  NumDataType
-hostDataNumbering !dti !def'val = NumDataType dti rangeCreator nonzeroCreator
+  forall a. (Num a, EdhXchg a, Typeable a) => a -> NumDataType
+hostDataNumbering !def'val = NumDataType rangeCreator nonzeroCreator
   where
-    rangeCreator _ !start !stop _ !exit | stop == start = exit (emptyHostArray @a)
+    rangeCreator _ !start !stop _ !exit
+      | stop == start =
+        exit (emptyHostArray @a)
     rangeCreator !ets !start !stop !step !exit =
       if (stop > start && step <= 0) || (stop < start && step >= 0)
         then throwEdh ets UsageError "range is not converging"
@@ -1759,8 +1563,8 @@ hostDataNumbering !dti !def'val = NumDataType dti rangeCreator nonzeroCreator
               go 0 0
     nonzeroCreator _ _ _ = error "bug: not a host array"
 
-edhDataNumbering :: DataTypeIdent -> NumDataType
-edhDataNumbering !dti = NumDataType dti rangeCreator nonzeroCreator
+edhDataNumbering :: NumDataType
+edhDataNumbering = NumDataType rangeCreator nonzeroCreator
   where
     rangeCreator _ !start !stop _ !exit
       | stop == start =

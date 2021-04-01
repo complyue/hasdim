@@ -71,32 +71,6 @@ builtinDataTypes !dtClass =
 
 installDimBatteries :: EdhWorld -> IO ()
 installDimBatteries !world = do
-  void $
-    installEdhModule world "dim/symbols" $ \ !ets !exit -> do
-      let !moduScope = contextScope $ edh'context ets
-
-      let !moduArts =
-            [ ( symbolName resolveDataComparatorEffId,
-                EdhSymbol resolveDataComparatorEffId
-              ),
-              ( symbolName resolveDataOperatorEffId,
-                EdhSymbol resolveDataOperatorEffId
-              ),
-              ( symbolName resolveNumDataTypeEffId,
-                EdhSymbol resolveNumDataTypeEffId
-              ),
-              ( symbolName resolveFloatDataOperatorEffId,
-                EdhSymbol resolveFloatDataOperatorEffId
-              )
-            ]
-      !artsDict <-
-        EdhDict <$> createEdhDict [(EdhString k, v) | (k, v) <- moduArts]
-      flip iopdUpdate (edh'scope'entity moduScope) $
-        [(AttrByName k, v) | (k, v) <- moduArts]
-          ++ [(AttrByName "__exports__", artsDict)]
-
-      exit
-
   !moduDtypes <- installEdhModule world "dim/dtypes" $ \ !ets !exit -> do
     let !moduScope = contextScope $ edh'context ets
 
@@ -113,6 +87,73 @@ installDimBatteries !world = do
         ++ [(AttrByName "__exports__", artsDict)]
 
     exit
+
+  void $
+    installEdhModule world "dim/dtypes/effects" $ \ !ets !exit -> do
+      let !moduScope = contextScope $ edh'context ets
+
+      !moduArts <-
+        sequence $
+          [ (AttrByName $ "__DataComparator_" <> dti <> "__",)
+              <$> fmap EdhObject (edhWrapHostValue ets hv)
+            | (dti, hv) <-
+                [ ("float64", deviceDataOrdering @Double),
+                  ("float32", deviceDataOrdering @Float),
+                  ("int64", deviceDataOrdering @Int64),
+                  ("int32", deviceDataOrdering @Int32),
+                  ("int8", deviceDataOrdering @Int8),
+                  ("byte", deviceDataOrdering @Int8),
+                  ("intp", deviceDataOrdering @Int),
+                  ("yesno", deviceDataOrdering @YesNo),
+                  ("decimal", hostDataOrdering @D.Decimal),
+                  ("box", edhDataOrdering)
+                ]
+          ]
+            ++ [ (AttrByName $ "__DataOperator_" <> dti <> "__",)
+                   <$> fmap EdhObject (edhWrapHostValue ets hv)
+                 | (dti, hv) <-
+                     [ ("float64", deviceDataOperations @Double),
+                       ("float32", deviceDataOperations @Float),
+                       ("int64", deviceDataOperations @Int64),
+                       ("int32", deviceDataOperations @Int32),
+                       ("int8", deviceDataOperations @Int8),
+                       ("byte", deviceDataOperations @Int8),
+                       ("intp", deviceDataOperations @Int),
+                       ("yesno", deviceDataOperations @YesNo),
+                       ("decimal", hostDataOperations @D.Decimal D.nan),
+                       ("box", edhDataOperations edhNA)
+                     ]
+               ]
+            ++ [ (AttrByName $ "__NumDataType_" <> dti <> "__",)
+                   <$> fmap EdhObject (edhWrapHostValue ets hv)
+                 | (dti, hv) <-
+                     [ ("float64", deviceDataNumbering @Double),
+                       ("float32", deviceDataNumbering @Float),
+                       ("int64", deviceDataNumbering @Int64),
+                       ("int32", deviceDataNumbering @Int32),
+                       ("int8", deviceDataNumbering @Int8),
+                       ("byte", deviceDataNumbering @Int8),
+                       ("intp", deviceDataNumbering @Int),
+                       ("decimal", hostDataNumbering @D.Decimal D.nan),
+                       ("box", edhDataNumbering)
+                     ]
+               ]
+            ++ [ (AttrByName $ "__FloatDataOperator_" <> dti <> "__",)
+                   <$> fmap EdhObject (edhWrapHostValue ets hv)
+                 | (dti, hv) <-
+                     [ ("float64", floatOperations @Double),
+                       ("float32", floatOperations @Float)
+                     ]
+               ]
+
+      !artsDict <-
+        EdhDict
+          <$> createEdhDict [(attrKeyValue k, v) | (k, v) <- moduArts]
+      flip iopdUpdate (edh'scope'entity moduScope) $
+        [(k, v) | (k, v) <- moduArts]
+          ++ [(AttrByName "__exports__", artsDict)]
+
+      exit
 
   void $
     installEdhModule world "dim/RT" $ \ !ets !exit -> do
@@ -132,62 +173,40 @@ installDimBatteries !world = do
 
       let !moduScope = contextScope $ edh'context ets
 
-      !dmrpClass <- createDMRPClass moduScope
-      !numdtClass <- createNumDataTypeClass moduScope
       !columnClass <- createColumnClass defaultDataType moduScope
       !tableClass <- createTableClass columnClass moduScope
       !dbArrayClass <- createDbArrayClass columnClass defaultDataType moduScope
 
       !moduArts0 <-
         sequence $
-          [ (AttrBySym sym,) <$> mkSymbolicHostProc moduScope mc sym hp
-            | (mc, sym, hp) <-
+          [ (AttrByName nm,) <$> mkHostProc moduScope mc nm hp
+            | (mc, nm, hp) <-
                 [ ( EdhMethod,
-                    resolveDataComparatorEffId,
-                    wrapHostProc $ resolveDataComparatorProc dmrpClass
+                    "arange",
+                    wrapHostProc $ arangeProc defaultRangeDataType columnClass
                   ),
+                  (EdhMethod, "where", wrapHostProc whereProc),
                   ( EdhMethod,
-                    resolveDataOperatorEffId,
-                    wrapHostProc $ resolveDataOperatorProc dmrpClass
+                    "pi",
+                    wrapHostProc $ piProc defaultDataType columnClass
                   ),
-                  ( EdhMethod,
-                    resolveNumDataTypeEffId,
-                    wrapHostProc $ resolveNumDataTypeProc numdtClass
-                  ),
-                  ( EdhMethod,
-                    resolveFloatDataOperatorEffId,
-                    wrapHostProc $ resolveFloatDataOperatorProc numdtClass
-                  )
+                  (EdhMethod, "exp", wrapHostProc $ floatOpProc float'exp),
+                  (EdhMethod, "log", wrapHostProc $ floatOpProc float'log),
+                  (EdhMethod, "sqrt", wrapHostProc $ floatOpProc float'sqrt),
+                  (EdhMethod, "sin", wrapHostProc $ floatOpProc float'sin),
+                  (EdhMethod, "cos", wrapHostProc $ floatOpProc float'cos),
+                  (EdhMethod, "tan", wrapHostProc $ floatOpProc float'tan),
+                  (EdhMethod, "asin", wrapHostProc $ floatOpProc float'asin),
+                  (EdhMethod, "acos", wrapHostProc $ floatOpProc float'acos),
+                  (EdhMethod, "atan", wrapHostProc $ floatOpProc float'atan),
+                  (EdhMethod, "sinh", wrapHostProc $ floatOpProc float'sinh),
+                  (EdhMethod, "cosh", wrapHostProc $ floatOpProc float'cosh),
+                  (EdhMethod, "tanh", wrapHostProc $ floatOpProc float'tanh),
+                  (EdhMethod, "asinh", wrapHostProc $ floatOpProc float'asinh),
+                  (EdhMethod, "acosh", wrapHostProc $ floatOpProc float'acosh),
+                  (EdhMethod, "atanh", wrapHostProc $ floatOpProc float'atanh)
                 ]
           ]
-            ++ [ (AttrByName nm,) <$> mkHostProc moduScope mc nm hp
-                 | (mc, nm, hp) <-
-                     [ ( EdhMethod,
-                         "arange",
-                         wrapHostProc $ arangeProc defaultRangeDataType columnClass
-                       ),
-                       (EdhMethod, "where", wrapHostProc whereProc),
-                       ( EdhMethod,
-                         "pi",
-                         wrapHostProc $ piProc defaultDataType columnClass
-                       ),
-                       (EdhMethod, "exp", wrapHostProc $ floatOpProc float'exp),
-                       (EdhMethod, "log", wrapHostProc $ floatOpProc float'log),
-                       (EdhMethod, "sqrt", wrapHostProc $ floatOpProc float'sqrt),
-                       (EdhMethod, "sin", wrapHostProc $ floatOpProc float'sin),
-                       (EdhMethod, "cos", wrapHostProc $ floatOpProc float'cos),
-                       (EdhMethod, "tan", wrapHostProc $ floatOpProc float'tan),
-                       (EdhMethod, "asin", wrapHostProc $ floatOpProc float'asin),
-                       (EdhMethod, "acos", wrapHostProc $ floatOpProc float'acos),
-                       (EdhMethod, "atan", wrapHostProc $ floatOpProc float'atan),
-                       (EdhMethod, "sinh", wrapHostProc $ floatOpProc float'sinh),
-                       (EdhMethod, "cosh", wrapHostProc $ floatOpProc float'cosh),
-                       (EdhMethod, "tanh", wrapHostProc $ floatOpProc float'tanh),
-                       (EdhMethod, "asinh", wrapHostProc $ floatOpProc float'asinh),
-                       (EdhMethod, "acosh", wrapHostProc $ floatOpProc float'acosh),
-                       (EdhMethod, "atanh", wrapHostProc $ floatOpProc float'atanh)
-                     ]
-               ]
 
       let !moduArts =
             moduArts0
