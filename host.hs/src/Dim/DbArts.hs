@@ -272,7 +272,6 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
     aryAsColProc :: EdhHostProc
     aryAsColProc !exit !ets = withThisHostObj ets $ \dba@DbArray {} ->
       edhCreateHostObj columnClass (toDyn $ Column $ DbColumn dba 0) [thatObj]
-        >>= exitEdh ets exit
-          . EdhObject
+        >>= exitEdh ets exit . EdhObject
       where
         !thatObj = edh'scope'that $ contextScope $ edh'context ets

@@ -139,6 +139,15 @@ data DataTypeProxy where
     } ->
     DataTypeProxy
 
+isDataTypeFor :: forall b. Typeable b => DataType -> Bool
+isDataTypeFor !dt = case fromDynamic ddt of
+  Just (Proxy :: Proxy b) -> True
+  _ -> False
+  where
+    ddt = case data'type'proxy dt of
+      DeviceDataType t _ _ -> toDyn t
+      HostDataType t _ -> toDyn t
+
 -- | DataType facilitates the basic support of a data type to be managable
 -- by HasDim, i.e. array allocation, element read/write, array bulk update.
 --
@@ -184,12 +193,9 @@ createDataTypeClass !clsOuterScope =
         sequence $
           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
             | (nm, vc, hp) <-
-                [ ( "__eq__",
-                    EdhMethod,
-                    wrapHostProc dtypeEqProc
-                  ),
-                  -- assuming there's an attribute in context samely named after the
-                  -- identifier for a valid dtype
+                [ ("__eq__", EdhMethod, wrapHostProc dtypeEqProc),
+                  -- assuming there's an attribute in context samely named
+                  -- after the identifier for a valid dtype
                   ("__repr__", EdhMethod, wrapHostProc dtypeIdentProc)
                 ]
           ]

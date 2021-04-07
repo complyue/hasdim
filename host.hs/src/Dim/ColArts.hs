@@ -638,10 +638,7 @@ createColumnClass !defaultDt !clsOuterScope =
             grow'column'capacity col newCap $
               const $
                 exitEdh ets exit $
-                  EdhObject $
-                    edh'scope'that $
-                      contextScope $
-                        edh'context ets
+                  EdhObject $ edh'scope'that $ contextScope $ edh'context ets
 
     colCapProc :: EdhHostProc
     colCapProc !exit !ets = withThisHostObj ets $ \ !col ->
@@ -661,10 +658,7 @@ createColumnClass !defaultDt !clsOuterScope =
     colDtypeProc :: EdhHostProc
     colDtypeProc !exit !ets = withThisHostObj ets $ \(Column !col) ->
       exitEdh ets exit $
-        EdhString $
-          data'type'identifier $
-            data'type'of'column
-              col
+        EdhString $ data'type'identifier $ data'type'of'column col
 
     colBlobProc :: EdhHostProc
     colBlobProc !exit !ets =

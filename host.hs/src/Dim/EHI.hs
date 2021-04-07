@@ -4,6 +4,7 @@ module Dim.EHI
   ( installDimBatteries,
     module Dim.XCHG,
     module Dim.DataType,
+    module Dim.Column,
     module Dim.Table,
     module Dim.DbArray,
   )
@@ -17,6 +18,7 @@ import Data.Dynamic
 import qualified Data.Lossless.Decimal as D
 import Data.Maybe
 import Dim.ColArts
+import Dim.Column
 import Dim.DataType
 import Dim.DbArray
 import Dim.DbArts
