@@ -22,29 +22,31 @@ $=> # catch exception when data file does not exist
 # %}
 
 # %%
-dba | show
+dba |show
 
 # %%
 mark( dba, 5 )
 
 # %%
-dba | show
+dba |show
 
 # %%
 col = dba.asColumn()
-col | show
+
+# %%
+col |show
 
 # %%
 case col of { { DbArray: dba' } } -> dba' is dba
 
 # %%
 col[] = arange( len( col ), dtype=f4 )
-col | show
+col |show
 
 # %%
 grow( col, 20 )
 mark( col, 15 )
-col | show
+col |show
 
 # %%
-dba | show
+dba |show

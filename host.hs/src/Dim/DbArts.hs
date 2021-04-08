@@ -37,6 +37,7 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
                   ("([=])", EdhMethod, wrapHostProc aryIdxWriteProc),
                   ("__repr__", EdhMethod, wrapHostProc aryReprProc),
                   ("__show__", EdhMethod, wrapHostProc aryShowProc),
+                  ("(@<-)", EdhMethod, wrapHostProc aryDeleAttrProc),
                   ("asColumn", EdhMethod, wrapHostProc aryAsColProc)
                 ]
           ]
@@ -160,7 +161,7 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
           Right (!shape, _, _) ->
             exitEdh ets exit $
               EdhString $
-                "DbArray("
+                "DbArray( "
                   <> T.pack (show dir)
                   <> ", "
                   <> T.pack (show path)
@@ -168,7 +169,7 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
                   <> data'type'identifier dt
                   <> ", shape="
                   <> T.pack (show shape)
-                  <> ")"
+                  <> ", )"
 
     aryShowProc :: EdhHostProc
     aryShowProc !exit !ets =
@@ -268,6 +269,19 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
               !idx -> flatIndexInShape ets [idx] shape $ \ !flatIdx ->
                 flat'array'write dt ets fa flatIdx dv $
                   \ !rv -> exitEdh ets exit rv
+
+    -- this is the super magic to intercept descendant object's attribute reads
+    aryDeleAttrProc :: "attrKey" !: EdhValue -> EdhHostProc
+    aryDeleAttrProc (mandatoryArg -> !attrKey) !exit !ets = case attrKey of
+      EdhString "__repr__" | edh'obj'class thatObj == columnClass ->
+        runEdhTx ets $
+          aryReprProc $ \case
+            EdhString !dbaRepr ->
+              exitEdhTx exit $ EdhString $ dbaRepr <> ".asColumn()"
+            _ -> throwEdhTx EvalError "bug: aryReprProc returned non-string"
+      _ -> exitEdh ets exit edhNA
+      where
+        !thatObj = edh'scope'that $ contextScope $ edh'context ets
 
     aryAsColProc :: EdhHostProc
     aryAsColProc !exit !ets = withThisHostObj ets $ \dba@DbArray {} ->
