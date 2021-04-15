@@ -3,13 +3,6 @@ module Dim.DiskBack where
 -- import           Debug.Trace
 
 import Control.Concurrent.STM
-  ( atomically,
-    newTVar,
-    readTMVar,
-    takeTMVar,
-    throwSTM,
-    tryPutTMVar,
-  )
 import Control.Exception (bracket)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Text as T

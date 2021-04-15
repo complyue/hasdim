@@ -5,19 +5,11 @@ module Dim.DbArray where
 -- import           Debug.Trace
 
 import Control.Concurrent.STM
-  ( STM,
-    TMVar,
-    atomically,
-    readTMVar,
-    throwSTM,
-    tryPutTMVar,
-    tryTakeTMVar,
-  )
-import Control.Exception (SomeException, handle, throwIO)
+import Control.Exception
 import Control.Monad
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Internal as B
-import Data.Dynamic (Typeable)
+import Data.Dynamic
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Lossless.Decimal as D

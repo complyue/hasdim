@@ -2,8 +2,8 @@ module Dim.Column where
 
 -- import           Debug.Trace
 
-import Control.Concurrent.STM (STM)
-import Data.Dynamic (toDyn)
+import Control.Concurrent.STM
+import Data.Dynamic
 import Dim.DataType
 import Dim.XCHG
 import Language.Edh.EHI
@@ -89,7 +89,7 @@ class ManagedColumn a where
 -- has to be monomorphic to be casted to 'Dynamic' value) of an Edh object
 -- wrapping it to the scripting surface.
 data Column where
-  Column :: ManagedColumn a => a -> Column
+  Column :: (Typeable a, ManagedColumn a) => a -> Column
 
 columnCapacity :: Column -> STM Int
 columnCapacity (Column !col) = flatArrayCapacity <$> view'column'data col

@@ -4,8 +4,8 @@ module Dim.Float where
 
 -- import           Debug.Trace
 
-import Control.Concurrent.STM (STM, newTVar)
-import Data.Dynamic (Dynamic, Typeable, fromDynamic, toDyn)
+import Control.Concurrent.STM
+import Data.Dynamic
 import Dim.Column
 import Dim.DataType
 import Dim.InMem
