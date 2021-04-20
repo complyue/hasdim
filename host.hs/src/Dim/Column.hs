@@ -6,12 +6,13 @@ import Control.Concurrent.STM
 import Data.Dynamic
 import Dim.DataType
 import Dim.XCHG
+import Foreign
 import Language.Edh.EHI
 import Prelude
 
-class ManagedColumn a where
+class ManagedColumn t where
   -- | data type of the column
-  data'type'of'column :: a -> DataType
+  data'type'of'column :: t -> DataType
 
   -- obtain a view of the physical storage backing the column data
   --
@@ -20,16 +21,16 @@ class ManagedColumn a where
   -- changer attribute to a thread's identity before modifiying a column,
   -- and check such a attribute to be `frozen` valued before allowing the
   -- STM tx to commit
-  view'column'data :: a -> STM FlatArray
+  view'column'data :: t -> STM FlatArray
 
   -- called when valid data length of the column is requested
-  read'column'length :: a -> STM Int
+  read'column'length :: t -> STM Int
 
   -- called when a new capacity is requested for the column
-  grow'column'capacity :: a -> Int -> (FlatArray -> STM ()) -> EdhTx
+  grow'column'capacity :: t -> Int -> (FlatArray -> STM ()) -> EdhTx
 
   -- called when a new length is marked for the column
-  mark'column'length :: a -> Int -> STM () -> EdhTx
+  mark'column'length :: t -> Int -> STM () -> EdhTx
 
   -- called when viewing-slicing is requested for the column
   -- -> Start -> Stop
@@ -37,7 +38,7 @@ class ManagedColumn a where
   -- -> (Exit :: (CloneChildren? -> NewColumn -> STM ()))
   -- -> EdhTx
   view'column'slice ::
-    a ->
+    t ->
     Int ->
     Int ->
     (Bool -> Column -> STM ()) ->
@@ -48,7 +49,7 @@ class ManagedColumn a where
   -- -> (CloneChildren? -> NewColumn -> STM ())
   -- -> EdhTx
   copy'column'slice ::
-    a ->
+    t ->
     Int ->
     Int ->
     Int ->
@@ -62,7 +63,7 @@ class ManagedColumn a where
   -- -> (Exit :: (CloneChildren? -> NewColumn -> STM ()))
   -- -> EdhTx
   extract'column'bool ::
-    a ->
+    t ->
     Column ->
     STM () ->
     (Bool -> Column -> STM ()) ->
@@ -75,7 +76,7 @@ class ManagedColumn a where
   -- -> (Exit :: (CloneChildren? -> NewColumn -> STM ()))
   -- -> EdhTx
   extract'column'fancy ::
-    a ->
+    t ->
     Column ->
     STM () ->
     (Bool -> Column -> STM ()) ->
@@ -89,7 +90,7 @@ class ManagedColumn a where
 -- has to be monomorphic to be casted to 'Dynamic' value) of an Edh object
 -- wrapping it to the scripting surface.
 data Column where
-  Column :: (Typeable a, ManagedColumn a) => a -> Column
+  Column :: (Typeable t, ManagedColumn t) => t -> Column
 
 columnCapacity :: Column -> STM Int
 columnCapacity (Column !col) = flatArrayCapacity <$> view'column'data col
@@ -138,7 +139,7 @@ sliceColumn !ets !thatCol !start !stop !step !exit =
         ets
         EvalError
         "bug: not a column object passed to unsafeSliceColumn"
-    Just (!thisCol, (Column !col)) ->
+    Just (!thisCol, Column !col) ->
       if stop >= start && step == 1
         then runEdhTx ets $
           view'column'slice col start stop $
@@ -177,7 +178,7 @@ extractColumnBool !ets !thatCol !colMask !naExit !exit =
         ets
         EvalError
         "bug: not a column object passed to extractColumnBool"
-    Just (!thisCol, (Column !col)) ->
+    Just (!thisCol, Column !col) ->
       runEdhTx ets $
         extract'column'bool col colMask naExit $
           \ !cloneChildren colNew'@(Column !colNew) ->
@@ -203,7 +204,7 @@ extractColumnFancy !ets !thatCol !colIdx !naExit !exit =
         ets
         EvalError
         "bug: not a column object passed to extractColumnBool"
-    Just (!thisCol, (Column !col)) ->
+    Just (!thisCol, Column !col) ->
       runEdhTx ets $
         extract'column'fancy col colIdx naExit $
           \ !cloneChildren !colNew ->

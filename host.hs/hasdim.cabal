@@ -31,13 +31,19 @@ executable hasdim
     BangPatterns
     ConstraintKinds
     DataKinds
+    DerivingStrategies
     FlexibleContexts
     FlexibleInstances
     GADTs
+    GeneralizedNewtypeDeriving
     KindSignatures
     LambdaCase
+    MultiWayIf
     OverloadedStrings
+    PatternSynonyms
+    RankNTypes
     ScopedTypeVariables
+    StandaloneDeriving
     TupleSections
     TypeApplications
     TypeOperators
@@ -65,13 +71,19 @@ executable rundim
     BangPatterns
     ConstraintKinds
     DataKinds
+    DerivingStrategies
     FlexibleContexts
     FlexibleInstances
     GADTs
+    GeneralizedNewtypeDeriving
     KindSignatures
     LambdaCase
+    MultiWayIf
     OverloadedStrings
+    PatternSynonyms
+    RankNTypes
     ScopedTypeVariables
+    StandaloneDeriving
     TupleSections
     TypeApplications
     TypeOperators
@@ -99,13 +111,19 @@ executable rundimm
     BangPatterns
     ConstraintKinds
     DataKinds
+    DerivingStrategies
     FlexibleContexts
     FlexibleInstances
     GADTs
+    GeneralizedNewtypeDeriving
     KindSignatures
     LambdaCase
+    MultiWayIf
     OverloadedStrings
+    PatternSynonyms
+    RankNTypes
     ScopedTypeVariables
+    StandaloneDeriving
     TupleSections
     TypeApplications
     TypeOperators
@@ -125,8 +143,7 @@ executable rundimm
     , transformers
 
 library
-  exposed-modules:
-    Dim.EHI
+  exposed-modules:    Dim.EHI
   other-modules:
     Dim.ColArts
     Dim.Column
@@ -146,13 +163,19 @@ library
     BangPatterns
     ConstraintKinds
     DataKinds
+    DerivingStrategies
     FlexibleContexts
     FlexibleInstances
     GADTs
+    GeneralizedNewtypeDeriving
     KindSignatures
     LambdaCase
+    MultiWayIf
     OverloadedStrings
+    PatternSynonyms
+    RankNTypes
     ScopedTypeVariables
+    StandaloneDeriving
     TupleSections
     TypeApplications
     TypeOperators
