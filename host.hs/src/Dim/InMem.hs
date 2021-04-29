@@ -3,19 +3,17 @@ module Dim.InMem where
 -- import           Debug.Trace
 
 import Control.Concurrent.STM
-  ( STM,
-    TVar,
-    newTVar,
-    readTVar,
-    writeTVar,
-  )
+import Control.Exception
+import Data.Dynamic
 import qualified Data.Text as T
 import qualified Data.Vector.Mutable as MV
 import Dim.Column
 import Dim.DataType
+import Dim.XCHG
 import Foreign hiding (void)
 import GHC.Conc (unsafeIOToSTM)
 import Language.Edh.EHI
+import Type.Reflection
 import Prelude
 
 data InMemColumn = InMemColumn
@@ -23,6 +21,79 @@ data InMemColumn = InMemColumn
     im'column'storage :: !(TVar FlatArray),
     im'column'length :: !(TVar Int)
   }
+
+allocDeviceColumn ::
+  forall a.
+  (EdhXchg a, Typeable a, Storable a) =>
+  Int ->
+  DataType ->
+  IO (ForeignPtr a, Column)
+allocDeviceColumn !cap = allocDeviceColumn' cap cap
+
+allocDeviceColumn' ::
+  forall a.
+  (EdhXchg a, Typeable a, Storable a) =>
+  Int ->
+  Int ->
+  DataType ->
+  IO (ForeignPtr a, Column)
+allocDeviceColumn' !len !cap !dt
+  | len < 0 || len > cap || cap < 0 =
+    throwIO $
+      userError $
+        "bug: invalid len/cap to allocDeviceColumn - "
+          <> show len
+          <> "/"
+          <> show cap
+  | isDataTypeFor @a dt = do
+    (!fp, !fa) <- newDeviceArray cap
+    !csv <- newTVarIO fa
+    !clv <- newTVarIO len
+    return (fp, Column $ InMemColumn dt csv clv)
+  | otherwise =
+    throwIO $
+      userError $
+        "bug: wrong dtype for '" <> show (typeRep @a) <> "' - "
+          <> T.unpack (data'type'identifier dt)
+
+allocHostColumn ::
+  forall a.
+  (EdhXchg a, Typeable a) =>
+  Int ->
+  DataType ->
+  IO (MV.IOVector a, Column)
+allocHostColumn !cap = allocHostColumn' cap cap
+
+allocHostColumn' ::
+  forall a.
+  (EdhXchg a, Typeable a) =>
+  Int ->
+  Int ->
+  DataType ->
+  IO (MV.IOVector a, Column)
+allocHostColumn' !len !cap !dt
+  | len < 0 || len > cap || cap < 0 =
+    throwIO $
+      userError $
+        "bug: invalid len/cap to allocHostColumn - "
+          <> show len
+          <> "/"
+          <> show cap
+  | otherwise = case data'type'proxy dt of
+    HostDataType !hdd -> case typeRep @a `eqTypeRep` typeOf hdd of
+      Just HRefl -> do
+        (!hv, !fa) <- newHostArray hdd cap
+        !csv <- newTVarIO fa
+        !clv <- newTVarIO len
+        return (hv, Column $ InMemColumn dt csv clv)
+      _ -> dtWrong
+    _ -> dtWrong
+  where
+    dtWrong =
+      throwIO $
+        userError $
+          "bug: wrong dtype for '" <> show (typeRep @a) <> "' - "
+            <> T.unpack (data'type'identifier dt)
 
 createInMemColumn :: DataType -> Int -> Int -> (Column -> STM ()) -> EdhTx
 createInMemColumn !dt !cap !len !exit !ets =

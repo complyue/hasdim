@@ -13,7 +13,6 @@ import Data.Dynamic
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Lossless.Decimal as D
-import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector.Storable as VS
@@ -27,6 +26,7 @@ import System.Directory (createDirectoryIfMissing)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (IOMode (ReadWriteMode), hFileSize, withFile)
 import System.IO.MMap (Mode (ReadWriteEx), mmapFileForeignPtr)
+import Type.Reflection
 import Prelude
 
 -- | The shape of an array is named dimensions with size of each
@@ -209,7 +209,7 @@ mmapDbArray ::
 mmapDbArray !asVar !dataDir !dataPath !dt !maybeShape =
   case data'type'proxy dt of
     HostDataType {} -> error "bug: host dtype passed to mmapDbArray"
-    DeviceDataType (Proxy :: Proxy a) !item'size !item'align ->
+    DeviceDataType (_ :: TypeRep a) !item'size !item'align ->
       case maybeShape of
         -- create if not exists, or load existing file with truncation
         Just !shape ->
@@ -240,7 +240,8 @@ mmapDbArray !asVar !dataDir !dataPath !dt !maybeShape =
                                 <> show (dbArraySize1d shape)
                                 <> " too small to cover valid data in data file: "
                                 <> show (array'data'length hdr)
-                        -- mind to avoid truncating file shorter, i.e. possible data loss
+                        -- mind to avoid truncating file shorter,
+                        -- i.e. possible data loss
                         (fp, _, _) <-
                           mmapFileForeignPtr dataFilePath ReadWriteEx $
                             Just (0, mmap'size)
@@ -282,8 +283,8 @@ mmapDbArray !asVar !dataDir !dataPath !dt !maybeShape =
                                   array'data'offset hdr
                           )
 
-        -- load existing array file, use header and file length to calculate shape,
-        -- assuming 1d
+        -- load existing array file, use header and file length to calculate
+        -- shape, assuming 1d
         Nothing ->
           handle (atomically . void . tryPutTMVar asVar . Left) $
             withFile dataFilePath ReadWriteMode $
@@ -294,13 +295,16 @@ mmapDbArray !asVar !dataDir !dataPath !dt !maybeShape =
                     (fp, _, _) <-
                       mmapFileForeignPtr dataFilePath ReadWriteEx $
                         Just (0, fromIntegral fileSize)
-                    let !hdrLongLive = unsafeForeignPtrToPtr $ castForeignPtr fp
+                    let !hdrLongLive =
+                          unsafeForeignPtrToPtr $ castForeignPtr fp
                     !hdr <- peek hdrLongLive
                     let data'bytes'len :: Int64 =
                           fromIntegral fileSize
                             - fromIntegral (array'data'offset hdr)
                         cap :: Int =
-                          fromIntegral data'bytes'len `div` fromIntegral item'size
+                          fromIntegral
+                            data'bytes'len
+                            `div` fromIntegral item'size
                     atomically $ do
                       void $ tryTakeTMVar asVar
                       void $

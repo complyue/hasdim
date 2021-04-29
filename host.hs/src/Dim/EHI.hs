@@ -5,6 +5,7 @@ module Dim.EHI
     module Dim.XCHG,
     module Dim.DataType,
     module Dim.Column,
+    module Dim.InMem,
     module Dim.Table,
     module Dim.DbArray,
   )
@@ -23,6 +24,7 @@ import Dim.DataType
 import Dim.DbArray
 import Dim.DbArts
 import Dim.Float
+import Dim.InMem
 import Dim.Table
 import Dim.XCHG
 import Foreign hiding (void)

@@ -10,7 +10,6 @@ module Dim.DataType where
 import Control.Concurrent.STM (STM)
 import Control.Monad
 import Data.Dynamic
-import Data.Proxy
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (cast)
@@ -23,6 +22,7 @@ import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import GHC.Conc (unsafeIOToSTM)
 import Language.Edh.EHI
 import System.IO.Unsafe (unsafePerformIO)
+import Type.Reflection
 import Prelude
 
 data FlatArray where
@@ -52,17 +52,25 @@ emptyHostArray = unsafePerformIO $ do
 {-# NOINLINE emptyHostArray #-}
 
 newDeviceArray ::
-  forall a. (EdhXchg a, Typeable a, Storable a) => Int -> IO FlatArray
+  forall a.
+  (EdhXchg a, Typeable a, Storable a) =>
+  Int ->
+  IO (ForeignPtr a, FlatArray)
 newDeviceArray !cap = do
   !p <- callocArray @a cap
   !fp <- newForeignPtr finalizerFree p
-  return $ DeviceArray @a cap fp
+  return (fp, DeviceArray @a cap fp)
 
-newHostArray :: forall a. (EdhXchg a, Typeable a) => a -> Int -> IO FlatArray
+newHostArray ::
+  forall a.
+  (EdhXchg a, Typeable a) =>
+  a ->
+  Int ->
+  IO (MV.IOVector a, FlatArray)
 newHostArray !fill'val !cap = do
   !ha <- MV.unsafeNew cap
   MV.set ha fill'val
-  return $ HostArray @a cap ha
+  return (ha, HostArray @a cap ha)
 
 dupFlatArray :: FlatArray -> Int -> Int -> IO FlatArray
 dupFlatArray (DeviceArray !capSrc !fpSrc) !lenSrc !capNew = do
@@ -129,26 +137,24 @@ type DataTypeIdent = Text
 data DataTypeProxy where
   DeviceDataType ::
     (EdhXchg a, Typeable a, Storable a) =>
-    { device'data'type :: !(Proxy a),
+    { device'data'type :: !(TypeRep a),
       device'data'size :: !Int,
       device'data'align :: !Int
     } ->
     DataTypeProxy
   HostDataType ::
     (EdhXchg a, Typeable a) =>
-    { host'data'type :: !(Proxy a),
-      host'data'default :: !a
-    } ->
+    {host'data'default :: !a} ->
     DataTypeProxy
 
 isDataTypeFor :: forall b. Typeable b => DataType -> Bool
-isDataTypeFor !dt = case fromDynamic ddt of
-  Just (Proxy :: Proxy b) -> True
-  _ -> False
-  where
-    ddt = case data'type'proxy dt of
-      DeviceDataType t _ _ -> toDyn t
-      HostDataType t _ -> toDyn t
+isDataTypeFor !dt = case data'type'proxy dt of
+  DeviceDataType t _ _ -> case typeRep @b `eqTypeRep` t of
+    Just HRefl -> True
+    _ -> False
+  HostDataType d -> case typeRep @b `eqTypeRep` typeOf d of
+    Just HRefl -> True
+    _ -> False
 
 -- | DataType facilitates the basic support of a data type to be managable
 -- by HasDim, i.e. array allocation, element read/write, array bulk update.
@@ -233,7 +239,7 @@ makeDeviceDataType !dti =
   DataType
     dti
     ( DeviceDataType
-        (Proxy :: Proxy a)
+        (typeRep @a)
         (sizeOf (undefined :: a))
         (alignment (undefined :: a))
     )
@@ -243,7 +249,7 @@ makeDeviceDataType !dti =
     writeArrayCell
     updateArray
   where
-    createArray !cap = unsafeIOToSTM (newDeviceArray @a cap)
+    createArray !cap = unsafeIOToSTM $ snd <$> newDeviceArray @a cap
     growArray (DeviceArray !cap !fp) !newCap = unsafeIOToSTM $ do
       !p' <- callocArray newCap
       !fp' <- newForeignPtr finalizerFree p'
@@ -282,14 +288,14 @@ makeHostDataType ::
 makeHostDataType !dti !def'val =
   DataType
     dti
-    (HostDataType (Proxy :: Proxy a) def'val)
+    (HostDataType def'val)
     createArray
     growArray
     readArrayCell
     writeArrayCell
     updateArray
   where
-    createArray !cap = unsafeIOToSTM (newHostArray @a def'val cap)
+    createArray !cap = unsafeIOToSTM (snd <$> newHostArray @a def'val cap)
     growArray (HostArray !cap !ha'') !newCap = case cast ha'' of
       Nothing -> error "bug: not a host array"
       Just (ha :: MV.IOVector a) -> unsafeIOToSTM $ do
