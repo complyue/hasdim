@@ -58,7 +58,7 @@ builtinDataTypes !dtClass =
       STM [(DataTypeIdent, Object)]
     mkDevTypeWithAlias !dti !alias =
       let !dt = makeDeviceDataType @a dti
-       in edhCreateHostObj dtClass (toDyn dt) []
+       in edhCreateHostObj dtClass dt
             >>= \ !dto -> return $ ((dti, dto) :) $ (,dto) <$> alias
 
     mkHostTypeWithAlias ::
@@ -70,7 +70,7 @@ builtinDataTypes !dtClass =
       STM [(DataTypeIdent, Object)]
     mkHostTypeWithAlias !dti !def'val !alias =
       let !dt = makeHostDataType @a dti def'val
-       in edhCreateHostObj dtClass (toDyn dt) []
+       in edhCreateHostObj dtClass dt
             >>= \ !dto -> return $ ((dti, dto) :) $ (,dto) <$> alias
 
 installDimBatteries :: EdhWorld -> IO ()

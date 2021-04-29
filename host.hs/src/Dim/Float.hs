@@ -114,7 +114,7 @@ piProc !defaultDt !colClass !cap (defaultArg defaultDt -> !dto) !exit !ets =
           !csv <- newTVar cs
           !clv <- newTVar $ flatArrayCapacity cs
           let !col = Column $ InMemColumn dt csv clv
-          edhCreateHostObj colClass (toDyn col) []
+          edhCreateHostObj colClass col
             >>= exitEdh ets exit
               . EdhObject
 

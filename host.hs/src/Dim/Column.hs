@@ -150,7 +150,7 @@ sliceColumn !ets !thatCol !start !stop !step !exit =
                 then edhCloneHostObj ets thisCol thatCol colNew' $
                   \ !newColObj -> exit ccNew clNew newColObj
                 else
-                  edhCreateHostObj (edh'obj'class thisCol) (toDyn colNew') []
+                  edhCreateHostObj (edh'obj'class thisCol) colNew'
                     >>= \ !newColObj -> exit ccNew clNew newColObj
         else runEdhTx ets $
           copy'column'slice col start stop step $
@@ -161,7 +161,7 @@ sliceColumn !ets !thatCol !start !stop !step !exit =
                 then edhCloneHostObj ets thisCol thatCol colNew' $
                   \ !newColObj -> exit ccNew clNew newColObj
                 else
-                  edhCreateHostObj (edh'obj'class thisCol) (toDyn colNew') []
+                  edhCreateHostObj (edh'obj'class thisCol) colNew'
                     >>= \ !newColObj -> exit ccNew clNew newColObj
 
 extractColumnBool ::
@@ -187,7 +187,7 @@ extractColumnBool !ets !thatCol !colMask !naExit !exit =
                 then edhCloneHostObj ets thisCol thatCol colNew' $
                   \ !newColObj -> exit clNew newColObj
                 else
-                  edhCreateHostObj (edh'obj'class thisCol) (toDyn colNew') []
+                  edhCreateHostObj (edh'obj'class thisCol) colNew'
                     >>= \ !newColObj -> exit clNew newColObj
 
 extractColumnFancy ::
@@ -211,5 +211,5 @@ extractColumnFancy !ets !thatCol !colIdx !naExit !exit =
             if cloneChildren
               then edhCloneHostObj ets thisCol thatCol colNew exit
               else
-                edhCreateHostObj (edh'obj'class thisCol) (toDyn colNew) []
+                edhCreateHostObj (edh'obj'class thisCol) colNew
                   >>= exit

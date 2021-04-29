@@ -2,16 +2,10 @@ module Dim.ColArts where
 
 -- import           Debug.Trace
 
-import Control.Concurrent.STM (STM, newTVar)
+import Control.Concurrent.STM
 import qualified Data.ByteString.Internal as B
-import Data.Dynamic (Dynamic, fromDynamic, toDyn)
+import Data.Dynamic
 import Data.Lossless.Decimal as D
-  ( Decimal,
-    decimalToInteger,
-    divDecimal,
-    divIntDecimal,
-    powerDecimal,
-  )
 import Data.Text (Text)
 import qualified Data.Text as T
 import Dim.Column
@@ -820,7 +814,7 @@ createColumnClass !defaultDt !clsOuterScope =
       where
         !thisCol = edh'scope'this $ contextScope $ edh'context ets
         exitWithResult !colResult =
-          edhCreateHostObj (edh'obj'class thisCol) (toDyn colResult) []
+          edhCreateHostObj (edh'obj'class thisCol) colResult
             >>= exitEdh ets exit
               . EdhObject
 
@@ -1331,7 +1325,7 @@ arangeProc
             !csv <- newTVar cs
             !clv <- newTVar $ flatArrayCapacity cs
             let !col = Column $ InMemColumn dt csv clv
-            edhCreateHostObj colClass (toDyn col) []
+            edhCreateHostObj colClass col
               >>= exitEdh ets exit
                 . EdhObject
 
@@ -1358,7 +1352,7 @@ whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit !ets
                     <> data'type'identifier dt
                     <> " for where(), need to be yesno"
               else nonzeroIdxColumn ets col' $ \ !colResult ->
-                edhCreateHostObj (edh'obj'class colBoolIdx) (toDyn colResult) []
+                edhCreateHostObj (edh'obj'class colBoolIdx) colResult
                   >>= exitEdh ets exit
                     . EdhObject
 whereProc

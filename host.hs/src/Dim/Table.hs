@@ -219,13 +219,13 @@ createTableClass !colClass !clsOuterScope =
             !csv <- newTVar $ HostArray @EdhValue cap ha
             !clv <- newTVar len
             let !col = Column $ InMemColumn dtBox csv clv
-            edhCreateHostObj colClass (toDyn col) [] >>= exit
+            edhCreateHostObj colClass col >>= exit
 
           createCol :: DataType -> Int -> Int -> (Object -> STM ()) -> STM ()
           createCol !dt !cap !len !exit =
             runEdhTx etsCtor $
               createInMemColumn dt cap len $ \ !col ->
-                edhCreateHostObj colClass (toDyn col) [] >>= exit
+                edhCreateHostObj colClass col >>= exit
 
           containCol :: Object -> Int -> Int -> (Object -> STM ()) -> STM ()
           containCol !colObj _cap _len !exit = exit colObj
@@ -476,7 +476,7 @@ createTableClass !colClass !clsOuterScope =
                         runEdhTx ets $
                           createInMemColumn dt trCap trCnt $ \ !col -> do
                             !newColObj <-
-                              edhCreateHostObj colClass (toDyn col) []
+                              edhCreateHostObj colClass col
                             iopdInsert key newColObj tcols
                             exitEdh ets exit $ EdhObject newColObj
                       Nothing -> badColSrc attrVal

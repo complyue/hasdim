@@ -24,7 +24,7 @@ import Language.Edh.EHI
 import Prelude
 
 createDbArrayClass :: Object -> Object -> Scope -> STM Object
-createDbArrayClass !columnClass !defaultDt !clsOuterScope =
+createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
   mkHostClass clsOuterScope "DbArray" (allocEdhObj arrayAllocator) [] $
     \ !clsScope -> do
       !mths <-
@@ -273,7 +273,7 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
     -- this is the super magic to intercept descendant object's attribute reads
     aryDeleAttrProc :: "attrKey" !: EdhValue -> EdhHostProc
     aryDeleAttrProc (mandatoryArg -> !attrKey) !exit !ets = case attrKey of
-      EdhString "__repr__" | edh'obj'class thatObj == columnClass ->
+      EdhString "__repr__" | edh'obj'class thatObj == clsColumn ->
         runEdhTx ets $
           aryReprProc $ \case
             EdhString !dbaRepr ->
@@ -285,7 +285,7 @@ createDbArrayClass !columnClass !defaultDt !clsOuterScope =
 
     aryAsColProc :: EdhHostProc
     aryAsColProc !exit !ets = withThisHostObj ets $ \dba@DbArray {} ->
-      edhCreateHostObj columnClass (toDyn $ Column $ DbColumn dba 0) [thatObj]
+      edhCreateHostObj' clsColumn (toDyn $ Column $ DbColumn dba 0) [thatObj]
         >>= exitEdh ets exit . EdhObject
       where
         !thatObj = edh'scope'that $ contextScope $ edh'context ets
