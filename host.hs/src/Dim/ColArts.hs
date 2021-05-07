@@ -471,6 +471,7 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("__repr__", EdhMethod, wrapHostProc colReprProc),
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
                   ("__desc__", EdhMethod, wrapHostProc colDescProc),
+                  ("__json__", EdhMethod, wrapHostProc colJsonProc),
                   ( "==",
                     EdhMethod,
                     wrapHostProc $
@@ -751,6 +752,27 @@ createColumnClass !defaultDt !clsOuterScope =
                           i
                           (elemRepr <> ", ")
                       else go (i + 1) cumLines lineIdx tentLine
+
+    colJsonProc :: EdhHostProc
+    colJsonProc !exit !ets = withThisHostObj ets $ \(Column !col) -> do
+      let !dt = data'type'of'column col
+      !cs <- view'column'data col
+      !cl <- read'column'length col
+      if cl <= 0
+        then exitEdh ets exit $ EdhString "[]"
+        else cvt2Json cl $ flat'array'read dt ets cs
+      where
+        cvt2Json :: Int -> (Int -> (EdhValue -> STM ()) -> STM ()) -> STM ()
+        cvt2Json !len !readElem = go (len -1) []
+          where
+            go :: Int -> [Text] -> STM ()
+            go !i !elemJsonStrs
+              | i < 0 =
+                exitEdh ets exit $
+                  EdhString $ "[" <> T.intercalate "," elemJsonStrs <> "]"
+              | otherwise = readElem i $ \ !elemVal ->
+                edhValueJson ets elemVal $ \ !elemJsonStr ->
+                  go (i -1) $ elemJsonStr : elemJsonStrs
 
     -- TODO impl. this following:
     --      https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Series.describe.html
