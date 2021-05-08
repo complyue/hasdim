@@ -472,7 +472,7 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
                   ("__desc__", EdhMethod, wrapHostProc colDescProc),
                   ("__json__", EdhMethod, wrapHostProc colJsonProc),
-                  ( "==",
+                  ( "(==)",
                     EdhMethod,
                     wrapHostProc $
                       colCmpProc $ \case
