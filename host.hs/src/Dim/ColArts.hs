@@ -6,6 +6,7 @@ import Control.Concurrent.STM
 import qualified Data.ByteString.Internal as B
 import Data.Dynamic
 import Data.Lossless.Decimal as D
+import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T
 import Dim.Column
@@ -1304,41 +1305,19 @@ arangeProc
   !ets =
     castObjectStore dto >>= \case
       Nothing -> throwEdh ets UsageError "invalid dtype"
-      Just (_, !dt) -> case edhUltimate rngSpec of
-        EdhPair
-          (EdhPair (EdhDecimal !startN) (EdhDecimal !stopN))
-          (EdhDecimal stepN) ->
-            case D.decimalToInteger startN of
-              Just !start -> case D.decimalToInteger stopN of
-                Just !stop -> case D.decimalToInteger stepN of
-                  Just !step ->
-                    createRangeCol
-                      dt
-                      (fromInteger start)
-                      (fromInteger stop)
-                      (fromInteger step)
-                  _ -> throwEdh ets UsageError "step is not an integer"
-                _ -> throwEdh ets UsageError "stop is not an integer"
-              _ -> throwEdh ets UsageError "start is not an integer"
-        EdhPair (EdhDecimal !startN) (EdhDecimal !stopN) ->
-          case D.decimalToInteger startN of
-            Just !start -> case D.decimalToInteger stopN of
-              Just !stop ->
-                createRangeCol dt (fromInteger start) (fromInteger stop) $
-                  if stop >= start then 1 else -1
-              _ -> throwEdh ets UsageError "stop is not an integer"
-            _ -> throwEdh ets UsageError "start is not an integer"
-        EdhDecimal !stopN -> case D.decimalToInteger stopN of
-          Just !stop ->
-            createRangeCol dt 0 (fromInteger stop) $
-              if stop >= 0 then 1 else -1
-          _ -> throwEdh ets UsageError "stop is not an integer"
-        !badRngSpec -> edhValueRepr ets badRngSpec $ \ !rngRepr ->
+      Just (_, !dt) -> parseEdhIndex ets (edhUltimate rngSpec) $ \case
+        Right (EdhIndex !stop)
+          | stop >= 0 -> createRangeCol dt 0 stop 1
+        Right (EdhSlice !start (Just !stopN) !step) -> do
+          let !startN = fromMaybe 0 start
+          createRangeCol dt (fromMaybe 0 start) stopN $
+            fromMaybe (if stopN >= startN then 1 else -1) step
+        Left !err -> edhValueDesc ets rngSpec $ \ !rngDesc ->
           throwEdh ets UsageError $
-            "invalid range of "
-              <> edhTypeNameOf badRngSpec
-              <> ": "
-              <> rngRepr
+            "invalid range " <> rngDesc <> " - " <> err
+        _ -> edhValueDesc ets rngSpec $ \ !rngDesc ->
+          throwEdh ets UsageError $
+            "invalid range " <> rngDesc
     where
       createRangeCol :: DataType -> Int -> Int -> Int -> STM ()
       createRangeCol !dt !start !stop !step =
