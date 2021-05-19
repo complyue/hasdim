@@ -93,7 +93,22 @@ data Column where
   Column :: (Typeable t, ManagedColumn t) => t -> Column
 
 columnCapacity :: Column -> STM Int
-columnCapacity (Column !col) = flatArrayCapacity <$> view'column'data col
+columnCapacity (Column !mcol) = flatArrayCapacity <$> view'column'data mcol
+
+columnDataType :: Column -> DataType
+columnDataType (Column !mcol) = data'type'of'column mcol
+
+viewColumnData :: Column -> STM FlatArray
+viewColumnData (Column !mcol) = view'column'data mcol
+
+readColumnLength :: Column -> STM Int
+readColumnLength (Column !mcol) = read'column'length mcol
+
+growColumnCapacity :: Column -> Int -> (FlatArray -> STM ()) -> EdhTx
+growColumnCapacity (Column !mcol) = grow'column'capacity mcol
+
+markColumnLength :: Column -> Int -> STM () -> EdhTx
+markColumnLength (Column !mcol) = mark'column'length mcol
 
 unsafeReadColumnCell ::
   EdhThreadState -> Column -> Int -> (EdhValue -> STM ()) -> STM ()
