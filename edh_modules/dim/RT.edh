@@ -202,7 +202,7 @@ export {
      #}
     method __init__(
       capacity, length= None, dtype as _ = float64,
-      ***_ # allow/ignore arbitrary ctor args for descendant classes
+      *** # allow/ignore arbitrary ctor args for descendant classes
     ) pass
 
     # Respond to `cap()` by returning capacity of this column object
@@ -406,7 +406,7 @@ export {
      #}
     method __init__(
       capacity, row'count= None, **columns,
-      ***_ # allow/ignore arbitrary ctor args for descendant classes
+      *** # allow/ignore arbitrary ctor args for descendant classes
     ) pass
 
     # Respond to `cap()` by returning capacity of this table object
@@ -476,7 +476,7 @@ export {
      #}
     method __init__(
       dataDir, dataPath, dtype as _ = None, shape as _ = None,
-      ***_ # allow/ignore arbitrary ctor args for descendant classes
+      *** # allow/ignore arbitrary ctor args for descendant classes
     ) pass
 
     # Respond to `len()` by returning valid data length of this dba object
