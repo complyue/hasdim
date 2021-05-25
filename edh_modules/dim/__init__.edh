@@ -14,4 +14,6 @@ export {
     **
   ) 'dim/RT'
 
+  import * './ops'
+
 }

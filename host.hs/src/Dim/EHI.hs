@@ -160,6 +160,39 @@ installDimBatteries !world = do
       exit
 
   void $
+    installEdhModule world "dim/primitive/ops" $ \ !ets !exit -> do
+      let !moduScope = contextScope $ edh'context ets
+
+      !moduArts0 <-
+        sequence $
+          [ (AttrByName nm,) <$> mkHostProc moduScope mc nm hp
+            | (mc, nm, hp) <-
+                [ (EdhMethod, "fold", wrapHostProc foldOpProc),
+                  (EdhMethod, "scan", wrapHostProc scanOpProc)
+                ]
+          ]
+
+      !moduArts1 <-
+        sequence
+          [ (AttrByName "add",) . EdhObject <$> edhWrapHostValue ets addOp,
+            (AttrByName "add'valid",) . EdhObject
+              <$> edhWrapHostValue ets addValidOp,
+            (AttrByName "multiply",) . EdhObject <$> edhWrapHostValue ets mulOp,
+            (AttrByName "multiply'valid",) . EdhObject
+              <$> edhWrapHostValue ets mulValidOp
+          ]
+
+      let !moduArts = moduArts0 ++ moduArts1
+
+      !artsDict <-
+        EdhDict
+          <$> createEdhDict [(attrKeyValue k, v) | (k, v) <- moduArts]
+      flip iopdUpdate (edh'scope'entity moduScope) $
+        [(k, v) | (k, v) <- moduArts]
+          ++ [(AttrByName "__exports__", artsDict)]
+      exit
+
+  void $
     installEdhModule world "dim/RT" $ \ !ets !exit -> do
       let !dtypesModuStore = case edh'obj'store moduDtypes of
             HashStore !hs -> hs

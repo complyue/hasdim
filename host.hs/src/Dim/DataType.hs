@@ -535,6 +535,20 @@ data FlatOp where
         FlatArray ->
         (FlatArray -> STM ()) ->
         STM (),
+      flat'op'fold ::
+        EdhThreadState ->
+        FlatArray ->
+        Dynamic ->
+        EdhValue ->
+        (EdhValue -> STM ()) ->
+        STM (),
+      flat'op'scan ::
+        EdhThreadState ->
+        FlatArray ->
+        Dynamic ->
+        EdhValue ->
+        (FlatArray -> STM ()) ->
+        STM (),
       flat'op'vectorized ::
         EdhThreadState ->
         FlatArray ->
@@ -620,6 +634,8 @@ deviceDataOperations =
   FlatOp
     vecExtractBool
     vecExtractFancy
+    foldOp
+    scanOp
     vecOp
     elemOp
     vecInp
@@ -688,6 +704,45 @@ deviceDataOperations =
                   <> T.pack (show cap)
             Right !rtnAry -> exit rtnAry
     vecExtractFancy _ _ _ _ = error "bug: not a device array"
+    -- fold operation, returning the cumulated scalar
+    foldOp !ets (DeviceArray !cap !fp) !dop !v !exit =
+      case fromDynamic dop of
+        Nothing -> error "bug: dtype op type mismatch"
+        Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv -> do
+          !rv <- unsafeIOToSTM $
+            withForeignPtr (castForeignPtr fp) $
+              \(p :: Ptr a) -> do
+                let go i cv
+                      | i >= cap =
+                        return cv
+                    go i cv = do
+                      !ev <- peekElemOff p i
+                      let !nv = op cv ev
+                      go (i + 1) nv
+                go 0 sv
+          toEdh ets rv exit
+    foldOp _ _ _ _ _ = error "bug: not a device array"
+    -- scan operation, yielding a new array
+    scanOp !ets (DeviceArray !cap !fp) !dop !v !exit =
+      case fromDynamic dop of
+        Nothing -> error "bug: dtype op type mismatch"
+        Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
+          (exit =<<) $
+            unsafeIOToSTM $
+              withForeignPtr (castForeignPtr fp) $
+                \(p :: Ptr a) -> do
+                  !rp <- callocArray cap
+                  !rfp <- newForeignPtr finalizerFree rp
+                  let go i _cv
+                        | i >= cap =
+                          return $ DeviceArray cap rfp
+                      go i cv = do
+                        !ev <- peekElemOff p i
+                        let !nv = op cv ev
+                        pokeElemOff rp i nv
+                        go (i + 1) nv
+                  go 0 sv
+    scanOp _ _ _ _ _ = error "bug: not a device array"
     -- vectorized operation, yielding a new array
     vecOp !ets (DeviceArray !cap !fp) !dop !v !exit =
       case fromDynamic dop of
@@ -961,6 +1016,8 @@ hostDataOperations !def'val =
   FlatOp
     vecExtractBool
     vecExtractFancy
+    foldOp
+    scanOp
     vecOp
     elemOp
     vecInp
@@ -1030,6 +1087,38 @@ hostDataOperations !def'val =
                     <> T.pack (show cap)
               Right !rtnAry -> exit rtnAry
     vecExtractFancy _ _ _ _ = error "bug: not a host array"
+    -- fold operation, returning the cumulated scalar
+    foldOp !ets (HostArray !cap !ha'') !dop !v !exit = case cast ha'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector a) -> case fromDynamic dop of
+        Nothing -> error "bug: dtype op type mismatch"
+        Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv -> do
+          !rv <- unsafeIOToSTM $ do
+            let go i cv | i >= cap = return cv
+                go i cv = do
+                  !ev <- MV.unsafeRead ha i
+                  let !nv = op cv ev
+                  go (i + 1) nv
+            go 0 sv
+          toEdh ets rv exit
+    foldOp _ _ _ _ _ = error "bug: not a host array"
+    -- scan operation, yielding a new array
+    scanOp !ets (HostArray !cap !ha'') !dop !v !exit = case cast ha'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector a) -> case fromDynamic dop of
+        Nothing -> error "bug: dtype op type mismatch"
+        Just (op :: a -> a -> a) -> fromEdh ets v $ \ !sv ->
+          (exit =<<) $
+            unsafeIOToSTM $ do
+              !ha' <- MV.unsafeNew cap
+              let go i _cv | i >= cap = return $ HostArray cap ha'
+                  go i cv = do
+                    !ev <- MV.unsafeRead ha i
+                    let !nv = op cv ev
+                    MV.unsafeWrite ha' i nv
+                    go (i + 1) nv
+              go 0 sv
+    scanOp _ _ _ _ _ = error "bug: not a host array"
     -- vectorized operation, yielding a new array
     vecOp !ets (HostArray !cap !ha'') !dop !v !exit = case cast ha'' of
       Nothing -> error "bug: host array dtype mismatch"
@@ -1296,6 +1385,8 @@ edhDataOperations !def'val =
   FlatOp
     vecExtractBool
     vecExtractFancy
+    foldOp
+    scanOp
     vecOp
     elemOp
     vecInp
@@ -1358,6 +1449,38 @@ edhDataOperations !def'val =
                       go (i + 1)
             go 0
     vecExtractFancy _ _ _ _ = error "bug: not an Edh array"
+    -- fold operation, returning the cumulated scalar
+    foldOp !ets (HostArray !cap !ha'') !dop !v !exit = case cast ha'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector EdhValue) -> case fromDynamic dop of
+        Nothing -> error "bug: dtype op type mismatch"
+        Just (op :: EdhValue -> EdhValue -> EdhHostProc) -> do
+          !ha' <- unsafeIOToSTM $ MV.unsafeNew cap
+          let go i cv | i >= cap = exit cv
+              go i cv = do
+                !ev <- unsafeIOToSTM $ MV.unsafeRead ha i
+                runEdhTx ets $
+                  op cv ev $ \ !nv _ets -> do
+                    unsafeIOToSTM $ MV.unsafeWrite ha' i nv
+                    go (i + 1) nv
+          go 0 v
+    foldOp _ _ _ _ _ = error "bug: not an Edh array"
+    -- scan operation, yielding a new array
+    scanOp !ets (HostArray !cap !ha'') !dop !v !exit = case cast ha'' of
+      Nothing -> error "bug: host array dtype mismatch"
+      Just (ha :: MV.IOVector EdhValue) -> case fromDynamic dop of
+        Nothing -> error "bug: dtype op type mismatch"
+        Just (op :: EdhValue -> EdhValue -> EdhHostProc) -> do
+          !ha' <- unsafeIOToSTM $ MV.unsafeNew cap
+          let go i _cv | i >= cap = exit $ HostArray cap ha'
+              go i cv = do
+                !ev <- unsafeIOToSTM $ MV.unsafeRead ha i
+                runEdhTx ets $
+                  op cv ev $ \ !nv _ets -> do
+                    unsafeIOToSTM $ MV.unsafeWrite ha' i nv
+                    go (i + 1) nv
+          go 0 v
+    scanOp _ _ _ _ _ = error "bug: not an Edh array"
     -- vectorized operation, yielding a new array
     vecOp !ets (HostArray !cap !ha'') !dop !v !exit = case cast ha'' of
       Nothing -> error "bug: host array dtype mismatch"
