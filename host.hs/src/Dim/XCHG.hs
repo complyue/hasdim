@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Dim.XCHG where
 
@@ -24,6 +25,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Foreign (Bits, Int8, Storable)
 import Language.Edh.EHI
+import System.Random
 import Prelude
 
 class EdhXchg t where
@@ -88,6 +90,21 @@ instance {-# OVERLAPPABLE #-} EdhXchg Float where
 instance {-# OVERLAPPABLE #-} (Integral a) => EdhXchg a where
   toEdh _ets !n !exit = exit $ EdhDecimal $ fromIntegral n
   fromEdh !ets !v !exit = coerceEdhToIntegral ets v exit
+
+instance Random Decimal where
+  -- assuming not too many bits are needed with host decimal arrays
+  -- device arrays can always be used to workaround the lack of random bits
+  randomR (l, u) g =
+    let (f, g') =
+          randomR
+            ( (fromRational $ toRational l) :: Float,
+              (fromRational $ toRational u) :: Float
+            )
+            g
+     in (fromRational $ toRational f, g')
+  random g =
+    let (f :: Float, g') = random g
+     in (fromRational $ toRational f, g')
 
 coerceEdhToFloat ::
   (RealFloat a) => EdhThreadState -> EdhValue -> (a -> STM ()) -> STM ()

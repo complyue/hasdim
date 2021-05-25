@@ -36,6 +36,15 @@ export {
    #}
   method arange( rangeSpec, dtype as _ = intp ) pass
 
+  {##
+   # Create a random array with the specified size (both len and cap)
+
+All elements will be in the specified range.
+
+TODO both bounds of the range are always treated as closed bound for now
+   #}
+  method random( size, rangeSpec= 0..1, dtype as _ = float64 ) pass
+
   where :: ( bool'index!Column ) -> Column
   {##
    # Similar to Numpy's `where()`, but limited to bool index input as currently
@@ -504,36 +513,36 @@ export {
      #}
     method asColumn() pass
 
+    {##
+     # Directory containing the data file backing this dba
+     #}
+    property$ method dir() pass
+
+    {##
+     # Relative file name (within the `dir`) of the data file backing this dba
+     #}
+    property$ method path() pass
+
+    {##
+     # Data type identifier of this dba
+     #}
+    property$ method dtype() pass
+
+    {##
+     # Flat size of all dimensions
+     #}
+    property$ method size() pass
+
+    {##
+     # Shape (i.e. dimensions) of this dba
+     #}
+    property$ method shape() pass
+
+    {##
+     # Valid data length of the 1st dimension
+     #}
+    property$ method len1d() pass
+
   }
-
-  {##
-   # Directory containing the data file backing this dba
-   #}
-  property$ method dir() pass
-
-  {##
-   # Relative file name (within the `dir`) of the data file backing this dba
-   #}
-  property$ method path() pass
-
-  {##
-   # Data type identifier of this dba
-   #}
-  property$ method dtype() pass
-
-  {##
-   # Flat size of all dimensions
-   #}
-  property$ method size() pass
-
-  {##
-   # Shape (i.e. dimensions) of this dba
-   #}
-  property$ method shape() pass
-
-  {##
-   # Valid data length of the 1st dimension
-   #}
-  property$ method len1d() pass
 
 }

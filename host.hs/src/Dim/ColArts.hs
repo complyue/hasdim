@@ -1310,7 +1310,7 @@ arangeProc
           | stop >= 0 -> createRangeCol dt 0 stop 1
         Right (EdhSlice !start (Just !stopN) !step) -> do
           let !startN = fromMaybe 0 start
-          createRangeCol dt (fromMaybe 0 start) stopN $
+          createRangeCol dt startN stopN $
             fromMaybe (if stopN >= startN then 1 else -1) step
         Left !err -> edhValueDesc ets rngSpec $ \ !rngDesc ->
           throwEdh ets UsageError $
@@ -1326,9 +1326,51 @@ arangeProc
             !csv <- newTVar cs
             !clv <- newTVar $ flatArrayCapacity cs
             let !col = Column $ InMemColumn dt csv clv
-            edhCreateHostObj colClass col
-              >>= exitEdh ets exit
-                . EdhObject
+            edhCreateHostObj colClass col >>= exitEdh ets exit . EdhObject
+
+randomProc ::
+  Object ->
+  Object ->
+  "size" !: Int ->
+  "rangeSpec" ?: EdhValue ->
+  "dtype" ?: Object ->
+  EdhHostProc
+randomProc
+  !defaultDt
+  !colClass
+  (mandatoryArg -> !size)
+  (defaultArg (EdhDecimal 1) -> !rngSpec)
+  (defaultArg defaultDt -> !dto)
+  !exit
+  !ets =
+    castObjectStore dto >>= \case
+      Nothing -> throwEdh ets UsageError "invalid dtype"
+      Just (_, !dt) -> case edhUltimate rngSpec of
+        EdhRange !lower !upper ->
+          createRandomCol dt (edhBoundValue lower) (edhBoundValue upper)
+        _ -> parseEdhIndex ets (edhUltimate rngSpec) $ \case
+          Right (EdhIndex !stop) ->
+            createRandomCol dt (EdhDecimal 0) (EdhDecimal $ fromIntegral stop)
+          Right (EdhSlice !start (Just !stopN) Nothing) ->
+            createRandomCol
+              dt
+              (EdhDecimal $ fromIntegral $ fromMaybe 0 start)
+              (EdhDecimal $ fromIntegral stopN)
+          Left !err -> edhValueDesc ets rngSpec $ \ !rngDesc ->
+            throwEdh ets UsageError $
+              "invalid random range " <> rngDesc <> " - " <> err
+          _ -> edhValueDesc ets rngSpec $ \ !rngDesc ->
+            throwEdh ets UsageError $
+              "invalid random range " <> rngDesc
+    where
+      createRandomCol :: DataType -> EdhValue -> EdhValue -> STM ()
+      createRandomCol !dt !lower !upper =
+        resolveNumDataType ets (data'type'identifier dt) $ \ !ndt ->
+          flat'new'random'array ndt ets size lower upper $ \ !cs -> do
+            !csv <- newTVar cs
+            !clv <- newTVar $ flatArrayCapacity cs
+            let !col = Column $ InMemColumn dt csv clv
+            edhCreateHostObj colClass col >>= exitEdh ets exit . EdhObject
 
 -- TODO impl. `linspace` following:
 --      https://numpy.org/doc/stable/reference/generated/numpy.linspace.html

@@ -7,7 +7,7 @@ module Dim.DataType where
 
 -- import           Debug.Trace
 
-import Control.Concurrent.STM (STM)
+import Control.Concurrent.STM
 import Control.Monad
 import Data.Dynamic
 import Data.Text (Text)
@@ -22,6 +22,7 @@ import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import GHC.Conc (unsafeIOToSTM)
 import Language.Edh.EHI
 import System.IO.Unsafe (unsafePerformIO)
+import System.Random
 import Type.Reflection
 import Prelude
 
@@ -1676,6 +1677,13 @@ data NumDataType where
         Int ->
         (FlatArray -> STM ()) ->
         STM (),
+      flat'new'random'array ::
+        EdhThreadState ->
+        Int ->
+        EdhValue ->
+        EdhValue ->
+        (FlatArray -> STM ()) ->
+        STM (),
       flat'new'nonzero'array ::
         EdhThreadState ->
         FlatArray ->
@@ -1685,8 +1693,10 @@ data NumDataType where
     NumDataType
 
 deviceDataNumbering ::
-  forall a. (Num a, EdhXchg a, Storable a, Typeable a) => NumDataType
-deviceDataNumbering = NumDataType rangeCreator nonzeroCreator
+  forall a.
+  (Eq a, Ord a, Num a, Random a, EdhXchg a, Storable a, Typeable a) =>
+  NumDataType
+deviceDataNumbering = NumDataType rangeCreator randomCreator nonzeroCreator
   where
     rangeCreator _ !start !stop _ !exit
       | stop == start =
@@ -1694,8 +1704,8 @@ deviceDataNumbering = NumDataType rangeCreator nonzeroCreator
     rangeCreator !ets !start !stop !step !exit =
       if (stop > start && step <= 0) || (stop < start && step >= 0)
         then throwEdh ets UsageError "range is not converging"
-        else (exit =<<) $
-          unsafeIOToSTM $ do
+        else runEdhTx ets $
+          edhContIO $ do
             let (q, r) = quotRem (stop - start) step
                 !len = if r == 0 then abs q else 1 + abs q
             !p <- callocArray @a len
@@ -1708,30 +1718,54 @@ deviceDataNumbering = NumDataType rangeCreator nonzeroCreator
                       pokeElemOff p i $ fromIntegral n
                       fillRng (n + step) (i + 1)
             fillRng start 0
-            return $ DeviceArray len fp
-    nonzeroCreator _ (DeviceArray !mcap !mfp) !exit =
-      (exit =<<) $
-        unsafeIOToSTM $
-          withForeignPtr (castForeignPtr mfp) $
-            \(mp :: Ptr YesNo) -> do
-              !rp <- callocArray @Int mcap
-              !rfp <- newForeignPtr finalizerFree rp
-              let go i ri
-                    | i >= mcap =
-                      return (DeviceArray mcap rfp, ri)
-                  go i ri = do
-                    !mv <- peekElemOff mp i
-                    if mv /= 0
-                      then do
-                        pokeElemOff rp ri $ fromIntegral i
-                        go (i + 1) (ri + 1)
-                      else go (i + 1) ri
-              go 0 0
+            atomically $ exit $ DeviceArray len fp
+    randomCreator !ets !len !lowerValue !upperValue !exit =
+      fromEdh ets lowerValue $ \ !lower -> fromEdh ets upperValue $ \ !upper ->
+        if lower == upper
+          then throwEdh ets UsageError "random range is zero-width"
+          else do
+            let (!lower', !upper') =
+                  if lower < upper then (lower, upper) else (upper, lower)
+            runEdhTx ets $
+              edhContIO $ do
+                !p <- callocArray @a len
+                !fp <- newForeignPtr finalizerFree p
+                let fillRnd :: Int -> IO ()
+                    fillRnd !i =
+                      if i < 0
+                        then return ()
+                        else do
+                          !rv <- randomRIO (lower', upper')
+                          pokeElemOff p i rv
+                          fillRnd $ i - 1
+                fillRnd $ len - 1
+                atomically $ exit $ DeviceArray len fp
+    nonzeroCreator !ets (DeviceArray !mcap !mfp) !exit = runEdhTx ets $
+      edhContIO $
+        withForeignPtr (castForeignPtr mfp) $
+          \(mp :: Ptr YesNo) -> do
+            !rp <- callocArray @Int mcap
+            !rfp <- newForeignPtr finalizerFree rp
+            let go i ri
+                  | i >= mcap =
+                    atomically $ exit (DeviceArray mcap rfp, ri)
+                go i ri = do
+                  !mv <- peekElemOff mp i
+                  if mv /= 0
+                    then do
+                      pokeElemOff rp ri $ fromIntegral i
+                      go (i + 1) (ri + 1)
+                    else go (i + 1) ri
+            go 0 0
     nonzeroCreator _ _ _ = error "bug: not a device array"
 
 hostDataNumbering ::
-  forall a. (Num a, EdhXchg a, Typeable a) => a -> NumDataType
-hostDataNumbering !def'val = NumDataType rangeCreator nonzeroCreator
+  forall a.
+  (Eq a, Ord a, Num a, Random a, EdhXchg a, Typeable a) =>
+  a ->
+  NumDataType
+hostDataNumbering !def'val =
+  NumDataType rangeCreator randomCreator nonzeroCreator
   where
     rangeCreator _ !start !stop _ !exit
       | stop == start =
@@ -1739,8 +1773,8 @@ hostDataNumbering !def'val = NumDataType rangeCreator nonzeroCreator
     rangeCreator !ets !start !stop !step !exit =
       if (stop > start && step <= 0) || (stop < start && step >= 0)
         then throwEdh ets UsageError "range is not converging"
-        else (exit =<<) $
-          unsafeIOToSTM $ do
+        else runEdhTx ets $
+          edhContIO $ do
             let (q, r) = quotRem (stop - start) step
                 !len = if r == 0 then abs q else 1 + abs q
             !ha <- MV.unsafeNew len
@@ -1752,37 +1786,56 @@ hostDataNumbering !def'val = NumDataType rangeCreator nonzeroCreator
                       MV.unsafeWrite ha i (fromIntegral n :: a)
                       fillRng (n + step) (i + 1)
             fillRng start 0
-            return $ HostArray len ha
-    nonzeroCreator _ (DeviceArray !mcap !mfp) !exit =
-      (exit =<<) $
-        unsafeIOToSTM $
-          withForeignPtr (castForeignPtr mfp) $
-            \(mp :: Ptr YesNo) -> do
-              !ha <- MV.unsafeNew mcap
-              let go i ri | i >= mcap = do
-                    MV.set (MV.unsafeSlice ri (mcap - ri) ha) def'val
-                    return (HostArray mcap ha, ri)
-                  go i ri = do
-                    !mv <- peekElemOff mp i
-                    if mv /= 0
-                      then do
-                        MV.unsafeWrite ha ri (fromIntegral i :: a)
-                        go (i + 1) (ri + 1)
-                      else go (i + 1) ri
-              go 0 0
+            atomically $ exit $ HostArray len ha
+    randomCreator !ets !len !lowerValue !upperValue !exit =
+      fromEdh ets lowerValue $
+        \(lower :: a) -> fromEdh ets upperValue $ \(upper :: a) ->
+          if lower == upper
+            then throwEdh ets UsageError "random range is zero-width"
+            else do
+              let (!lower', !upper') =
+                    if lower < upper then (lower, upper) else (upper, lower)
+              runEdhTx ets $
+                edhContIO $ do
+                  !ha <- MV.unsafeNew len
+                  let fillRnd :: Int -> IO ()
+                      fillRnd !i =
+                        if i < 0
+                          then return ()
+                          else do
+                            !rv <- randomRIO (lower', upper')
+                            MV.unsafeWrite ha i rv
+                            fillRnd $ i - 1
+                  fillRnd $ len - 1
+                  atomically $ exit $ HostArray len ha
+    nonzeroCreator !ets (DeviceArray !mcap !mfp) !exit = runEdhTx ets $
+      edhContIO $
+        withForeignPtr (castForeignPtr mfp) $
+          \(mp :: Ptr YesNo) -> do
+            !ha <- MV.unsafeNew mcap
+            let go i ri | i >= mcap = do
+                  MV.set (MV.unsafeSlice ri (mcap - ri) ha) def'val
+                  atomically $ exit (HostArray mcap ha, ri)
+                go i ri = do
+                  !mv <- peekElemOff mp i
+                  if mv /= 0
+                    then do
+                      MV.unsafeWrite ha ri (fromIntegral i :: a)
+                      go (i + 1) (ri + 1)
+                    else go (i + 1) ri
+            go 0 0
     nonzeroCreator _ _ _ = error "bug: not a host array"
 
 edhDataNumbering :: NumDataType
-edhDataNumbering = NumDataType rangeCreator nonzeroCreator
+edhDataNumbering = NumDataType rangeCreator randomCreator nonzeroCreator
   where
     rangeCreator _ !start !stop _ !exit
-      | stop == start =
-        exit (emptyHostArray @EdhValue)
+      | stop == start = exit (emptyHostArray @EdhValue)
     rangeCreator !ets !start !stop !step !exit =
       if (stop > start && step <= 0) || (stop < start && step >= 0)
         then throwEdh ets UsageError "range is not converging"
-        else (exit =<<) $
-          unsafeIOToSTM $ do
+        else runEdhTx ets $
+          edhContIO $ do
             let (q, r) = quotRem (stop - start) step
                 !len = if r == 0 then abs q else 1 + abs q
             !ha <- MV.unsafeNew len
@@ -1795,23 +1848,46 @@ edhDataNumbering = NumDataType rangeCreator nonzeroCreator
                         EdhDecimal (fromIntegral n :: Decimal)
                       fillRng (n + step) (i + 1)
             fillRng start 0
-            return $ HostArray len ha
-    nonzeroCreator _ (DeviceArray !mcap !mfp) !exit =
-      (exit =<<) $
-        unsafeIOToSTM $
-          withForeignPtr (castForeignPtr mfp) $
-            \(mp :: Ptr YesNo) -> do
-              !ha <- MV.unsafeNew mcap
-              let go i ri | i >= mcap = do
-                    MV.set (MV.unsafeSlice ri (mcap - ri) ha) edhNA
-                    return (HostArray mcap ha, ri)
-                  go i ri = do
-                    !mv <- peekElemOff mp i
-                    if mv /= 0
-                      then do
-                        MV.unsafeWrite ha ri $
-                          EdhDecimal (fromIntegral i :: Decimal)
-                        go (i + 1) (ri + 1)
-                      else go (i + 1) ri
-              go 0 0
+            atomically $ exit $ HostArray len ha
+    randomCreator !ets !len !lowerValue !upperValue !exit =
+      -- assuming not too many bits are needed with Edh decimal arrays
+      -- device arrays can always be used to workaround the lack of random bits
+      fromEdh ets lowerValue $ \(lower :: Float) ->
+        fromEdh ets upperValue $ \(upper :: Float) ->
+          if lower == upper
+            then throwEdh ets UsageError "random range is zero-width"
+            else do
+              let (!lower', !upper') =
+                    if lower < upper then (lower, upper) else (upper, lower)
+              runEdhTx ets $
+                edhContIO $ do
+                  !ha <- MV.unsafeNew len
+                  let fillRnd :: Int -> IO ()
+                      fillRnd !i =
+                        if i < 0
+                          then return ()
+                          else do
+                            !rv <- randomRIO (lower', upper')
+                            MV.unsafeWrite ha i $
+                              EdhDecimal $ fromRational $ toRational rv
+                            fillRnd $ i - 1
+                  fillRnd $ len - 1
+                  atomically $ exit $ HostArray len ha
+    nonzeroCreator !ets (DeviceArray !mcap !mfp) !exit = runEdhTx ets $
+      edhContIO $
+        withForeignPtr (castForeignPtr mfp) $
+          \(mp :: Ptr YesNo) -> do
+            !ha <- MV.unsafeNew mcap
+            let go i ri | i >= mcap = do
+                  MV.set (MV.unsafeSlice ri (mcap - ri) ha) edhNA
+                  atomically $ exit (HostArray mcap ha, ri)
+                go i ri = do
+                  !mv <- peekElemOff mp i
+                  if mv /= 0
+                    then do
+                      MV.unsafeWrite ha ri $
+                        EdhDecimal (fromIntegral i :: Decimal)
+                      go (i + 1) (ri + 1)
+                    else go (i + 1) ri
+            go 0 0
     nonzeroCreator _ _ _ = error "bug: not a host array"
