@@ -525,6 +525,7 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("__mark__", EdhMethod, wrapHostProc colMarkLenProc),
                   ("([])", EdhMethod, wrapHostProc colIdxReadProc),
                   ("([=])", EdhMethod, wrapHostProc colIdxWriteProc),
+                  ("copy", EdhMethod, wrapHostProc colCopyProc),
                   ("__blob__", EdhMethod, wrapHostProc colBlobProc),
                   ("__repr__", EdhMethod, wrapHostProc colReprProc),
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
@@ -883,6 +884,12 @@ createColumnClass !defaultDt !clsOuterScope =
     colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
     colIdxWriteProc !idxVal !other !exit !ets =
       withThisHostObj ets $ \ !col -> idxAssignColumn col idxVal other exit ets
+
+    colCopyProc :: EdhHostProc
+    colCopyProc !exit !ets =
+      copyColumn ets thatCol $ exitEdh ets exit . EdhObject
+      where
+        !thatCol = edh'scope'that $ contextScope $ edh'context ets
 
     colCmpProc :: (Ordering -> Bool) -> EdhValue -> EdhHostProc
     colCmpProc !cmp !other !exit !ets = withThisHostObj ets $ \ !col ->

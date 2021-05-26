@@ -1,0 +1,73 @@
+{##
+ # Resemble various Numpy array constructors
+ #}
+
+import * 'dim/dtypes'
+
+import (
+  Table, Column,
+  arange, random, where,
+  pi,
+  exp, log, sqrt,
+  sin, cos, tan, asin, acos, atan,
+  sinh, cosh, tanh, asinh, acosh, atanh,
+  DbArray,
+  **
+) 'dim/RT'
+
+import * 'dim/primitive/ops'
+
+import * './ops'
+
+
+export {
+
+  method copy( col ) col.copy()
+
+  method empty(size, dtype as dt = float64, ) {
+    return Column(capacity= size, dtype= dt, )
+  }
+
+
+  # todo more efficient impls.
+
+
+  method full(size, fill_value, dtype as dt = float64, ) {
+    col = Column(capacity= size, dtype= dt, )
+    col[Any] = fill_value
+    return col
+  }
+
+  method full_like( col', fill_value, ) {
+    col = col'.copy()
+    col[Any] = fill_value
+    return col
+  }
+
+
+  method zeros(size, dtype as dt = float64, ) {
+    col = Column(capacity= size, dtype= dt, )
+    col[Any] = 0
+    return col
+  }
+
+  method zeros_like( col' ) {
+    col = col'.copy()
+    col[Any] = 0
+    return col
+  }
+
+
+  method ones(size, dtype as dt = float64, ) {
+    col = Column(capacity= size, dtype= dt, )
+    col[Any] = 1
+    return col
+  }
+
+  method ones_like( col' ) {
+    col = col'.copy()
+    col[Any] = 1
+    return col
+  }
+
+}

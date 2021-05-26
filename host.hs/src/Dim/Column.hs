@@ -153,7 +153,7 @@ sliceColumn !ets !thatCol !start !stop !step !exit =
       throwEdh
         ets
         EvalError
-        "bug: not a column object passed to unsafeSliceColumn"
+        "bug: not a column object passed to sliceColumn"
     Just (!thisCol, Column !col) ->
       if stop >= start && step == 1
         then runEdhTx ets $
@@ -178,6 +178,30 @@ sliceColumn !ets !thatCol !start !stop !step !exit =
                 else
                   edhCreateHostObj (edh'obj'class thisCol) colNew'
                     >>= \ !newColObj -> exit ccNew clNew newColObj
+
+copyColumn ::
+  EdhThreadState ->
+  Object ->
+  (Object -> STM ()) ->
+  STM ()
+copyColumn !ets !thatCol !exit =
+  castObjectStore thatCol >>= \case
+    Nothing ->
+      throwEdh
+        ets
+        EvalError
+        "bug: not a column object passed to copyColumn"
+    Just (!thisCol, Column !col) -> do
+      !clLen <- read'column'length col
+      runEdhTx ets $
+        copy'column'slice col 0 clLen 1 $
+          \ !cloneChildren colNew -> do
+            if cloneChildren
+              then edhCloneHostObj ets thisCol thatCol colNew $
+                \ !newColObj -> exit newColObj
+              else
+                edhCreateHostObj (edh'obj'class thisCol) colNew
+                  >>= \ !newColObj -> exit newColObj
 
 extractColumnBool ::
   EdhThreadState ->

@@ -228,6 +228,9 @@ TODO both bounds of the range are always treated as closed bound for now
     # Respond to indexed assignment to this column object
     method ([=]) ( ix, data_ ) pass
 
+    # Make a copy of this column
+    method copy() pass
+
     # Respond to `blob()` by returning the binary data from this column object
     method __blob__() pass
 
