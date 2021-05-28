@@ -19,16 +19,16 @@ import * './dtypes'
 export {
 
   arange :: (
-    start!int!DecimalType : stop!int!DecimalType : step!int!DecimalType,
-    dtype!ObjectType || None,
+    start!int!Decimal : stop!int!Decimal : step!int!Decimal,
+    dtype!Object || None,
   ) -> Column
   arange :: (
-    start!int!DecimalType : stop!int!DecimalType,
-    dtype!ObjectType || None,
+    start!int!Decimal : stop!int!Decimal,
+    dtype!Object || None,
   ) -> Column
   arange :: (
-    stop!int!DecimalType,
-    dtype!ObjectType || None,
+    stop!int!Decimal,
+    dtype!Object || None,
   ) -> Column
   {##
    # Similar to Numpy's `arange()``, but the range needs to be specified with
@@ -54,7 +54,7 @@ TODO both bounds of the range are always treated as closed bound for now
    #}
   method where( colBoolIdx ) pass
 
-  pi :: ( capacity!int!DecimalType, float!dtype!ObjectType || None ) -> Column
+  pi :: ( capacity!int!Decimal, float!dtype!Object || None ) -> Column
   {##
    # Create a column object with the specified capacity and every element
    # filled with mathematic constant π, per the specified dtype
@@ -198,9 +198,9 @@ TODO both bounds of the range are always treated as closed bound for now
   class Column {
 
     __init__ :: (
-      capacity!int!DecimalType,
-      length!int!DecimalType || None,
-      dtype!ObjectType || None,
+      capacity!int!Decimal,
+      length!int!Decimal || None,
+      dtype!Object || None,
     ) -> nil
     {##
      # Construct a new Column object with specified capacity
@@ -405,8 +405,8 @@ TODO both bounds of the range are always treated as closed bound for now
   class Table {
 
     __init__ :: (
-      capacity!int!DecimalType,
-      row'count!int!DecimalType || None,
+      capacity!int!Decimal,
+      row'count!int!Decimal || None,
       **( column'id= Column, ),
     ) -> nil
     {##
@@ -461,8 +461,8 @@ TODO both bounds of the range are always treated as closed bound for now
   }
 
   DimSpec
-  :=: positive!int!DecimalType
-  || dimName!StringType : positive!int!DecimalType
+  :=: positive!int!Decimal
+  || dimName!String : positive!int!Decimal
   Shape :=: ( *DimSpec, )
 
   {##
@@ -471,9 +471,9 @@ TODO both bounds of the range are always treated as closed bound for now
   class DbArray {
 
     __init__ :: (
-      dataDir!dir!StringType,
-      dataPath!path!StringType,
-      dtype!ObjectType= float64,
+      dataDir!dir!String,
+      dataPath!path!String,
+      dtype!Object= float64,
       shape!Shape= None,
     ) -> nil
     {##
