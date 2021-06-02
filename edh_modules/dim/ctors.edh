@@ -24,16 +24,16 @@ export {
 
   method copy( col ) col.copy()
 
-  method empty(size, dtype as dt = float64, ) {
-    return Column(capacity= size, dtype= dt, )
+  method empty(size, ***apk ) {
+    return Column(capacity= size, ***apk )
   }
 
 
   # todo more efficient impls.
 
 
-  method full(size, fill_value, dtype as dt = float64, ) {
-    col = Column(capacity= size, dtype= dt, )
+  method full(size, fill_value, ***apk ) {
+    col = Column(capacity= size, ***apk )
     col[Any] = fill_value
     return col
   }
@@ -45,8 +45,8 @@ export {
   }
 
 
-  method zeros(size, dtype as dt = float64, ) {
-    col = Column(capacity= size, dtype= dt, )
+  method zeros(size, ***apk ) {
+    col = Column(capacity= size, ***apk )
     col[Any] = 0
     return col
   }
@@ -58,8 +58,8 @@ export {
   }
 
 
-  method ones(size, dtype as dt = float64, ) {
-    col = Column(capacity= size, dtype= dt, )
+  method ones(size, ***apk ) {
+    col = Column(capacity= size, ***apk )
     col[Any] = 1
     return col
   }

@@ -663,7 +663,7 @@ createColumnClass !defaultDt !clsOuterScope =
       _ctorOtherArgs
       !ctorExit
       !etsCtor
-        | ctorCap <= 0 =
+        | ctorCap < 0 =
           throwEdh etsCtor UsageError $
             "column capacity should be a positive interger, not "
               <> T.pack (show ctorCap)
