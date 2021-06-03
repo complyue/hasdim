@@ -12,15 +12,7 @@ import Control.Concurrent.STM (STM)
 -- import           Data.Bits
 
 import Data.Dynamic (Typeable)
-import Data.Lossless.Decimal as D
-  ( Decimal (Decimal),
-    decimalFromScientific,
-    decimalIsInf,
-    decimalIsNaN,
-    decimalToInteger,
-    nan,
-  )
-import Data.Scientific (fromFloatDigits)
+import qualified Data.Lossless.Decimal as D
 import Data.Text (Text)
 import qualified Data.Text as T
 import Foreign (Bits, Int8, Storable)
@@ -64,27 +56,11 @@ instance {-# OVERLAPPABLE #-} EdhXchg Char where
     Nothing -> exit '\0'
 
 instance {-# OVERLAPPABLE #-} EdhXchg Double where
-  toEdh _ets !n !exit =
-    exit $
-      EdhDecimal $
-        if isNaN n
-          then D.nan
-          else
-            if isInfinite n
-              then D.Decimal 0 0 $ if n < 0 then -1 else 1
-              else D.decimalFromScientific $ fromFloatDigits n
+  toEdh _ets !n !exit = exit $ EdhDecimal $ D.decimalFromRealFloat n
   fromEdh !ets !v !exit = coerceEdhToFloat ets v exit
 
 instance {-# OVERLAPPABLE #-} EdhXchg Float where
-  toEdh _ets !n !exit =
-    exit $
-      EdhDecimal $
-        if isNaN n
-          then D.nan
-          else
-            if isInfinite n
-              then D.Decimal 0 0 $ if n < 0 then -1 else 1
-              else D.decimalFromScientific $ fromFloatDigits n
+  toEdh _ets !n !exit = exit $ EdhDecimal $ D.decimalFromRealFloat n
   fromEdh !ets !v !exit = coerceEdhToFloat ets v exit
 
 instance {-# OVERLAPPABLE #-} (Integral a) => EdhXchg a where
