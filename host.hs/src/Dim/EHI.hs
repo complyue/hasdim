@@ -2,6 +2,8 @@
 
 module Dim.EHI
   ( installDimBatteries,
+    withColumnClass,
+    withDtypeClass,
     module Dim.XCHG,
     module Dim.DataType,
     module Dim.Column,
@@ -264,3 +266,15 @@ installDimBatteries !world = do
           ++ [(AttrByName "__exports__", artsDict)]
 
       exit
+
+withColumnClass :: (Object -> EdhTx) -> EdhTx
+withColumnClass !act = importEdhModule "dim/RT" $ \ !moduRT !ets ->
+  lookupEdhObjAttr moduRT (AttrByName "Column") >>= \case
+    (_, EdhObject !clsColumn) -> runEdhTx ets $ act clsColumn
+    _ -> error "bug: dim/RT provides no Column class"
+
+withDtypeClass :: (Object -> EdhTx) -> EdhTx
+withDtypeClass !act = importEdhModule "dim/dtypes" $ \ !moduDtypes !ets ->
+  lookupEdhObjAttr moduDtypes (AttrByName "dtype") >>= \case
+    (_, EdhObject !clsDtype) -> runEdhTx ets $ act clsDtype
+    _ -> error "bug: dim/dtypes provides no dtype class"
