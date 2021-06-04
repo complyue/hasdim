@@ -93,15 +93,31 @@ instance ManagedColumn DbColumn where
   view'column'slice (DbColumn !dba !dbc'offs) !start !stop !exit !ets =
     readTMVar (db'array'store dba) >>= \case
       Left !err -> throwSTM err
-      Right (_shape, !hdr, _dbcs) -> do
+      Right (_shape, !hdr, !dbcs) -> do
         !dba'len <- fromIntegral <$> unsafeIOToSTM (readDbArrayLength hdr)
-        if dbc'offs + stop == dba'len
-          then exit True $ Column $ DbColumn dba $ dbc'offs + start
-          else
-            throwEdh
-              ets
-              UsageError
-              "can only view slice of a disk backed column to its full length"
+        let !dt = db'array'dtype dba
+            !cl = dba'len - dbc'offs
+        if
+            | stop > cl ->
+              throwEdh ets UsageError $
+                "column slice range out of range: "
+                  <> T.pack (show start)
+                  <> ":"
+                  <> T.pack (show stop)
+                  <> " vs "
+                  <> T.pack (show dba'len)
+            | stop == cl ->
+              exit True $ Column $ DbColumn dba $ dbc'offs + start
+            | otherwise -> case dbcs of
+              DeviceArray _cap (fp :: ForeignPtr a) -> do
+                !csvNew <-
+                  newTVar $
+                    DeviceArray @a (stop - start) $
+                      plusForeignPtr fp $ dbc'offs + start
+                !clvNew <- newTVar $ stop - start
+                exit False $
+                  Column $ InMemColumn dt csvNew clvNew
+              HostArray {} -> error "bug: disk backed host array?"
 
   copy'column'slice (DbColumn !dba !dbc'offs) !start !stop !step !exit !ets =
     readTMVar (db'array'store dba) >>= \case
@@ -109,11 +125,11 @@ instance ManagedColumn DbColumn where
       Right (_shape, !hdr, !dbcs) -> do
         !dba'len <- fromIntegral <$> unsafeIOToSTM (readDbArrayLength hdr)
         let !dt = db'array'dtype dba
-            !cs =
+            !cl = dba'len - dbc'offs
+            cs =
               unsafeSliceFlatArray dbcs dbc'offs $
                 flatArrayCapacity dbcs
                   - dbc'offs
-            !cl = dba'len - dbc'offs
 
         if stop < start || start < 0 || stop > cl
           then

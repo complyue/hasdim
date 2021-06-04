@@ -35,7 +35,7 @@ class ManagedColumn t where
   -- called when viewing-slicing is requested for the column
   -- -> Start -> Stop
   -- -> (NotApplicableExit :: STM ())
-  -- -> (Exit :: (CloneChildren? -> NewColumn -> STM ()))
+  -- -> (Exit :: (StayComposed? -> NewColumn -> STM ()))
   -- -> EdhTx
   view'column'slice ::
     t ->
@@ -46,7 +46,7 @@ class ManagedColumn t where
 
   -- called when copying-slicing is requested for the column
   -- -> Start -> Stop -> Step
-  -- -> (CloneChildren? -> NewColumn -> STM ())
+  -- -> (StayComposed? -> NewColumn -> STM ())
   -- -> EdhTx
   copy'column'slice ::
     t ->
@@ -60,7 +60,7 @@ class ManagedColumn t where
   -- for the column
   -- -> MaskColumn
   -- -> (NotApplicableExit :: STM ())
-  -- -> (Exit :: (CloneChildren? -> NewColumn -> STM ()))
+  -- -> (Exit :: (StayComposed? -> NewColumn -> STM ()))
   -- -> EdhTx
   extract'column'bool ::
     t ->
@@ -73,7 +73,7 @@ class ManagedColumn t where
   -- column
   -- -> IndexColumn
   -- -> (NotApplicableExit :: STM ())
-  -- -> (Exit :: (CloneChildren? -> NewColumn -> STM ()))
+  -- -> (Exit :: (StayComposed? -> NewColumn -> STM ()))
   -- -> EdhTx
   extract'column'fancy ::
     t ->
@@ -158,10 +158,10 @@ sliceColumn !ets !thatCol !start !stop !step !exit =
       if stop >= start && step == 1
         then runEdhTx ets $
           view'column'slice col start stop $
-            \ !cloneChildren colNew'@(Column !colNew) -> do
+            \ !stayComposed colNew'@(Column !colNew) -> do
               !ccNew <- columnCapacity colNew'
               !clNew <- read'column'length colNew
-              if cloneChildren
+              if stayComposed
                 then edhCloneHostObj ets thisCol thatCol colNew' $
                   \ !newColObj -> exit ccNew clNew newColObj
                 else
@@ -169,10 +169,10 @@ sliceColumn !ets !thatCol !start !stop !step !exit =
                     >>= \ !newColObj -> exit ccNew clNew newColObj
         else runEdhTx ets $
           copy'column'slice col start stop step $
-            \ !cloneChildren colNew'@(Column !colNew) -> do
+            \ !stayComposed colNew'@(Column !colNew) -> do
               !ccNew <- columnCapacity colNew'
               !clNew <- read'column'length colNew
-              if cloneChildren
+              if stayComposed
                 then edhCloneHostObj ets thisCol thatCol colNew' $
                   \ !newColObj -> exit ccNew clNew newColObj
                 else
@@ -195,8 +195,8 @@ copyColumn !ets !thatCol !exit =
       !clLen <- read'column'length col
       runEdhTx ets $
         copy'column'slice col 0 clLen 1 $
-          \ !cloneChildren colNew -> do
-            if cloneChildren
+          \ !stayComposed colNew -> do
+            if stayComposed
               then edhCloneHostObj ets thisCol thatCol colNew $
                 \ !newColObj -> exit newColObj
               else
@@ -220,9 +220,9 @@ extractColumnBool !ets !thatCol !colMask !naExit !exit =
     Just (!thisCol, Column !col) ->
       runEdhTx ets $
         extract'column'bool col colMask naExit $
-          \ !cloneChildren colNew'@(Column !colNew) ->
+          \ !stayComposed colNew'@(Column !colNew) ->
             read'column'length colNew >>= \ !clNew ->
-              if cloneChildren
+              if stayComposed
                 then edhCloneHostObj ets thisCol thatCol colNew' $
                   \ !newColObj -> exit clNew newColObj
                 else
@@ -246,8 +246,8 @@ extractColumnFancy !ets !thatCol !colIdx !naExit !exit =
     Just (!thisCol, Column !col) ->
       runEdhTx ets $
         extract'column'fancy col colIdx naExit $
-          \ !cloneChildren !colNew ->
-            if cloneChildren
+          \ !stayComposed !colNew ->
+            if stayComposed
               then edhCloneHostObj ets thisCol thatCol colNew exit
               else
                 edhCreateHostObj (edh'obj'class thisCol) colNew
