@@ -250,8 +250,7 @@ mmapDbArray !asVar !dataDir !dataPath !dt !maybeShape =
                             !fa =
                               DeviceArray @a cap $
                                 plusForeignPtr fp $
-                                  fromIntegral $
-                                    array'data'offset hdr
+                                  fromIntegral $ array'data'offset hdr
                         atomically $ do
                           void $ tryTakeTMVar asVar
                           void $
@@ -279,8 +278,7 @@ mmapDbArray !asVar !dataDir !dataPath !dt !maybeShape =
                             hdrLongLive,
                             DeviceArray @a cap $
                               plusForeignPtr fp $
-                                fromIntegral $
-                                  array'data'offset hdr
+                                fromIntegral $ array'data'offset hdr
                           )
 
         -- load existing array file, use header and file length to calculate
@@ -314,8 +312,7 @@ mmapDbArray !asVar !dataDir !dataPath !dt !maybeShape =
                               hdrLongLive,
                               DeviceArray @a cap $
                                 plusForeignPtr fp $
-                                  fromIntegral $
-                                    array'data'offset hdr
+                                  fromIntegral $ array'data'offset hdr
                             )
 
                   -- don't have a header long enough, most prolly not existing

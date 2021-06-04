@@ -100,7 +100,7 @@ flatArrayNumBytes (HostArray !cap _) = cap * 8
 unsafeSliceFlatArray :: FlatArray -> Int -> Int -> FlatArray
 unsafeSliceFlatArray (DeviceArray _ (fp :: ForeignPtr a)) !offset !len =
   DeviceArray @a len $
-    plusForeignPtr fp $ offset * sizeOf (undefined :: a)
+    plusForeignPtr fp $ sizeOf (undefined :: a) * offset
 unsafeSliceFlatArray (HostArray _ !ha) !offset !len =
   let !ha' = MV.slice offset len ha in HostArray len ha'
 

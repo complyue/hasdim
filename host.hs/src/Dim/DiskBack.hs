@@ -113,7 +113,8 @@ instance ManagedColumn DbColumn where
                 !csvNew <-
                   newTVar $
                     DeviceArray @a (stop - start) $
-                      plusForeignPtr fp $ dbc'offs + start
+                      plusForeignPtr fp $
+                        (sizeOf (undefined :: a) *) $ dbc'offs + start
                 !clvNew <- newTVar $ stop - start
                 exit False $
                   Column $ InMemColumn dt csvNew clvNew
