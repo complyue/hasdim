@@ -84,13 +84,12 @@ installDimBatteries !world = do
     !dtAlias <- builtinDataTypes dtClass
 
     let !moduArts =
-          ("dtype", EdhObject dtClass) :
-            [(k, EdhObject dto) | (k, dto) <- dtAlias]
-    !artsDict <-
-      EdhDict <$> createEdhDict [(EdhString k, v) | (k, v) <- moduArts]
-    flip iopdUpdate (edh'scope'entity moduScope) $
-      [(AttrByName k, v) | (k, v) <- moduArts]
-        ++ [(AttrByName "__exports__", artsDict)]
+          (AttrByName "dtype", EdhObject dtClass) :
+            [(AttrByName k, EdhObject dto) | (k, dto) <- dtAlias]
+
+    iopdUpdate moduArts $ edh'scope'entity moduScope
+    prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
+      iopdUpdate moduArts esExps
 
     exit
 
@@ -152,12 +151,9 @@ installDimBatteries !world = do
                      ]
                ]
 
-      !artsDict <-
-        EdhDict
-          <$> createEdhDict [(attrKeyValue k, v) | (k, v) <- moduArts]
-      flip iopdUpdate (edh'scope'entity moduScope) $
-        [(k, v) | (k, v) <- moduArts]
-          ++ [(AttrByName "__exports__", artsDict)]
+      iopdUpdate moduArts $ edh'scope'entity moduScope
+      prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
+        iopdUpdate moduArts esExps
 
       exit
 
@@ -186,12 +182,10 @@ installDimBatteries !world = do
 
       let !moduArts = moduArts0 ++ moduArts1
 
-      !artsDict <-
-        EdhDict
-          <$> createEdhDict [(attrKeyValue k, v) | (k, v) <- moduArts]
-      flip iopdUpdate (edh'scope'entity moduScope) $
-        [(k, v) | (k, v) <- moduArts]
-          ++ [(AttrByName "__exports__", artsDict)]
+      iopdUpdate moduArts $ edh'scope'entity moduScope
+      prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
+        iopdUpdate moduArts esExps
+
       exit
 
   void $
@@ -257,13 +251,9 @@ installDimBatteries !world = do
                    (AttrByName "Table", EdhObject tableClass),
                    (AttrByName "DbArray", EdhObject dbArrayClass)
                  ]
-
-      !artsDict <-
-        EdhDict
-          <$> createEdhDict [(attrKeyValue k, v) | (k, v) <- moduArts]
-      flip iopdUpdate (edh'scope'entity moduScope) $
-        [(k, v) | (k, v) <- moduArts]
-          ++ [(AttrByName "__exports__", artsDict)]
+      iopdUpdate moduArts $ edh'scope'entity moduScope
+      prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
+        iopdUpdate moduArts esExps
 
       exit
 
