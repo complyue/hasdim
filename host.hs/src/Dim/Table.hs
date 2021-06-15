@@ -663,8 +663,8 @@ createTableClass !colClass !clsOuterScope =
         tcDesc :: (AttrKey, Object) -> (Text -> STM ()) -> STM ()
         tcDesc (!colKey, !colObj) !exit' =
           runEdhTx ets $
-            descProc (EdhObject colObj) kwargs $ \ !colDescVal _ets ->
-              edhValueStr ets colDescVal $ \ !colDesc ->
+            descProc (LitExpr $ ValueLiteral $ EdhObject colObj) kwargs $
+              \ !colDescVal _ets -> edhValueStr ets colDescVal $ \ !colDesc ->
                 exit' $
                   " * table column "
                     <> T.pack (show colKey)
