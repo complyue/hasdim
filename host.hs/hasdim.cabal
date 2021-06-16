@@ -55,6 +55,8 @@ executable hasdim
     , bytestring
     , edh
     , hasdim
+    , ghc               >=8.8.3
+    , ghci
     , lossless-decimal
     , mtl
     , nedh
