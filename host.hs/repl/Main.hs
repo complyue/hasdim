@@ -2,45 +2,33 @@ module Main where
 
 -- import           Debug.Trace
 
-import Control.Concurrent (forkFinally)
-import Control.Exception (SomeException)
-import Control.Monad
-import qualified Data.Text as T
-import GHCi.Signals
+import Dim.EHI (installDimBatteries)
 import Language.Edh.EHI
-import Repl (edhProgLoop)
+import Language.Edh.Net (installNetBatteries)
+import Language.Edh.Repl
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 import Prelude
 
 main :: IO ()
-main = do
-  -- don't crash on double Ctrl^C or Ctrl^\, mimic what GHCi is doing
-  installSignalHandlers
-  -- run the specified module, assuming `repl` semantics
+main =
   getArgs >>= \case
-    [] -> runModu "dim"
-    [edhModu] -> runModu edhModu
+    [] -> replWithModule "dim"
+    [edhModu] -> replWithModule edhModu
     _ -> hPutStrLn stderr "Usage: hasdim [ <edh-module> ]" >> exitFailure
   where
-    runModu :: FilePath -> IO ()
-    runModu !moduSpec = do
-      !console <- defaultEdhConsole defaultEdhConsoleSettings
-      let !consoleOut = consoleIO console . ConsoleOut
+    replWithModule :: FilePath -> IO ()
+    replWithModule = edhRepl defaultEdhConsoleSettings $
+      \ !world -> do
+        let !consoleOut = consoleIO (edh'world'console world) . ConsoleOut
 
-      void $
-        forkFinally (edhProgLoop moduSpec console) $ \ !result -> do
-          case result of
-            Left (e :: SomeException) ->
-              consoleOut $ "💥 " <> T.pack (show e)
-            Right _ -> pure ()
-          -- shutdown console IO anyway
-          consoleIO console ConsoleShutdown
+        -- install all necessary batteries
+        installEdhBatteries world
+        installNetBatteries world
+        installDimBatteries world
 
-      consoleOut ">> Dimensional Modeling in Haskell <<\n"
-      consoleOut
-        "* Blank Screen Syndrome ? Take the Tour as your companion, checkout:\n"
-      consoleOut "  https://github.com/e-wrks/hasdim/tree/master/Tour\n"
-
-      consoleIOLoop console
+        consoleOut $
+          ">> Dimensional Modeling in Haskell <<\n"
+            <> "* Blank Screen Syndrome ? Take the Tour as your companion, checkout:\n"
+            <> "  https://github.com/e-wrks/tour\n"
