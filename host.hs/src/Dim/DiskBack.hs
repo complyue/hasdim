@@ -41,34 +41,28 @@ instance ManagedColumn DbColumn where
         return $ dba'len - dbc'offs
 
   grow'column'capacity (DbColumn !dba !dbc'offs) !newCap !exit !ets =
-    if edh'in'tx ets
-      then
-        throwEdh
-          ets
-          UsageError
-          "you don't grow a disk backed column from within a tx"
-      else runEdhTx ets $
-        edhContIO $
-          bracket (atomically $ takeTMVar dbas) (atomically . tryPutTMVar dbas) $
-            const $
-              do
-                mmapDbArray
-                  dbas
-                  (db'array'dir dba)
-                  (db'array'path dba)
-                  (db'array'dtype dba)
-                  (Just $ ArrayShape $ ("", newCap + dbc'offs) :| [])
-                atomically $
-                  runEdhTx ets $
-                    edhContSTM $
-                      readTMVar (db'array'store dba)
-                        >>= \case
-                          Left !err -> throwSTM err
-                          Right (_shape, _hdr, !dbcs) ->
-                            exit $
-                              unsafeSliceFlatArray dbcs dbc'offs $
-                                flatArrayCapacity dbcs
-                                  - dbc'offs
+    runEdhTx ets $
+      edhContIO $
+        bracket (atomically $ takeTMVar dbas) (atomically . tryPutTMVar dbas) $
+          const $
+            do
+              mmapDbArray
+                dbas
+                (db'array'dir dba)
+                (db'array'path dba)
+                (db'array'dtype dba)
+                (Just $ ArrayShape $ ("", newCap + dbc'offs) :| [])
+              atomically $
+                runEdhTx ets $
+                  edhContSTM $
+                    readTMVar (db'array'store dba)
+                      >>= \case
+                        Left !err -> throwSTM err
+                        Right (_shape, _hdr, !dbcs) ->
+                          exit $
+                            unsafeSliceFlatArray dbcs dbc'offs $
+                              flatArrayCapacity dbcs
+                                - dbc'offs
     where
       !dbas = db'array'store dba
 

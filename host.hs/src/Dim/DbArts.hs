@@ -68,25 +68,18 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
       _ctorOtherArgs
       !ctorExit
       !etsCtor =
-        if edh'in'tx etsCtor
-          then
-            throwEdh
-              etsCtor
-              UsageError
-              "you don't create Array within a transaction"
-          else
-            castObjectStore dto >>= \case
-              Nothing -> throwEdh etsCtor UsageError "invalid dtype"
-              Just (_, !dt) -> case data'type'proxy dt of
-                DeviceDataType {} -> case maybeShape of
-                  Nothing -> runEdhTx etsCtor $ edhContIO $ goMemMap dt Nothing
-                  Just !shapeVal -> parseArrayShape etsCtor shapeVal $
-                    \ !shape ->
-                      runEdhTx etsCtor $ edhContIO $ goMemMap dt $ Just shape
-                HostDataType {} ->
-                  throwEdh etsCtor UsageError $
-                    "can not mmap as host dtype: "
-                      <> data'type'identifier dt
+        castObjectStore dto >>= \case
+          Nothing -> throwEdh etsCtor UsageError "invalid dtype"
+          Just (_, !dt) -> case data'type'proxy dt of
+            DeviceDataType {} -> case maybeShape of
+              Nothing -> runEdhTx etsCtor $ edhContIO $ goMemMap dt Nothing
+              Just !shapeVal -> parseArrayShape etsCtor shapeVal $
+                \ !shape ->
+                  runEdhTx etsCtor $ edhContIO $ goMemMap dt $ Just shape
+            HostDataType {} ->
+              throwEdh etsCtor UsageError $
+                "can not mmap as host dtype: "
+                  <> data'type'identifier dt
         where
           goMemMap :: DataType -> Maybe ArrayShape -> IO ()
           goMemMap !dt !mmapShape = do
