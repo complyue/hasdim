@@ -258,6 +258,9 @@ extractColumnFancy !ets !thatCol !colIdx !naExit !exit =
 
 data ColumnOf t = ColumnOf !Column !Object
 
+typedColumn :: forall t. ColumnOf t -> Column
+typedColumn (ColumnOf col _obj) = col
+
 instance Typeable t => ScriptArgAdapter (ColumnOf t) where
   adaptEdhArg !v !exit = case edhUltimate v of
     EdhObject o -> case edh'obj'store o of
