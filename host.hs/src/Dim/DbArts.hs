@@ -1,5 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-
 module Dim.DbArts where
 
 -- import           Debug.Trace

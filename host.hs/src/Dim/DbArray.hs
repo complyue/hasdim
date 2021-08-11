@@ -1,5 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-
 module Dim.DbArray where
 
 -- import           Debug.Trace

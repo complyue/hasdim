@@ -1,5 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-
 module Dim.EHI
   ( installDimBatteries,
     withColumnClass,

@@ -15,7 +15,7 @@ import Control.Concurrent.STM (STM)
 import qualified Data.Lossless.Decimal as D
 import Data.Text (Text)
 import qualified Data.Text as T
-import Foreign (Int8, Storable)
+import Foreign (Bits, Int8, Storable)
 import Language.Edh.EHI
 import System.Random
 import Prelude
@@ -34,7 +34,7 @@ instance EdhXchg D.Decimal where
   fromEdh _ !exit = exit D.nan
 
 newtype YesNo = YesNo Int8
-  deriving (Eq, Ord, Storable, Num, Enum, Real, Integral)
+  deriving (Eq, Ord, Storable, Num, Enum, Real, Integral, Bits)
 
 instance {-# OVERLAPPABLE #-} EdhXchg YesNo where
   toEdh (YesNo !b) !exit = exit $ EdhBool $ b /= 0

@@ -45,6 +45,7 @@ executable hasdim
     StandaloneDeriving
     TupleSections
     TypeApplications
+    AllowAmbiguousTypes
     TypeFamilies
     TypeOperators
     ViewPatterns
@@ -88,6 +89,7 @@ executable rundim
     StandaloneDeriving
     TupleSections
     TypeApplications
+    AllowAmbiguousTypes
     TypeFamilies
     TypeOperators
     ViewPatterns
@@ -131,6 +133,7 @@ executable rundimm
     StandaloneDeriving
     TupleSections
     TypeApplications
+    AllowAmbiguousTypes
     TypeFamilies
     TypeOperators
     ViewPatterns
@@ -186,6 +189,7 @@ library
     StandaloneDeriving
     TupleSections
     TypeApplications
+    AllowAmbiguousTypes
     TypeFamilies
     TypeOperators
     ViewPatterns

@@ -1,5 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-
 module Dim.Float where
 
 -- import           Debug.Trace

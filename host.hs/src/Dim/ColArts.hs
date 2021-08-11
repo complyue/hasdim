@@ -9,11 +9,14 @@ import Data.Lossless.Decimal as D
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Unique
 import Dim.Column
 import Dim.DataType
 import Dim.InMem
 import Dim.XCHG
 import Foreign hiding (void)
+import Foreign.ForeignPtr.Unsafe
+import GHC.Conc (unsafeIOToSTM)
 import GHC.Float
 import Language.Edh.EHI
 import Type.Reflection
@@ -514,6 +517,136 @@ nonzeroIdxColumn !ets (Column !colMask) !exit =
   where
     dtIntp = makeDeviceDataType @Int "intp"
 -}
+
+mkFloatSuperDt ::
+  forall a.
+  (RealFloat a, Num a, Storable a, EdhXchg a, Typeable a) =>
+  DataTypeIdent ->
+  Scope ->
+  STM Object
+mkFloatSuperDt !dti !outerScope = do
+  !dtCls <- mkHostClass outerScope dti (allocEdhObj dtypeAllocator) [] $
+    \ !clsScope -> do
+      !clsMths <-
+        sequence $
+          [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
+            | (nm, vc, hp) <-
+                [ ( "(+)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((+) :: a -> a -> a)
+                  ),
+                  -- ("(+.)", EdhMethod, wrapHostProc $ devColOpProc addToOp),
+                  -- ("(+=)", EdhMethod, wrapHostProc $ colInpProc addOp),
+                  -- ("(-)", EdhMethod, wrapHostProc $ devColOpProc subtractOp),
+                  -- ("(-.)", EdhMethod, wrapHostProc $ devColOpProc subtFromOp),
+                  -- ("(-=)", EdhMethod, wrapHostProc $ colInpProc subtractOp),
+                  -- ("(*)", EdhMethod, wrapHostProc $ devColOpProc mulOp),
+                  -- ("(*.)", EdhMethod, wrapHostProc $ devColOpProc mulToOp),
+                  -- ("(*=)", EdhMethod, wrapHostProc $ colInpProc mulOp),
+                  -- ("(/)", EdhMethod, wrapHostProc $ devColOpProc divOp),
+                  -- ("(/.)", EdhMethod, wrapHostProc $ devColOpProc divByOp),
+                  -- ("(/=)", EdhMethod, wrapHostProc $ colInpProc divOp),
+                  -- ("(//)", EdhMethod, wrapHostProc $ devColOpProc divIntOp),
+                  -- ("(//.)", EdhMethod, wrapHostProc $ devColOpProc divIntByOp),
+                  -- ("(//=)", EdhMethod, wrapHostProc $ colInpProc divIntOp),
+                  -- ("(**)", EdhMethod, wrapHostProc $ devColOpProc powOp),
+                  -- ("(**.)", EdhMethod, wrapHostProc $ devColOpProc powToOp),
+                  -- ("(**=)", EdhMethod, wrapHostProc $ colInpProc powOp),
+                  ("__eq__", EdhMethod, wrapHostProc dtypeEqProc)
+                ]
+          ]
+      let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
+      iopdUpdate clsArts $ edh'scope'entity clsScope
+  !idObj <- unsafeIOToSTM newUnique
+  !supersVar <- newTVar []
+  let !dtObj =
+        Object
+          { edh'obj'ident = idObj,
+            edh'obj'store = dtd,
+            edh'obj'class = dtCls,
+            edh'obj'supers = supersVar
+          }
+  return dtObj
+  where
+    !dtd = HostStore $ toDyn $ mkFloatDataType @a dti
+
+    dtypeAllocator :: EdhObjectAllocator
+    dtypeAllocator !ctorExit _ets = ctorExit Nothing dtd
+
+devColOpProc ::
+  forall a.
+  (EdhXchg a, Eq a, Storable a, Typeable a) =>
+  (a -> a -> a) ->
+  EdhValue ->
+  EdhHostProc
+devColOpProc !op !other !exit !ets = withThatColumnOf @a ets $ \ !col -> do
+  let vecOp = runEdhTx ets $
+        view'column'data col $ \(cs, cl) ->
+          fromEdh @a other $ \scalar -> edhContIO $ do
+            (fp, csResult) <- newDeviceArray @a cl
+            let p = unsafeForeignPtrToPtr fp
+                go i
+                  | i < 0 = return ()
+                  | otherwise = do
+                    array'reader cs i
+                      >>= pokeElemOff p i . flip op scalar
+                    go $ i - 1
+            go $ cl - 1
+            atomically $ do
+              csvResult <- newTMVar csResult
+              clvResult <- newTVar cl
+              exitWithNewClone $ InMemDevCol csvResult clvResult
+
+      elemOp :: forall c' f'. ManagedColumn c' f' a => c' a -> STM ()
+      elemOp col' = runEdhTx ets $
+        view'column'data col $ \(cs, cl) ->
+          view'column'data col' $ \(cs', cl') ->
+            if cl' /= cl
+              then
+                throwEdhTx UsageError $
+                  "column length mistmatch: "
+                    <> T.pack (show cl)
+                    <> " vs "
+                    <> T.pack (show cl')
+              else edhContIO $ do
+                (fp, csResult) <- newDeviceArray @a cl
+                let p = unsafeForeignPtrToPtr fp
+                    go i
+                      | i < 0 = return ()
+                      | otherwise = do
+                        ev <- array'reader cs i
+                        ev' <- array'reader cs' i
+                        pokeElemOff p i $ op ev ev'
+                        go $ i - 1
+                go $ cl - 1
+                atomically $ do
+                  csvResult <- newTMVar csResult
+                  clvResult <- newTVar cl
+                  exitWithNewClone $ InMemDevCol csvResult clvResult
+
+  withColumnOf' @a other vecOp elemOp
+  where
+    !that = edh'scope'that $ contextScope $ edh'context ets
+
+    exitWithNewClone :: forall c'. Typeable (c' a) => c' a -> STM ()
+    exitWithNewClone !colResult =
+      edhCloneHostObj ets that that colResult $
+        \ !newObj -> exitEdh ets exit $ EdhObject newObj
+
+-- colInpProc :: (Text -> Dynamic) -> EdhValue -> EdhHostProc
+-- colInpProc !getOp !other !exit !ets = withThisHostObj ets $ \ !col ->
+--   let !otherVal = edhUltimate other
+--    in castObjectStore' otherVal >>= \case
+--         Just (_, colOther@Column {}) ->
+--           elemInpColumn ets getOp col colOther (exitEdh ets exit edhNA) $
+--             exitEdh ets exit $
+--               EdhObject thatCol
+--         _ ->
+--           vecInpColumn ets getOp col otherVal (exitEdh ets exit edhNA) $
+--             exitEdh ets exit $
+--               EdhObject thatCol
+--   where
+--     !thatCol = edh'scope'that $ contextScope $ edh'context ets
 
 createColumnClass :: Object -> Scope -> STM Object
 createColumnClass !defaultDt !clsOuterScope =

@@ -1,5 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-
 -- | Numpy dtype inspired abstraction for vectorizable types of data
 --
 -- The data type system is extensible through the effect system of Edh
@@ -28,17 +26,19 @@ import Prelude
 
 type DataTypeIdent = AttrName
 
+-- | Native types stored in shared memory with computing devices (GPU or CPU
+-- with heavy SIMD orientation)
 data DeviceDataType = DeviceDataType
   { device'data'type'ident :: !DataTypeIdent,
     device'data'type'holder ::
       forall r.
-      (forall a. (EdhXchg a, Storable a, Typeable a) => TypeRep a -> r) ->
+      (forall a. (Eq a, Storable a, EdhXchg a, Typeable a) => TypeRep a -> r) ->
       r,
     device'data'type'as'of'num ::
       forall r.
       r ->
       ( forall a.
-        (Num a, EdhXchg a, Storable a, Typeable a) =>
+        (Num a, Storable a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -47,7 +47,7 @@ data DeviceDataType = DeviceDataType
       forall r.
       r ->
       ( forall a.
-        (Integral a, EdhXchg a, Storable a, Typeable a) =>
+        (Integral a, Storable a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -56,7 +56,7 @@ data DeviceDataType = DeviceDataType
       forall r.
       r ->
       ( forall a.
-        (RealFloat a, EdhXchg a, Storable a, Typeable a) =>
+        (RealFloat a, Storable a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -72,19 +72,6 @@ instance Eq DeviceDataType where
 
 {- HLINT ignore "Use const" -}
 
-mkIntDataType ::
-  forall a.
-  (Integral a, Num a, Storable a, EdhXchg a, Typeable a) =>
-  DataTypeIdent ->
-  DeviceDataType
-mkIntDataType !dti =
-  DeviceDataType
-    dti
-    ($ typeRep @a)
-    (\_naExit exit -> exit (typeRep @a))
-    (\_naExit exit -> exit (typeRep @a))
-    (\naExit _exit -> naExit)
-
 mkFloatDataType ::
   forall a.
   (RealFloat a, Num a, Storable a, EdhXchg a, Typeable a) =>
@@ -98,17 +85,31 @@ mkFloatDataType !dti =
     (\naExit _exit -> naExit)
     (\_naExit exit -> exit (typeRep @a))
 
+mkIntDataType ::
+  forall a.
+  (Integral a, Num a, Storable a, EdhXchg a, Typeable a) =>
+  DataTypeIdent ->
+  DeviceDataType
+mkIntDataType !dti =
+  DeviceDataType
+    dti
+    ($ typeRep @a)
+    (\_naExit exit -> exit (typeRep @a))
+    (\_naExit exit -> exit (typeRep @a))
+    (\naExit _exit -> naExit)
+
+-- | Lifted Haskell types as operated directly by the host language
 data DirectDataType = DirectDataType
   { direct'data'type'ident :: !DataTypeIdent,
     direct'data'defv'holder ::
       forall r.
-      (forall a. (EdhXchg a, Eq a, Typeable a) => a -> r) ->
+      (forall a. (Eq a, EdhXchg a, Typeable a) => a -> r) ->
       r,
     direct'data'type'as'of'frac ::
       forall r.
       r ->
       ( forall a.
-        (RealFrac a, EdhXchg a, Eq a, Typeable a) =>
+        (RealFrac a, Eq a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -191,113 +192,95 @@ withDataType !dto !naExit !devExit !dirExit = case edh'obj'store dto of
         _ -> naExit
   _ -> naExit
 
-createDataTypeClass :: Scope -> STM Object
-createDataTypeClass !clsOuterScope =
-  mkHostClass clsOuterScope "dtype" (allocEdhObj dtypeAllocator) [] $
-    \ !clsScope -> do
-      !mths <-
-        sequence $
-          [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
-            | (nm, vc, hp) <-
-                [ ("__eq__", EdhMethod, wrapHostProc dtypeEqProc),
-                  -- assuming there's an attribute in context samely named
-                  -- after the identifier for a valid dtype
-                  ("__repr__", EdhMethod, wrapHostProc dtypeIdentProc)
-                ]
-          ]
-            ++ [ (AttrByName nm,) <$> mkHostProperty clsScope nm getter setter
-                 | (nm, getter, setter) <- [("id", dtypeIdentProc, Nothing)]
-               ]
-      iopdUpdate mths $ edh'scope'entity clsScope
+-- createDataTypeClass :: Scope -> STM Object
+-- createDataTypeClass !clsOuterScope =
+--   mkHostClass clsOuterScope "dtype" (allocEdhObj dtypeAllocator) [] $
+--     \ !clsScope -> do
+--       !mths <-
+--         sequence $
+--           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
+--             | (nm, vc, hp) <-
+--                 [ ("__eq__", EdhMethod, wrapHostProc dtypeEqProc)
+--                 ]
+--           ]
+--       iopdUpdate mths $ edh'scope'entity clsScope
+--   where
+--     dtypeAllocator :: "dti" ?: Text -> EdhObjectAllocator
+--     dtypeAllocator (optionalArg -> !maybeDti) !ctorExit !ets = case maybeDti of
+--       Nothing -> box
+--       Just "float64" -> f8
+--       Just "f8" -> f8
+--       Just "float32" -> f4
+--       Just "f4" -> f4
+--       Just "intp" -> intp
+--       Just "int64" -> i8
+--       Just "i8" -> i8
+--       Just "int32" -> i4
+--       Just "i4" -> i4
+--       Just "int8" -> i1
+--       Just "i1" -> i1
+--       Just "bool" -> yesno
+--       Just "yesno" -> yesno
+--       Just "box" -> box
+--       Just "object" -> box -- for Python Numpy compatibility
+--       Just "decimal" -> decimal
+--       Just badDti -> throwEdh ets UsageError $ "invalid dtype id: " <> badDti
+--       where
+--         f8 =
+--           ctorExit Nothing $
+--             HostStore $ toDyn $ mkFloatDataType @Double "float64"
+--         f4 =
+--           ctorExit Nothing $
+--             HostStore $ toDyn $ mkFloatDataType @Float "float32"
+--         intp =
+--           ctorExit Nothing $
+--             HostStore $ toDyn $ mkIntDataType @Int "intp"
+--         i8 =
+--           ctorExit Nothing $
+--             HostStore $ toDyn $ mkIntDataType @Int64 "int64"
+--         i4 =
+--           ctorExit Nothing $
+--             HostStore $ toDyn $ mkIntDataType @Int32 "int32"
+--         i1 =
+--           ctorExit Nothing $
+--             HostStore $ toDyn $ mkIntDataType @Int8 "int8"
+--         yesno =
+--           ctorExit Nothing $
+--             HostStore $ toDyn $ mkIntDataType @YesNo "yesno"
+--         box =
+--           ctorExit Nothing $
+--             HostStore $ toDyn $ mkBoxDataType @EdhValue "box" edhNA
+--         decimal =
+--           ctorExit Nothing $
+--             HostStore $ toDyn $ mkRealFracDataType @Decimal "decimal" D.nan
+
+dtypeEqProc :: EdhValue -> EdhHostProc
+dtypeEqProc !other !exit !ets = case edhUltimate other of
+  EdhObject !objOther ->
+    withDataType objOther exitNeg withDeviceOther withDirectOther
+  _ -> exitNeg
   where
-    dtypeAllocator :: "dti" ?: Text -> EdhObjectAllocator
-    dtypeAllocator (optionalArg -> !maybeDti) !ctorExit !ets = case maybeDti of
-      Nothing -> box
-      Just "float64" -> f8
-      Just "f8" -> f8
-      Just "float32" -> f4
-      Just "f4" -> f4
-      Just "intp" -> intp
-      Just "int64" -> i8
-      Just "i8" -> i8
-      Just "int32" -> i4
-      Just "i4" -> i4
-      Just "int8" -> i1
-      Just "i1" -> i1
-      Just "bool" -> yesno
-      Just "yesno" -> yesno
-      Just "box" -> box
-      Just "object" -> box -- for Python Numpy compatibility
-      Just "decimal" -> decimal
-      Just badDti -> throwEdh ets UsageError $ "invalid dtype id: " <> badDti
-      where
-        f8 =
-          ctorExit Nothing $
-            HostStore $ toDyn $ mkFloatDataType @Double "float64"
-        f4 =
-          ctorExit Nothing $
-            HostStore $ toDyn $ mkFloatDataType @Float "float32"
-        intp =
-          ctorExit Nothing $
-            HostStore $ toDyn $ mkIntDataType @Int "intp"
-        i8 =
-          ctorExit Nothing $
-            HostStore $ toDyn $ mkIntDataType @Int64 "int64"
-        i4 =
-          ctorExit Nothing $
-            HostStore $ toDyn $ mkIntDataType @Int32 "int32"
-        i1 =
-          ctorExit Nothing $
-            HostStore $ toDyn $ mkIntDataType @Int8 "int8"
-        yesno =
-          ctorExit Nothing $
-            HostStore $ toDyn $ mkIntDataType @YesNo "yesno"
-        box =
-          ctorExit Nothing $
-            HostStore $ toDyn $ mkBoxDataType @EdhValue "box" edhNA
-        decimal =
-          ctorExit Nothing $
-            HostStore $ toDyn $ mkRealFracDataType @Decimal "decimal" D.nan
+    this = edh'scope'this $ contextScope $ edh'context ets
 
-    dtypeEqProc :: EdhValue -> EdhHostProc
-    dtypeEqProc !other !exit !ets = case edhUltimate other of
-      EdhObject !objOther ->
-        withDataType objOther exitNeg withDeviceOther withDirectOther
-      _ -> exitNeg
-      where
-        this = edh'scope'this $ contextScope $ edh'context ets
-
-        withDeviceOther :: DeviceDataType -> STM ()
-        withDeviceOther dtOther =
-          withDataType
-            this
-            badThis
-            ( \ !dtThis ->
-                exitEdh ets exit $
-                  EdhBool $ dtThis == dtOther
-            )
-            (const exitNeg)
-
-        withDirectOther :: DirectDataType -> STM ()
-        withDirectOther dtOther = withDataType this badThis (const exitNeg) $
-          \ !dtThis ->
-            exitEdh ets exit $
-              EdhBool $ dtThis == dtOther
-
-        badThis = throwEdh ets EvalError "bug: not a host value of DataType"
-        exitNeg = exitEdh ets exit $ EdhBool False
-
-    dtypeIdentProc :: EdhHostProc
-    dtypeIdentProc !exit !ets =
+    withDeviceOther :: DeviceDataType -> STM ()
+    withDeviceOther dtOther =
       withDataType
         this
         badThis
-        (exitEdh ets exit . EdhString . device'data'type'ident)
-        (exitEdh ets exit . EdhString . direct'data'type'ident)
-      where
-        this = edh'scope'this $ contextScope $ edh'context ets
+        ( \ !dtThis ->
+            exitEdh ets exit $
+              EdhBool $ dtThis == dtOther
+        )
+        (const exitNeg)
 
-        badThis = throwEdh ets EvalError "bug: not a host value of dtype"
+    withDirectOther :: DirectDataType -> STM ()
+    withDirectOther dtOther = withDataType this badThis (const exitNeg) $
+      \ !dtThis ->
+        exitEdh ets exit $
+          EdhBool $ dtThis == dtOther
+
+    badThis = throwEdh ets EvalError "bug: not a host value of DataType"
+    exitNeg = exitEdh ets exit $ EdhBool False
 
 -- * Flat Array
 
@@ -361,7 +344,7 @@ emptyDirectArray = do
 
 newDeviceArray ::
   forall a.
-  (EdhXchg a, Typeable a, Storable a) =>
+  (Storable a, Eq a, EdhXchg a, Typeable a) =>
   ArrayCapacity ->
   IO (ForeignPtr a, DeviceArray a)
 newDeviceArray !cap = do
@@ -371,7 +354,7 @@ newDeviceArray !cap = do
 
 newDirectArray ::
   forall a.
-  (EdhXchg a, Typeable a) =>
+  (Eq a, EdhXchg a, Typeable a) =>
   a ->
   ArrayCapacity ->
   IO (MV.IOVector a, DirectArray a)

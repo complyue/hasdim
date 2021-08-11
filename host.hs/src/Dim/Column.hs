@@ -80,6 +80,31 @@ withColumnOf !obj !naExit !exit = case dynamicHostData obj of
       Nothing -> naExit
       Just (Refl :: a :~: b) -> exit col
 
+withColumnOf' ::
+  forall a m.
+  (Monad m, Typeable a) =>
+  EdhValue ->
+  m () ->
+  (forall c f. ManagedColumn c f a => c a -> m ()) ->
+  m ()
+withColumnOf' !val !naExit !exit = case edhUltimate val of
+  EdhObject !obj -> withColumnOf obj naExit exit
+  _ -> naExit
+
+withThatColumnOf ::
+  forall a.
+  Typeable a =>
+  EdhThreadState ->
+  (forall c f. ManagedColumn c f a => c a -> STM ()) ->
+  STM ()
+withThatColumnOf !ets !exit =
+  withColumnOf @a that naExit exit
+  where
+    that = edh'scope'that $ contextScope $ edh'context ets
+    naExit =
+      throwEdh ets EvalError $
+        "not a Column object of type: " <> T.pack (show $ typeRep @a)
+
 withColObj ::
   forall m.
   Monad m =>
