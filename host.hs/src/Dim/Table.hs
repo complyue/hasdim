@@ -4,6 +4,8 @@ module Dim.Table where
 
 -- import           Unsafe.Coerce
 
+{-
+
 import Control.Concurrent.STM
   ( STM,
     TVar,
@@ -690,3 +692,5 @@ centerBriefAlign !dispWidth !txt =
     else T.take (dispWidth - 4) txt <> "...|"
   where
     !len = T.length txt
+
+-}

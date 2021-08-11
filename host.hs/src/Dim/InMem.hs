@@ -1,9 +1,12 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 module Dim.InMem where
 
 -- import           Debug.Trace
 
 import Control.Concurrent.STM
 import Control.Exception
+import Control.Monad
 import Data.Dynamic
 import qualified Data.Text as T
 import qualified Data.Vector.Mutable as MV
@@ -11,119 +14,46 @@ import Dim.Column
 import Dim.DataType
 import Dim.XCHG
 import Foreign hiding (void)
-import GHC.Conc (unsafeIOToSTM)
 import Language.Edh.EHI
-import Type.Reflection
 import Prelude
 
-data InMemColumn = InMemColumn
-  { im'column'data'type :: !DataType,
-    im'column'storage :: !(TVar FlatArray),
-    im'column'length :: !(TVar Int)
+data InMemDevCol a = (EdhXchg a, Storable a, Typeable a) =>
+  InMemDevCol
+  { im'devcol'storage :: !(TMVar (DeviceArray a)),
+    im'devcol'length :: !(TVar Int)
   }
 
-allocDeviceColumn ::
-  forall a.
-  (EdhXchg a, Typeable a, Storable a) =>
-  Int ->
-  DataType ->
-  IO (ForeignPtr a, Column)
-allocDeviceColumn !cap = allocDeviceColumn' cap cap
-
-allocDeviceColumn' ::
-  forall a.
-  (EdhXchg a, Typeable a, Storable a) =>
-  Int ->
-  Int ->
-  DataType ->
-  IO (ForeignPtr a, Column)
-allocDeviceColumn' !len !cap !dt
-  | len < 0 || len > cap || cap < 0 =
-    throwIO $
-      userError $
-        "bug: invalid len/cap to allocDeviceColumn - "
-          <> show len
-          <> "/"
-          <> show cap
-  | isDataTypeFor @a dt = do
-    (!fp, !fa) <- newDeviceArray cap
-    !csv <- newTVarIO fa
-    !clv <- newTVarIO len
-    return (fp, Column $ InMemColumn dt csv clv)
-  | otherwise =
-    throwIO $
-      userError $
-        "bug: wrong dtype for '" <> show (typeRep @a) <> "' - "
-          <> T.unpack (data'type'identifier dt)
-
-allocHostColumn ::
-  forall a.
-  (EdhXchg a, Typeable a) =>
-  Int ->
-  DataType ->
-  IO (MV.IOVector a, Column)
-allocHostColumn !cap = allocHostColumn' cap cap
-
-allocHostColumn' ::
-  forall a.
-  (EdhXchg a, Typeable a) =>
-  Int ->
-  Int ->
-  DataType ->
-  IO (MV.IOVector a, Column)
-allocHostColumn' !len !cap !dt
-  | len < 0 || len > cap || cap < 0 =
-    throwIO $
-      userError $
-        "bug: invalid len/cap to allocHostColumn - "
-          <> show len
-          <> "/"
-          <> show cap
-  | otherwise = case data'type'proxy dt of
-    HostDataType !hdd -> case typeRep @a `eqTypeRep` typeOf hdd of
-      Just HRefl -> do
-        (!hv, !fa) <- newHostArray hdd cap
-        !csv <- newTVarIO fa
-        !clv <- newTVarIO len
-        return (hv, Column $ InMemColumn dt csv clv)
-      _ -> dtWrong
-    _ -> dtWrong
+instance
+  (EdhXchg a, Storable a, Typeable a) =>
+  ManagedColumn InMemDevCol DeviceArray a
   where
-    dtWrong =
-      throwIO $
-        userError $
-          "bug: wrong dtype for '" <> show (typeRep @a) <> "' - "
-            <> T.unpack (data'type'identifier dt)
+  view'column'data (InMemDevCol csv clv) !exit !ets = do
+    !cs <- readTMVar csv
+    !cl <- readTVar clv
+    exitEdh ets exit (cs, cl)
 
-createInMemColumn :: DataType -> Int -> Int -> (Column -> STM ()) -> EdhTx
-createInMemColumn !dt !cap !len !exit !ets =
-  if cap < 0 || len < 0 || len > cap
-    then
-      throwEdh ets UsageError $
-        "bad len/cap: "
-          <> T.pack (show len)
-          <> "/"
-          <> T.pack (show cap)
-    else do
-      !cs <- flat'new'array dt cap
-      !csv <- newTVar cs
-      !clv <- newTVar len
-      exit $ Column $ InMemColumn dt csv clv
+  read'column'length (InMemDevCol _csv clv) !exit !ets =
+    exitEdh ets exit =<< readTVar clv
 
-instance ManagedColumn InMemColumn where
-  data'type'of'column = im'column'data'type
-  view'column'data = readTVar . im'column'storage
-  read'column'length = readTVar . im'column'length
+  grow'column'capacity (InMemDevCol csv clv) !newCap !exit !ets =
+    runEdhTx ets $
+      edhContIO $
+        bracketOnError
+          ( atomically $ do
+              !cs <- takeTMVar csv
+              !cl <- readTVar clv
+              return (cs, cl)
+          )
+          (\(!cs, _cl) -> atomically $ void $ tryPutTMVar csv cs)
+          $ \(!cs, !cl) -> do
+            cs' <- dupDeviceArray cs cl newCap
+            atomically $ do
+              putTMVar csv cs'
+              exitEdh ets exit (cs', cl)
 
-  grow'column'capacity (InMemColumn !dt !csv _clv) !newCap !exit _ets = do
-    !cs <- readTVar csv
-    !cs' <- flat'grow'array dt cs newCap
-    writeTVar csv cs'
-    exit cs'
-
-  mark'column'length (InMemColumn _dt !csv !clv) !newLen !exit !ets = do
-    !cs <- readTVar csv
-    let !cap = flatArrayCapacity cs
+  mark'column'length (InMemDevCol csv clv) !newLen !exit !ets = do
+    !cs <- readTMVar csv
+    let !cap = deviceArrayCapacity cs
     if newLen < 0 || newLen > cap
       then
         throwEdh ets UsageError $
@@ -131,11 +61,13 @@ instance ManagedColumn InMemColumn where
             <> T.pack (show newLen)
             <> " vs "
             <> T.pack (show cap)
-      else writeTVar clv newLen >> exit
+      else do
+        writeTVar clv newLen
+        exitEdh ets exit ()
 
-  view'column'slice (InMemColumn !dt !csv !clv) !start !stop !exit !ets = do
-    !cs <- readTVar csv
-    let !cap = flatArrayCapacity cs
+  view'column'slice (InMemDevCol csv clv) !start !stop !exit !ets = do
+    !cs <- readTMVar csv
+    let !cap = deviceArrayCapacity cs
     !cl <- readTVar clv
     if stop < start || start < 0 || stop > cap
       then
@@ -147,15 +79,15 @@ instance ManagedColumn InMemColumn where
             <> " vs "
             <> T.pack (show cap)
       else do
-        let !cs' = unsafeSliceFlatArray cs start (cap - start)
+        let !cs' = unsafeSliceDeviceArray cs start (cap - start)
             !len = max 0 $ min cl stop - start
-        !csvNew <- newTVar cs'
+        !csvNew <- newTMVar cs'
         !clvNew <- newTVar len
-        exit True $ Column $ InMemColumn dt csvNew clvNew
+        exitEdh ets exit (StayComposed, InMemDevCol csvNew clvNew)
 
-  copy'column'slice (InMemColumn !dt !csv !clv) !start !stop !step !exit !ets =
+  copy'column'slice (InMemDevCol csv clv) !start !stop !step !exit !ets =
     do
-      !cs <- readTVar csv
+      DeviceArray !cap (fp :: ForeignPtr a) <- readTMVar csv
       !cl <- readTVar clv
 
       if stop < start || start < 0 || stop > cl
@@ -167,18 +99,23 @@ instance ManagedColumn InMemColumn where
               <> T.pack (show stop)
               <> " vs "
               <> T.pack (show cl)
-        else case cs of
-          DeviceArray !cap (fp :: ForeignPtr a) ->
-            if start >= cap || stop == start
-              then do
-                !csvNew <- newTVar (emptyDeviceArray @a)
-                !clvNew <- newTVar 0
-                exit True $ Column $ InMemColumn dt csvNew clvNew
-              else do
-                let (q, r) = quotRem (stop - start) step
-                    !len = if r == 0 then abs q else 1 + abs q
-                !fp' <- unsafeIOToSTM $
-                  withForeignPtr fp $ \ !p -> do
+        else
+          runEdhTx ets $
+            edhContIO $
+              if start >= cap || stop == start
+                then do
+                  !csNew <- emptyDeviceArray @a
+                  atomically $ do
+                    !csvNew <- newTMVar csNew
+                    !clvNew <- newTVar 0
+                    exitEdh
+                      ets
+                      exit
+                      (StayComposed, InMemDevCol csvNew clvNew)
+                else do
+                  let (q, r) = quotRem (stop - start) step
+                      !len = if r == 0 then abs q else 1 + abs q
+                  !fp' <- withForeignPtr fp $ \ !p -> do
                     !p' <- callocArray len
                     !fp' <- newForeignPtr finalizerFree p'
                     let fillRng :: Int -> Int -> IO ()
@@ -190,71 +127,130 @@ instance ManagedColumn InMemColumn where
                               fillRng (n + step) (i + 1)
                     fillRng start 0
                     return fp'
-                let !cs' = DeviceArray len fp'
-                !csvNew <- newTVar cs'
-                !clvNew <- newTVar len
-                exit True $ Column $ InMemColumn dt csvNew clvNew
-          HostArray !cap (ha :: MV.IOVector a) ->
-            if start >= cap || stop == start
-              then do
-                !csvNew <- newTVar (emptyHostArray @a)
-                !clvNew <- newTVar 0
-                exit True $ Column $ InMemColumn dt csvNew clvNew
-              else do
-                let (q, r) = quotRem (stop - start) step
-                    !len = if r == 0 then abs q else 1 + abs q
-                !ha' <- unsafeIOToSTM $ do
-                  !ha' <- MV.unsafeNew len
-                  let fillRng :: Int -> Int -> IO ()
-                      fillRng !n !i =
-                        if i >= len
-                          then return ()
-                          else do
-                            MV.unsafeRead ha n >>= MV.unsafeWrite ha' i
-                            fillRng (n + step) (i + 1)
-                  fillRng start 0
-                  return ha'
-                let !cs' = HostArray len ha'
-                !csvNew <- newTVar cs'
-                !clvNew <- newTVar len
-                exit True $ Column $ InMemColumn dt csvNew clvNew
+                  let !cs' = DeviceArray len fp'
+                  atomically $ do
+                    !csvNew <- newTMVar cs'
+                    !clvNew <- newTVar len
+                    exitEdh
+                      ets
+                      exit
+                      (StayComposed, InMemDevCol csvNew clvNew)
 
-  extract'column'bool (InMemColumn !dt !csv !clv) (Column !colMask) !naExit !exit !ets =
+data InMemDirCol a = (EdhXchg a, Eq a, Typeable a) =>
+  InMemDirCol
+  { im'devdir'storage :: !(TMVar (DirectArray a)),
+    im'devdir'length :: !(TVar Int)
+  }
+
+instance
+  (EdhXchg a, Eq a, Typeable a) =>
+  ManagedColumn InMemDirCol DirectArray a
+  where
+  view'column'data (InMemDirCol csv clv) !exit !ets = do
+    !cs <- readTMVar csv
+    !cl <- readTVar clv
+    exitEdh ets exit (cs, cl)
+
+  read'column'length (InMemDirCol _csv clv) !exit !ets =
+    exitEdh ets exit =<< readTVar clv
+
+  grow'column'capacity (InMemDirCol csv clv) !newCap !exit !ets =
+    runEdhTx ets $
+      edhContIO $
+        bracketOnError
+          ( atomically $ do
+              !cs <- takeTMVar csv
+              !cl <- readTVar clv
+              return (cs, cl)
+          )
+          (\(!cs, _cl) -> atomically $ void $ tryPutTMVar csv cs)
+          $ \(!cs, !cl) -> do
+            cs' <- dupDirectArray cs cl newCap
+            atomically $ do
+              putTMVar csv cs'
+              exitEdh ets exit (cs', cl)
+
+  mark'column'length (InMemDirCol csv clv) !newLen !exit !ets = do
+    !cs <- readTMVar csv
+    let !cap = directArrayCapacity cs
+    if newLen < 0 || newLen > cap
+      then
+        throwEdh ets UsageError $
+          "column length out of range: "
+            <> T.pack (show newLen)
+            <> " vs "
+            <> T.pack (show cap)
+      else do
+        writeTVar clv newLen
+        exitEdh ets exit ()
+
+  view'column'slice (InMemDirCol csv clv) !start !stop !exit !ets = do
+    !cs <- readTMVar csv
+    let !cap = directArrayCapacity cs
+    !cl <- readTVar clv
+    if stop < start || start < 0 || stop > cap
+      then
+        throwEdh ets UsageError $
+          "column slice range out of range: "
+            <> T.pack (show start)
+            <> ":"
+            <> T.pack (show stop)
+            <> " vs "
+            <> T.pack (show cap)
+      else do
+        let !cs' = unsafeSliceDirectArray cs start (cap - start)
+            !len = max 0 $ min cl stop - start
+        !csvNew <- newTMVar cs'
+        !clvNew <- newTVar len
+        exitEdh ets exit (StayComposed, InMemDirCol csvNew clvNew)
+
+  copy'column'slice (InMemDirCol csv clv) !start !stop !step !exit !ets =
     do
-      !cs <- readTVar csv
+      DirectArray !iov <- readTMVar csv
       !cl <- readTVar clv
+      let cap = MV.length iov
 
-      resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp ->
-        do
-          let !fa = unsafeSliceFlatArray cs 0 cl
-          !mcl <- read'column'length colMask
-          if mcl /= cl
-            then
-              throwEdh ets UsageError $
-                "index length mismatch: "
-                  <> T.pack (show mcl)
-                  <> " vs "
-                  <> T.pack (show cl)
-            else do
-              !mcs <- view'column'data colMask
-              let !ma = unsafeSliceFlatArray mcs 0 mcl
-              flat'extract'yesno dtOp ets ma fa $ \(!rfa, !rlen) -> do
-                !csvRtn <- newTVar rfa
-                !clvRtn <- newTVar rlen
-                exit True $ Column $ InMemColumn dt csvRtn clvRtn
-
-  extract'column'fancy (InMemColumn !dt !csv !clv) (Column !colIdx) !naExit !exit !ets =
-    do
-      !cs <- readTVar csv
-      !cl <- readTVar clv
-
-      !icl <- read'column'length colIdx
-      !ics <- view'column'data colIdx
-      resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp ->
-        do
-          let !ifa = unsafeSliceFlatArray ics 0 icl
-              !fa = unsafeSliceFlatArray cs 0 cl
-          flat'extract'fancy dtOp ets ifa fa $ \ !rfa -> do
-            !csvRtn <- newTVar rfa
-            !clvRtn <- newTVar icl
-            exit True $ Column $ InMemColumn dt csvRtn clvRtn
+      if stop < start || start < 0 || stop > cl
+        then
+          throwEdh ets UsageError $
+            "column slice range out of range: "
+              <> T.pack (show start)
+              <> ":"
+              <> T.pack (show stop)
+              <> " vs "
+              <> T.pack (show cl)
+        else
+          runEdhTx ets $
+            edhContIO $
+              if start >= cap || stop == start
+                then do
+                  !csNew <- emptyDirectArray @a
+                  atomically $ do
+                    !csvNew <- newTMVar csNew
+                    !clvNew <- newTVar 0
+                    exitEdh
+                      ets
+                      exit
+                      (StayComposed, InMemDirCol csvNew clvNew)
+                else do
+                  let (q, r) = quotRem (stop - start) step
+                      !len = if r == 0 then abs q else 1 + abs q
+                  !iov' <- do
+                    !iov' <- MV.unsafeNew len
+                    let fillRng :: Int -> Int -> IO ()
+                        fillRng !n !i =
+                          if i >= len
+                            then return ()
+                            else do
+                              MV.unsafeRead iov n >>= MV.unsafeWrite iov' i
+                              fillRng (n + step) (i + 1)
+                    fillRng start 0
+                    return iov'
+                  let !cs' = DirectArray iov'
+                  atomically $ do
+                    !csvNew <- newTMVar cs'
+                    !clvNew <- newTVar len
+                    exitEdh
+                      ets
+                      exit
+                      (StayComposed, InMemDirCol csvNew clvNew)

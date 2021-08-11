@@ -4,6 +4,8 @@ module Dim.DbArts where
 
 -- import           Debug.Trace
 
+{-
+
 import Control.Concurrent.STM
   ( STM,
     atomically,
@@ -282,3 +284,5 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
         >>= exitEdh ets exit . EdhObject
       where
         !thatObj = edh'scope'that $ contextScope $ edh'context ets
+
+-}

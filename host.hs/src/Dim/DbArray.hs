@@ -4,6 +4,8 @@ module Dim.DbArray where
 
 -- import           Debug.Trace
 
+{-
+
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
@@ -387,3 +389,5 @@ castMutFullDbArrayData (DbArray _ _ _ !das) =
   atomically (readTMVar das) >>= \case
     Left !err -> throwIO err
     Right (_, _, !fa) -> return $ unsafeFlatArrayAsMVector fa
+
+-}

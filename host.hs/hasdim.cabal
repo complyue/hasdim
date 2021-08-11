@@ -45,8 +45,11 @@ executable hasdim
     StandaloneDeriving
     TupleSections
     TypeApplications
+    TypeFamilies
     TypeOperators
     ViewPatterns
+    MultiParamTypeClasses
+    FunctionalDependencies
 
   ghc-options:        -Wall -threaded -rtsopts
   build-depends:
@@ -85,8 +88,11 @@ executable rundim
     StandaloneDeriving
     TupleSections
     TypeApplications
+    TypeFamilies
     TypeOperators
     ViewPatterns
+    MultiParamTypeClasses
+    FunctionalDependencies
 
   ghc-options:        -Wall -threaded -rtsopts
   build-depends:
@@ -125,8 +131,11 @@ executable rundimm
     StandaloneDeriving
     TupleSections
     TypeApplications
+    TypeFamilies
     TypeOperators
     ViewPatterns
+    MultiParamTypeClasses
+    FunctionalDependencies
 
   ghc-options:        -Wall -threaded -rtsopts
   build-depends:
@@ -177,15 +186,17 @@ library
     StandaloneDeriving
     TupleSections
     TypeApplications
+    TypeFamilies
     TypeOperators
     ViewPatterns
+    MultiParamTypeClasses
+    FunctionalDependencies
 
   ghc-options:        -Wall
   build-depends:
     , base                  >=4.12
     , binary
     , bytestring
-    , cedh
     , clock
     , containers
     , directory

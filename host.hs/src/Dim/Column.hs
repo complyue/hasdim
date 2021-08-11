@@ -5,143 +5,104 @@ module Dim.Column where
 import Control.Concurrent.STM
 import Data.Dynamic
 import qualified Data.Text as T
+import Data.Typeable hiding (typeRep)
 import Dim.DataType
 import Dim.XCHG
 import Foreign
-import Language.Edh.Curry
 import Language.Edh.EHI
-import Type.Reflection (typeRep)
+import Type.Reflection
 import Prelude
 
-class ManagedColumn t where
-  -- | data type of the column
-  data'type'of'column :: t -> DataType
+data InstanceDisposition = StayComposed | ExtractAlone
 
+class
+  (EdhXchg a, FlatArray f a, Typeable a, Typeable (c a), Typeable (f a)) =>
+  ManagedColumn c f a
+    | c -> f
+  where
   -- obtain a view of the physical storage backing the column data
   --
   -- the underlying storage is mutable anytime, thread safety has to be
   -- guaranteed by proper mediation otherwise, e.g. content to set a
-  -- changer attribute to a thread's identity before modifiying a column,
+  -- changer attribute to a thread's identity before modifiying a column
   -- and check such a attribute to be `frozen` valued before allowing the
   -- STM tx to commit
-  view'column'data :: t -> STM FlatArray
+  view'column'data :: c a -> EdhTxExit (f a, ArrayLength) -> EdhTx
 
   -- called when valid data length of the column is requested
-  read'column'length :: t -> STM Int
+  read'column'length :: c a -> EdhTxExit ArrayLength -> EdhTx
 
   -- called when a new capacity is requested for the column
-  grow'column'capacity :: t -> Int -> (FlatArray -> STM ()) -> EdhTx
+  grow'column'capacity ::
+    c a -> ArrayCapacity -> EdhTxExit (f a, ArrayLength) -> EdhTx
 
   -- called when a new length is marked for the column
-  mark'column'length :: t -> Int -> STM () -> EdhTx
+  mark'column'length :: c a -> ArrayLength -> EdhTxExit () -> EdhTx
 
   -- called when viewing-slicing is requested for the column
-  -- -> Start -> Stop
-  -- -> (NotApplicableExit :: STM ())
-  -- -> (Exit :: (StayComposed? -> NewColumn -> STM ()))
-  -- -> EdhTx
   view'column'slice ::
-    t ->
-    Int ->
-    Int ->
-    (Bool -> Column -> STM ()) ->
+    c a ->
+    Int -> -- start
+    Int -> -- stop
+    EdhTxExit (InstanceDisposition, c a) ->
     EdhTx
 
   -- called when copying-slicing is requested for the column
-  -- -> Start -> Stop -> Step
-  -- -> (StayComposed? -> NewColumn -> STM ())
-  -- -> EdhTx
   copy'column'slice ::
-    t ->
-    Int ->
-    Int ->
-    Int ->
-    (Bool -> Column -> STM ()) ->
+    c a ->
+    Int -> -- start
+    Int -> -- stop
+    Int -> -- step
+    EdhTxExit (InstanceDisposition, c a) ->
     EdhTx
 
-  -- called when data extraction with a bool index (the mask) is requested
-  -- for the column
-  -- -> MaskColumn
-  -- -> (NotApplicableExit :: STM ())
-  -- -> (Exit :: (StayComposed? -> NewColumn -> STM ()))
-  -- -> EdhTx
-  extract'column'bool ::
-    t ->
-    Column ->
-    STM () ->
-    (Bool -> Column -> STM ()) ->
-    EdhTx
+data SomeColumn
+  = forall c f a.
+    ( ManagedColumn c f a,
+      Typeable (c a),
+      Typeable (f a),
+      Typeable a
+    ) =>
+    SomeColumn (c a)
 
-  -- called when data extraction with a fancy index is requested for the
-  -- column
-  -- -> IndexColumn
-  -- -> (NotApplicableExit :: STM ())
-  -- -> (Exit :: (StayComposed? -> NewColumn -> STM ()))
-  -- -> EdhTx
-  extract'column'fancy ::
-    t ->
-    Column ->
-    STM () ->
-    (Bool -> Column -> STM ()) ->
-    EdhTx
+withColumnOf ::
+  forall a m.
+  (Monad m, Typeable a) =>
+  Object ->
+  m () ->
+  (forall c f. ManagedColumn c f a => c a -> m ()) ->
+  m ()
+withColumnOf !obj !naExit !exit = case dynamicHostData obj of
+  Nothing -> naExit
+  Just dd -> case fromDynamic dd of
+    Nothing -> naExit
+    Just (SomeColumn (col :: c b)) -> case eqT of
+      Nothing -> naExit
+      Just (Refl :: a :~: b) -> exit col
 
--- | A column is a 1-dimensional array with pre-allocated storage capacity,
--- safely typed for data manipulation.
---
--- 'Column' serves technically as a monomorphic type, wrapping an actually
--- polymorphically-typed instance value, so as to be the host storage (which
--- has to be monomorphic to be casted to 'Dynamic' value) of an Edh object
--- wrapping it to the scripting surface.
-data Column where
-  Column :: (Typeable t, ManagedColumn t) => t -> Column
+withColObj ::
+  forall m.
+  Monad m =>
+  Object ->
+  m () ->
+  (forall c f a. ManagedColumn c f a => c a -> m ()) ->
+  m ()
+withColObj !obj naExit !exit = case dynamicHostData obj of
+  Nothing -> naExit
+  Just dd -> case fromDynamic dd of
+    Nothing -> naExit
+    Just (SomeColumn col) -> exit col
 
-columnCapacity :: Column -> STM Int
-columnCapacity (Column !mcol) = flatArrayCapacity <$> view'column'data mcol
-
-columnDataType :: Column -> DataType
-columnDataType (Column !mcol) = data'type'of'column mcol
-
-viewColumnData :: Column -> STM FlatArray
-viewColumnData (Column !mcol) = view'column'data mcol
-
-readColumnLength :: Column -> STM Int
-readColumnLength (Column !mcol) = read'column'length mcol
-
-growColumnCapacity :: Column -> Int -> (FlatArray -> STM ()) -> EdhTx
-growColumnCapacity (Column !mcol) = grow'column'capacity mcol
-
-markColumnLength :: Column -> Int -> STM () -> EdhTx
-markColumnLength (Column !mcol) = mark'column'length mcol
-
-unsafeReadColumnCell ::
-  EdhThreadState -> Column -> Int -> (EdhValue -> STM ()) -> STM ()
-unsafeReadColumnCell !ets (Column !col) !idx !exit =
-  view'column'data col
-    >>= \ !cs -> flat'array'read (data'type'of'column col) ets cs idx exit
-
-unsafeWriteColumnCell ::
+withThisColObj ::
   EdhThreadState ->
-  Column ->
-  Int ->
-  EdhValue ->
-  (EdhValue -> STM ()) ->
+  (forall c f a. ManagedColumn c f a => (Object, c a) -> STM ()) ->
   STM ()
-unsafeWriteColumnCell !ets (Column !col) !idx !val !exit =
-  view'column'data col
-    >>= \ !cs -> flat'array'write (data'type'of'column col) ets cs idx val exit
+withThisColObj !ets !exit = withColObj this nac $ \ !col -> exit (this, col)
+  where
+    this = edh'scope'this $ contextScope $ edh'context ets
+    nac = throwEdh ets EvalError "bug: non-column object of Column class"
 
-unsafeFillColumn ::
-  EdhThreadState -> Column -> EdhValue -> [Int] -> STM () -> STM ()
-unsafeFillColumn !ets (Column !col) !val !idxs !exit =
-  fromEdh ets val $ \ !sv ->
-    view'column'data col >>= \ !cs ->
-      flat'array'update
-        (data'type'of'column col)
-        ets
-        [(i, sv) | i <- idxs]
-        cs
-        exit
-
+{-
 sliceColumn ::
   EdhThreadState ->
   Object ->
@@ -255,35 +216,4 @@ extractColumnFancy !ets !thatCol !colIdx !naExit !exit =
               else
                 edhCreateHostObj (edh'obj'class thisCol) colNew
                   >>= exit
-
-data ColumnOf t = ColumnOf !Column !Object
-
-typedColumn :: forall t. ColumnOf t -> Column
-typedColumn (ColumnOf col _obj) = col
-
-instance Typeable t => ScriptArgAdapter (ColumnOf t) where
-  adaptEdhArg !v !exit = case edhUltimate v of
-    EdhObject o -> case edh'obj'store o of
-      HostStore dd -> case fromDynamic dd of
-        Just col@(Column !mcol) -> do
-          let dt = data'type'of'column mcol
-          if isDataTypeFor @t dt
-            then exitEdhTx exit $ ColumnOf col o
-            else
-              throwEdhTx UsageError $
-                "wrong dtype for "
-                  <> T.pack (show $ typeRep @t)
-                  <> ": "
-                  <> data'type'identifier dt
-        Nothing -> badVal
-      _ -> badVal
-    _ -> badVal
-    where
-      badVal = edhValueDescTx v $ \ !badDesc ->
-        throwEdhTx UsageError $
-          "Column of dtype="
-            <> T.pack (show $ typeRep @t)
-            <> " expected but given: "
-            <> badDesc
-
-  adaptedArgValue (ColumnOf _col !obj) = EdhObject obj
+-}

@@ -4,6 +4,8 @@ module Dim.Float where
 
 -- import           Debug.Trace
 
+{-
+
 import Control.Concurrent.STM
 import Data.Dynamic
 import Dim.Column
@@ -152,3 +154,5 @@ floatOpProc !fop (mandatoryArg -> !colObj) !exit !ets =
                   (Column $ InMemColumn dt rcsv rclv)
                   $ \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
         _ -> throwEdh ets UsageError "host dtype not supported"
+
+-}

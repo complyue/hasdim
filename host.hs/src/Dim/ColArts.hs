@@ -16,15 +16,18 @@ import Dim.XCHG
 import Foreign hiding (void)
 import GHC.Float
 import Language.Edh.EHI
+import Type.Reflection
 import Prelude
 
+{-
+
 foldOpProc ::
-  "col" !: Column ->
+  "col" !: SomeColumn ->
   "identityVal" !: EdhValue ->
   "associativeOp" !: (Text -> Dynamic) ->
   EdhHostProc
 foldOpProc
-  (mandatoryArg -> Column !col)
+  (mandatoryArg -> SomeColumn !col)
   (mandatoryArg -> !identVal)
   (mandatoryArg -> !getOp)
   !exit
@@ -510,6 +513,7 @@ nonzeroIdxColumn !ets (Column !colMask) !exit =
       exit $ Column $ InMemColumn dtIntp csvRtn clvRtn
   where
     dtIntp = makeDeviceDataType @Int "intp"
+-}
 
 createColumnClass :: Object -> Scope -> STM Object
 createColumnClass !defaultDt !clsOuterScope =
@@ -520,12 +524,12 @@ createColumnClass !defaultDt !clsOuterScope =
           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
             | (nm, vc, hp) <-
                 [ ("__cap__", EdhMethod, wrapHostProc colCapProc),
-                  ("__grow__", EdhMethod, wrapHostProc colGrowProc),
                   ("__len__", EdhMethod, wrapHostProc colLenProc),
+                  {-
+                  ("__grow__", EdhMethod, wrapHostProc colGrowProc),
                   ("__mark__", EdhMethod, wrapHostProc colMarkLenProc),
                   ("([])", EdhMethod, wrapHostProc colIdxReadProc),
                   ("([=])", EdhMethod, wrapHostProc colIdxWriteProc),
-                  ("copy", EdhMethod, wrapHostProc colCopyProc),
                   ("__blob__", EdhMethod, wrapHostProc colBlobProc),
                   ("__repr__", EdhMethod, wrapHostProc colReprProc),
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
@@ -642,7 +646,9 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("(//=)", EdhMethod, wrapHostProc $ colInpProc divIntOp),
                   ("(**)", EdhMethod, wrapHostProc $ colOpProc powOp),
                   ("(**.)", EdhMethod, wrapHostProc $ colOpProc powToOp),
-                  ("(**=)", EdhMethod, wrapHostProc $ colInpProc powOp)
+                  ("(**=)", EdhMethod, wrapHostProc $ colInpProc powOp),
+                  -}
+                  ("copy", EdhMethod, wrapHostProc colCopyProc)
                 ]
           ]
             ++ [ (AttrByName nm,) <$> mkHostProperty clsScope nm getter setter
@@ -671,13 +677,63 @@ createColumnClass !defaultDt !clsOuterScope =
           throwEdh etsCtor UsageError $
             "column length should be zero or a positive integer, not "
               <> T.pack (show ctorLen)
-        | otherwise =
-          castObjectStore dto >>= \case
-            Nothing -> throwEdh etsCtor UsageError "invalid dtype"
-            Just (_, !dt) ->
-              runEdhTx etsCtor $
-                createInMemColumn dt ctorCap ctorLen $
-                  ctorExit Nothing . HostStore . toDyn
+        | otherwise = withDataType dto badDtype devDataCol dirDataCol
+        where
+          devDataCol :: DeviceDataType -> STM ()
+          devDataCol (DeviceDataType _dti dth _ _ _) =
+            dth $ \(_ :: TypeRep a) -> runEdhTx etsCtor $
+              edhContIO $ do
+                (_fp, !cs) <- newDeviceArray @a ctorCap
+                atomically $ do
+                  !csv <- newTMVar cs
+                  !clv <- newTVar ctorLen
+                  ctorExit Nothing $
+                    HostStore $
+                      toDyn $ SomeColumn $ InMemDevCol @a csv clv
+
+          dirDataCol :: DirectDataType -> STM ()
+          dirDataCol (DirectDataType _dti dvh _) =
+            dvh $ \(fill'val :: a) -> runEdhTx etsCtor $
+              edhContIO $ do
+                (_iov, !cs) <- newDirectArray @a fill'val ctorCap
+                atomically $ do
+                  !csv <- newTMVar cs
+                  !clv <- newTVar ctorLen
+                  ctorExit Nothing $
+                    HostStore $
+                      toDyn $ SomeColumn $ InMemDirCol @a csv clv
+
+          badDtype = throwEdh etsCtor UsageError "invalid dtype"
+
+    colDtypeProc :: EdhHostProc
+    colDtypeProc !exit !ets = undefined
+
+    colCopyProc :: EdhHostProc
+    colCopyProc !exit !ets = withThisColObj ets $ \(!this, !col) ->
+      runEdhTx ets $
+        read'column'length col $ \ !cl ->
+          copy'column'slice col 0 cl 1 $ \(disp, col') _ets -> case disp of
+            StayComposed -> edhCloneHostObj ets this that col' $
+              \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
+            ExtractAlone ->
+              edhCreateHostObj (edh'obj'class this) col'
+                >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
+      where
+        that = edh'scope'that $ contextScope $ edh'context ets
+
+    colCapProc :: EdhHostProc
+    colCapProc !exit !ets = withThisColObj ets $ \(_this, !col) ->
+      runEdhTx ets $
+        view'column'data col $ \(cs, _cl) ->
+          exitEdhTx exit $ EdhDecimal $ fromIntegral $ array'capacity cs
+
+    colLenProc :: EdhHostProc
+    colLenProc !exit !ets = withThisColObj ets $ \(_this, !col) ->
+      runEdhTx ets $
+        read'column'length col $ \ !len ->
+          exitEdhTx exit $ EdhDecimal $ fromIntegral len
+
+{-
 
     dtYesNo = makeDeviceDataType @YesNo "yesno"
 
@@ -694,25 +750,10 @@ createColumnClass !defaultDt !clsOuterScope =
                 exitEdh ets exit $
                   EdhObject $ edh'scope'that $ contextScope $ edh'context ets
 
-    colCapProc :: EdhHostProc
-    colCapProc !exit !ets = withThisHostObj ets $ \ !col ->
-      columnCapacity col
-        >>= \ !cap -> exitEdh ets exit $ EdhDecimal $ fromIntegral cap
-
-    colLenProc :: EdhHostProc
-    colLenProc !exit !ets = withThisHostObj ets $ \(Column !col) ->
-      read'column'length col
-        >>= \ !len -> exitEdh ets exit $ EdhDecimal $ fromIntegral len
-
     colMarkLenProc :: "newLen" !: Int -> EdhHostProc
     colMarkLenProc (mandatoryArg -> !newLen) !exit !ets =
       withThisHostObj ets $ \(Column !col) ->
         runEdhTx ets $ mark'column'length col newLen $ exitEdh ets exit nil
-
-    colDtypeProc :: EdhHostProc
-    colDtypeProc !exit !ets = withThisHostObj ets $ \(Column !col) ->
-      exitEdh ets exit $
-        EdhString $ data'type'identifier $ data'type'of'column col
 
     colBlobProc :: EdhHostProc
     colBlobProc !exit !ets =
@@ -884,12 +925,6 @@ createColumnClass !defaultDt !clsOuterScope =
     colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
     colIdxWriteProc !idxVal !other !exit !ets =
       withThisHostObj ets $ \ !col -> idxAssignColumn col idxVal other exit ets
-
-    colCopyProc :: EdhHostProc
-    colCopyProc !exit !ets =
-      copyColumn ets thatCol $ exitEdh ets exit . EdhObject
-      where
-        !thatCol = edh'scope'that $ contextScope $ edh'context ets
 
     colCmpProc :: (Ordering -> Bool) -> EdhValue -> EdhHostProc
     colCmpProc !cmp !other !exit !ets = withThisHostObj ets $ \ !col ->
@@ -1566,3 +1601,5 @@ whereProc
     | odNull kwargs = throwEdh ets UsageError "not implemented yet."
 whereProc !apk _ !ets =
   throwEdh ets UsageError $ "invalid args to where()" <> T.pack (show apk)
+
+-}

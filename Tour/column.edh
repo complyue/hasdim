@@ -3,19 +3,26 @@ hd = { import * 'dim' }
 effect import * 'dim/effects'
 
 
+# %%
+default'filled = empty(5)
+zero'filled = zeros(5)
+one'filled = ones(5)
+
+
+# %%
 class MyColumn { extends Column
   method __init__( name as this.name, ***_ ) pass
-  method __repr__(** kwargs ) {
+  method __repr__( **kwargs ) {
     '# ' ++ this.name ++ ' #\n'
-    ++ super.__repr__(** kwargs )
+    ++ super.__repr__( **kwargs )
   }
-  method __show__(** kwargs ) {
+  method __show__( **kwargs ) {
     '# ' ++ this.name ++ ' #\n'
-    ++ super.__show__(** kwargs )
+    ++ super.__show__( **kwargs )
   }
-  method __desc__(** kwargs ) {
+  method __desc__( **kwargs ) {
     '# ' ++ this.name ++ ' #\n'
-    ++ super.__desc__(** kwargs )
+    ++ super.__desc__( **kwargs )
   }
 }
 

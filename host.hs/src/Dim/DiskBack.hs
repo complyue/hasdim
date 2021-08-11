@@ -2,6 +2,8 @@ module Dim.DiskBack where
 
 -- import           Debug.Trace
 
+{-
+
 import Control.Concurrent.STM
 import Control.Exception (bracket)
 import Data.List.NonEmpty (NonEmpty (..))
@@ -240,3 +242,5 @@ instance ManagedColumn DbColumn where
               !csvRtn <- newTVar rfa
               !clvRtn <- newTVar icl
               exit False $ Column $ InMemColumn dt csvRtn clvRtn
+
+-}
