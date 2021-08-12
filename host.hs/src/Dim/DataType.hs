@@ -129,10 +129,10 @@ mkBoxDataType ::
   DataTypeIdent ->
   a ->
   DirectDataType
-mkBoxDataType !dti !def'val =
+mkBoxDataType !dti !defv =
   DirectDataType
     dti
-    ($ def'val)
+    ($ defv)
     (\naExit _exit -> naExit)
 
 mkRealFracDataType ::
@@ -141,10 +141,10 @@ mkRealFracDataType ::
   DataTypeIdent ->
   a ->
   DirectDataType
-mkRealFracDataType !dti !def'val =
+mkRealFracDataType !dti !defv =
   DirectDataType
     dti
-    ($ def'val)
+    ($ defv)
     (\_naExit exit -> exit (typeRep @a))
 
 withDeviceDataType ::
