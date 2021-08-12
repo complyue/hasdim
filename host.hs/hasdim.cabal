@@ -185,7 +185,6 @@ library
     , base                  >=4.12
     , binary
     , bytestring
-    , cedh
     , clock
     , containers
     , directory
