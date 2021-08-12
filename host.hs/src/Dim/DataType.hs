@@ -152,7 +152,7 @@ withDeviceDataType ::
   Monad m =>
   Object ->
   m () ->
-  (forall a. (EdhXchg a, Storable a, Typeable a) => TypeRep a -> m ()) ->
+  (forall a. (Eq a, Storable a, EdhXchg a, Typeable a) => TypeRep a -> m ()) ->
   m ()
 withDeviceDataType !dto !naExit !exit = case edh'obj'store dto of
   HostStore (Dynamic trDataType monoDataType) ->
@@ -166,7 +166,7 @@ withDirectDataType ::
   Monad m =>
   Object ->
   m () ->
-  (forall a. (EdhXchg a, Eq a, Typeable a) => a -> m ()) ->
+  (forall a. (Eq a, EdhXchg a, Typeable a) => a -> m ()) ->
   m ()
 withDirectDataType !dto !naExit !exit = case edh'obj'store dto of
   HostStore (Dynamic trDataType monoDataType) ->

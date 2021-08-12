@@ -5,7 +5,7 @@ module Dim.Column where
 import Control.Concurrent.STM
 import Data.Dynamic
 import qualified Data.Text as T
-import Data.Typeable hiding (typeRep)
+import Data.Typeable hiding (TypeRep, typeRep)
 import Dim.DataType
 import Dim.XCHG
 import Foreign
@@ -34,7 +34,7 @@ class
 
   -- called when a new capacity is requested for the column
   grow'column'capacity ::
-    c a -> ArrayCapacity -> EdhTxExit (f a, ArrayLength) -> EdhTx
+    c a -> ArrayCapacity -> EdhTxExit (f a, ArrayCapacity) -> EdhTx
 
   -- called when a new length is marked for the column
   mark'column'length :: c a -> ArrayLength -> EdhTxExit () -> EdhTx
@@ -63,7 +63,7 @@ data SomeColumn
       Typeable (f a),
       Typeable a
     ) =>
-    SomeColumn (c a)
+    SomeColumn (TypeRep f) (c a)
 
 withColumnOf ::
   forall a m.
@@ -76,7 +76,7 @@ withColumnOf !obj !naExit !exit = case dynamicHostData obj of
   Nothing -> naExit
   Just dd -> case fromDynamic dd of
     Nothing -> naExit
-    Just (SomeColumn (col :: c b)) -> case eqT of
+    Just (SomeColumn _ (col :: c b)) -> case eqT of
       Nothing -> naExit
       Just (Refl :: a :~: b) -> exit col
 
@@ -109,6 +109,59 @@ withColumnSelfOf !ets !exit !colExit = do
     withComposition [] = naExit
     withComposition (o : rest) =
       withColumnOf @a o (withComposition rest) (colExit o)
+
+withColumnSelf ::
+  EdhThreadState ->
+  EdhTxExit EdhValue ->
+  (forall c f a. ManagedColumn c f a => Object -> c a -> STM ()) ->
+  STM ()
+withColumnSelf !ets !exit !colExit = do
+  supers <- readTVar $ edh'obj'supers that
+  withComposition $ that : supers
+  where
+    that = edh'scope'that $ contextScope $ edh'context ets
+    naExit = exitEdh ets exit edhNA
+
+    withComposition :: [Object] -> STM ()
+    withComposition [] = naExit
+    withComposition (o : rest) = case fromDynamic =<< dynamicHostData o of
+      Nothing -> withComposition rest
+      Just (SomeColumn _ col) -> colExit o col
+
+withStorableColumnSelfOf ::
+  forall a.
+  Typeable a =>
+  EdhThreadState ->
+  EdhTxExit EdhValue ->
+  (forall c. ManagedColumn c DeviceArray a => Object -> c a -> STM ()) ->
+  STM ()
+withStorableColumnSelfOf !ets !exit !colExit = do
+  supers <- readTVar $ edh'obj'supers that
+  withComposition $ that : supers
+  where
+    that = edh'scope'that $ contextScope $ edh'context ets
+    naExit = exitEdh ets exit edhNA
+
+    withComposition :: [Object] -> STM ()
+    withComposition [] = naExit
+    withComposition (o : rest) =
+      withStorableColumnOf o (withComposition rest) (colExit o)
+
+    withStorableColumnOf ::
+      Object ->
+      STM () ->
+      (forall c. ManagedColumn c DeviceArray a => c a -> STM ()) ->
+      STM ()
+    withStorableColumnOf !obj !naExit' !exit' = case dynamicHostData obj of
+      Nothing -> naExit'
+      Just dd -> case fromDynamic dd of
+        Nothing -> naExit'
+        Just (SomeColumn cstr (col :: c b)) -> case eqT of
+          Nothing -> naExit'
+          Just (Refl :: a :~: b) ->
+            case cstr `eqTypeRep` typeRep @DeviceArray of
+              Nothing -> naExit'
+              Just HRefl -> exit' col
 
 {-
 sliceColumn ::

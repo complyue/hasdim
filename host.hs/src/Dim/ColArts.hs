@@ -1567,21 +1567,21 @@ createColumnClass !defaultDt !clsOuterScope =
         sequence $
           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
             | (nm, vc, hp) <-
-                [ {-
+                [ ("__init__", EdhMethod, wrapHostProc col__init__),
                   ("__cap__", EdhMethod, wrapHostProc colCapProc),
                   ("__len__", EdhMethod, wrapHostProc colLenProc),
                   ("__grow__", EdhMethod, wrapHostProc colGrowProc),
                   ("__mark__", EdhMethod, wrapHostProc colMarkLenProc),
-                  ("([])", EdhMethod, wrapHostProc colIdxReadProc),
-                  ("([=])", EdhMethod, wrapHostProc colIdxWriteProc),
                   ("__blob__", EdhMethod, wrapHostProc colBlobProc),
+                  {-
                   ("__repr__", EdhMethod, wrapHostProc colReprProc),
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
                   ("__desc__", EdhMethod, wrapHostProc colDescProc),
                   ("__json__", EdhMethod, wrapHostProc colJsonProc),
-                  ("copy", EdhMethod, wrapHostProc colCopyProc),
+                  ("([])", EdhMethod, wrapHostProc colIdxReadProc),
+                  ("([=])", EdhMethod, wrapHostProc colIdxWriteProc),
                   -}
-                  ("__init__", EdhMethod, wrapHostProc col__init__)
+                  ("copy", EdhMethod, wrapHostProc colCopyProc)
                 ]
           ]
             ++ [ (AttrByName nm,) <$> mkHostProperty clsScope nm getter setter
@@ -1622,7 +1622,9 @@ createColumnClass !defaultDt !clsOuterScope =
                   !clv <- newTVar ctorLen
                   ctorExit Nothing $
                     HostStore $
-                      toDyn $ SomeColumn $ InMemDevCol @a csv clv
+                      toDyn $
+                        SomeColumn (typeRep @DeviceArray) $
+                          InMemDevCol @a csv clv
 
           dirDataCol :: DirectDataType -> STM ()
           dirDataCol (DirectDataType _dti dvh _) =
@@ -1634,7 +1636,9 @@ createColumnClass !defaultDt !clsOuterScope =
                   !clv <- newTVar ctorLen
                   ctorExit Nothing $
                     HostStore $
-                      toDyn $ SomeColumn $ InMemDirCol @a csv clv
+                      toDyn $
+                        SomeColumn (typeRep @DirectArray) $
+                          InMemDirCol @a csv clv
 
           badDtype = throwEdh etsCtor UsageError "invalid dtype"
 
@@ -1667,51 +1671,17 @@ createColumnClass !defaultDt !clsOuterScope =
               then return ()
               else extendsDt rest
 
-    colDtypeProc :: EdhHostProc
-    colDtypeProc !exit !ets = readTVar (edh'obj'supers this) >>= findSuperDto
-      where
-        scope = contextScope $ edh'context ets
-        this = edh'scope'this scope
+    colCapProc :: EdhHostProc
+    colCapProc !exit !ets = withColumnSelf ets exit $ \_objCol !col ->
+      runEdhTx ets $
+        view'column'data col $ \(cs, _cl) ->
+          exitEdhTx exit $ EdhDecimal $ fromIntegral $ array'capacity cs
 
-        findSuperDto :: [Object] -> STM ()
-        findSuperDto [] = exitEdh ets exit nil -- impossible actually
-        -- this is right and avoids unnecessary checks in vastly usual cases
-        findSuperDto [dto] = exitEdh ets exit $ EdhObject dto
-        -- safe guard in case a Column instance has been further extended
-        findSuperDto (maybeDto : rest) =
-          withDataType maybeDto (findSuperDto rest) gotDt gotDt
-          where
-            gotDt :: forall dt. dt -> STM ()
-            gotDt _ = exitEdh ets exit $ EdhObject maybeDto
-
--- colCopyProc :: EdhHostProc
--- colCopyProc !exit !ets = withThisColObj ets $ \(!this, !col) ->
---   runEdhTx ets $
---     read'column'length col $ \ !cl ->
---       copy'column'slice col 0 cl 1 $ \(disp, col') _ets -> case disp of
---         StayComposed -> edhCloneHostObj ets this that col' $
---           \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
---         ExtractAlone ->
---           edhCreateHostObj (edh'obj'class this) col'
---             >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
---   where
---     that = edh'scope'that $ contextScope $ edh'context ets
-
--- colCapProc :: EdhHostProc
--- colCapProc !exit !ets = withThisColObj ets $ \(_this, !col) ->
---   runEdhTx ets $
---     view'column'data col $ \(cs, _cl) ->
---       exitEdhTx exit $ EdhDecimal $ fromIntegral $ array'capacity cs
-
--- colLenProc :: EdhHostProc
--- colLenProc !exit !ets = withThisColObj ets $ \(_this, !col) ->
---   runEdhTx ets $
---     read'column'length col $ \ !len ->
---       exitEdhTx exit $ EdhDecimal $ fromIntegral len
-
-{-
-
-    dtYesNo = makeDeviceDataType @YesNo "yesno"
+    colLenProc :: EdhHostProc
+    colLenProc !exit !ets = withColumnSelf ets exit $ \_objCol !col ->
+      runEdhTx ets $
+        read'column'length col $ \ !len ->
+          exitEdhTx exit $ EdhDecimal $ fromIntegral len
 
     colGrowProc :: "newCap" !: Int -> EdhHostProc
     colGrowProc (mandatoryArg -> !newCap) !exit !ets =
@@ -1719,35 +1689,71 @@ createColumnClass !defaultDt !clsOuterScope =
         then
           throwEdh ets UsageError $
             "invalid newCap: " <> T.pack (show newCap)
-        else withThisHostObj ets $ \(Column !col) ->
+        else withColumnSelf ets exit $ \_objCol !col ->
           runEdhTx ets $
             grow'column'capacity col newCap $
               const $
-                exitEdh ets exit $
+                exitEdhTx exit $
                   EdhObject $ edh'scope'that $ contextScope $ edh'context ets
 
     colMarkLenProc :: "newLen" !: Int -> EdhHostProc
     colMarkLenProc (mandatoryArg -> !newLen) !exit !ets =
-      withThisHostObj ets $ \(Column !col) ->
-        runEdhTx ets $ mark'column'length col newLen $ exitEdh ets exit nil
+      withColumnSelf ets exit $ \_objCol !col ->
+        runEdhTx ets $
+          mark'column'length col newLen $
+            const $
+              exitEdhTx exit $
+                EdhObject $ edh'scope'that $ contextScope $ edh'context ets
 
     colBlobProc :: EdhHostProc
-    colBlobProc !exit !ets =
-      withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Column>") $
-        \(Column !col) -> case data'type'proxy $ data'type'of'column col of
-          DeviceDataType _ !item'size _item'align -> do
-            !cs <- view'column'data col
-            !cl <- read'column'length col
-            case cs of
-              DeviceArray _cap !fp ->
-                exitEdh ets exit $
-                  EdhBlob $
-                    B.fromForeignPtr
-                      (castForeignPtr fp)
-                      0
-                      (cl * item'size)
-              _ -> exitEdh ets exit edhNA
-          _ -> exitEdh ets exit edhNA
+    colBlobProc !exit !ets = getColDtype this $ \ !dto ->
+      withDeviceDataType dto naExit $ \(_ :: TypeRep a) ->
+        withStorableColumnSelfOf @a ets exit $ \_objCol !col -> runEdhTx ets $
+          view'column'data col $ \(DeviceArray _cap !fp, !cl) ->
+            exitEdhTx exit $
+              EdhBlob $
+                B.fromForeignPtr
+                  (castForeignPtr fp)
+                  0
+                  (cl * sizeOf (undefined :: a))
+      where
+        scope = contextScope $ edh'context ets
+        this = edh'scope'this scope
+        naExit = exitEdh ets exit edhNA
+
+    colCopyProc :: EdhHostProc
+    colCopyProc !exit !ets = withColumnSelf ets exit $ \ !objCol !col ->
+      runEdhTx ets $
+        read'column'length col $ \ !cl ->
+          copy'column'slice col 0 cl 1 $ \(disp, col') _ets -> case disp of
+            StayComposed -> edhCloneHostObj ets objCol objCol col' $
+              \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
+            ExtractAlone -> getColDtype objCol $ \ !dto ->
+              edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
+                >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
+
+    getColDtype :: Object -> (Object -> STM ()) -> STM ()
+    getColDtype !objCol !exit =
+      readTVar (edh'obj'supers objCol) >>= findSuperDto
+      where
+        findSuperDto :: [Object] -> STM ()
+        findSuperDto [] = error "bug: no dtype super for column"
+        -- this is right and avoids unnecessary checks in vastly usual cases
+        findSuperDto [dto] = exit dto
+        -- safe guard in case a Column instance has been further extended
+        findSuperDto (maybeDto : rest) =
+          withDataType maybeDto (findSuperDto rest) gotDt gotDt
+          where
+            gotDt :: forall dt. dt -> STM ()
+            gotDt _ = exit maybeDto
+
+    colDtypeProc :: EdhHostProc
+    colDtypeProc !exit !ets = getColDtype this $ exitEdh ets exit . EdhObject
+      where
+        scope = contextScope $ edh'context ets
+        this = edh'scope'this scope
+
+{-
 
     colReprProc :: EdhHostProc
     colReprProc !exit !ets =
