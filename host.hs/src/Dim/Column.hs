@@ -91,41 +91,24 @@ withColumnOf' !val !naExit !exit = case edhUltimate val of
   EdhObject !obj -> withColumnOf obj naExit exit
   _ -> naExit
 
-withThatColumnOf ::
+withColumnSelfOf ::
   forall a.
   Typeable a =>
   EdhThreadState ->
-  (forall c f. ManagedColumn c f a => c a -> STM ()) ->
+  EdhTxExit EdhValue ->
+  (forall c f. ManagedColumn c f a => Object -> c a -> STM ()) ->
   STM ()
-withThatColumnOf !ets !exit =
-  withColumnOf @a that naExit exit
+withColumnSelfOf !ets !exit !colExit = do
+  supers <- readTVar $ edh'obj'supers that
+  withComposition $ that : supers
   where
     that = edh'scope'that $ contextScope $ edh'context ets
-    naExit =
-      throwEdh ets EvalError $
-        "not a Column object of type: " <> T.pack (show $ typeRep @a)
+    naExit = exitEdh ets exit edhNA
 
-withColObj ::
-  forall m.
-  Monad m =>
-  Object ->
-  m () ->
-  (forall c f a. ManagedColumn c f a => c a -> m ()) ->
-  m ()
-withColObj !obj naExit !exit = case dynamicHostData obj of
-  Nothing -> naExit
-  Just dd -> case fromDynamic dd of
-    Nothing -> naExit
-    Just (SomeColumn col) -> exit col
-
-withThisColObj ::
-  EdhThreadState ->
-  (forall c f a. ManagedColumn c f a => (Object, c a) -> STM ()) ->
-  STM ()
-withThisColObj !ets !exit = withColObj this nac $ \ !col -> exit (this, col)
-  where
-    this = edh'scope'this $ contextScope $ edh'context ets
-    nac = throwEdh ets EvalError "bug: non-column object of Column class"
+    withComposition :: [Object] -> STM ()
+    withComposition [] = naExit
+    withComposition (o : rest) =
+      withColumnOf @a o (withComposition rest) (colExit o)
 
 {-
 sliceColumn ::

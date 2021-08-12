@@ -100,84 +100,17 @@ installDimBatteries !world = do
   !moduDtypes <- installEdhModule world "dim/dtypes" $ \ !ets !exit -> do
     let !moduScope = contextScope $ edh'context ets
 
-    !dtClass <- createDataTypeClass moduScope
-    !dtAlias <- builtinDataTypes dtClass
+    -- !dtAlias <- builtinDataTypes dtClass
 
     let !moduArts =
-          (AttrByName "dtype", EdhObject dtClass) :
-            [(AttrByName k, EdhObject dto) | (k, dto) <- dtAlias]
+          []
+    -- (AttrByName k, EdhObject dto) | (k, dto) <- dtAlias
 
     iopdUpdate moduArts $ edh'scope'entity moduScope
     prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
       iopdUpdate moduArts esExps
 
     exit
-
-  void $
-    installEdhModule world "dim/dtypes/effects" $ \ !ets !exit -> do
-      let !moduScope = contextScope $ edh'context ets
-      {-
-
-      !moduArts <-
-        sequence $
-          [ (AttrByName $ "__DataComparator_" <> dti <> "__",)
-              <$> fmap EdhObject (edhWrapHostValue ets hv)
-            | (dti, hv) <-
-                [ ("float64", deviceDataOrdering @Double),
-                  ("float32", deviceDataOrdering @Float),
-                  ("int64", deviceDataOrdering @Int64),
-                  ("int32", deviceDataOrdering @Int32),
-                  ("int8", deviceDataOrdering @Int8),
-                  ("byte", deviceDataOrdering @Int8),
-                  ("intp", deviceDataOrdering @Int),
-                  ("yesno", deviceDataOrdering @YesNo),
-                  ("decimal", hostDataOrdering @D.Decimal),
-                  ("box", edhDataOrdering)
-                ]
-          ]
-            ++ [ (AttrByName $ "__DataOperator_" <> dti <> "__",)
-                   <$> fmap EdhObject (edhWrapHostValue ets hv)
-                 | (dti, hv) <-
-                     [ ("float64", deviceDataOperations @Double),
-                       ("float32", deviceDataOperations @Float),
-                       ("int64", deviceDataOperations @Int64),
-                       ("int32", deviceDataOperations @Int32),
-                       ("int8", deviceDataOperations @Int8),
-                       ("byte", deviceDataOperations @Int8),
-                       ("intp", deviceDataOperations @Int),
-                       ("yesno", deviceDataOperations @YesNo),
-                       ("decimal", hostDataOperations @D.Decimal D.nan),
-                       ("box", edhDataOperations edhNA)
-                     ]
-               ]
-            ++ [ (AttrByName $ "__NumDataType_" <> dti <> "__",)
-                   <$> fmap EdhObject (edhWrapHostValue ets hv)
-                 | (dti, hv) <-
-                     [ ("float64", deviceDataNumbering @Double),
-                       ("float32", deviceDataNumbering @Float),
-                       ("int64", deviceDataNumbering @Int64),
-                       ("int32", deviceDataNumbering @Int32),
-                       ("int8", deviceDataNumbering @Int8),
-                       ("byte", deviceDataNumbering @Int8),
-                       ("intp", deviceDataNumbering @Int),
-                       ("decimal", hostDataNumbering @D.Decimal D.nan),
-                       ("box", edhDataNumbering)
-                     ]
-               ]
-            ++ [ (AttrByName $ "__FloatDataOperator_" <> dti <> "__",)
-                   <$> fmap EdhObject (edhWrapHostValue ets hv)
-                 | (dti, hv) <-
-                     [ ("float64", floatOperations @Double),
-                       ("float32", floatOperations @Float)
-                     ]
-               ]
-
-      iopdUpdate moduArts $ edh'scope'entity moduScope
-      prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
-        iopdUpdate moduArts esExps
-      -}
-
-      exit
 
   void $
     installEdhModule world "dim/primitive/ops" $ \ !ets !exit -> do

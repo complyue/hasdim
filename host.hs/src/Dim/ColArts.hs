@@ -518,40 +518,217 @@ nonzeroIdxColumn !ets (Column !colMask) !exit =
     dtIntp = makeDeviceDataType @Int "intp"
 -}
 
+mkYesNoSuperDt :: DataTypeIdent -> Scope -> STM Object
+mkYesNoSuperDt !dti !outerScope = do
+  !dtCls <-
+    mkHostClass outerScope dti (allocEdhObj dtypeAllocator) [] $
+      const $ return ()
+  !idObj <- unsafeIOToSTM newUnique
+  !supersVar <- newTVar []
+  let !dtYesNo =
+        Object
+          { edh'obj'ident = idObj,
+            edh'obj'store = dtd,
+            edh'obj'class = dtCls,
+            edh'obj'supers = supersVar
+          }
+  !clsScope <- objectScope dtCls
+  !clsMths <-
+    sequence $
+      [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
+        | (nm, vc, hp) <-
+            [ ( "(==)",
+                EdhMethod,
+                wrapHostProc $
+                  devColCmpProc dtYesNo ((==) :: YesNo -> YesNo -> Bool)
+              ),
+              ( "(==.)",
+                EdhMethod,
+                wrapHostProc $
+                  devColCmpProc dtYesNo ((==) :: YesNo -> YesNo -> Bool)
+              ),
+              ( "(!=)",
+                EdhMethod,
+                wrapHostProc $
+                  devColCmpProc dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
+              ),
+              ( "(!=.)",
+                EdhMethod,
+                wrapHostProc $
+                  devColCmpProc dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
+              ),
+              ("__eq__", EdhMethod, wrapHostProc dtypeEqProc)
+            ]
+      ]
+  let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
+  iopdUpdate clsArts $ edh'scope'entity clsScope
+  return dtYesNo
+  where
+    !dtd = HostStore $ toDyn $ mkIntDataType @YesNo dti
+
+    dtypeAllocator :: EdhObjectAllocator
+    dtypeAllocator !ctorExit _ets = ctorExit Nothing dtd
+
 mkFloatSuperDt ::
   forall a.
   (RealFloat a, Num a, Storable a, EdhXchg a, Typeable a) =>
+  Object ->
   DataTypeIdent ->
   Scope ->
   STM Object
-mkFloatSuperDt !dti !outerScope = do
+mkFloatSuperDt !dtYesNo !dti !outerScope = do
   !dtCls <- mkHostClass outerScope dti (allocEdhObj dtypeAllocator) [] $
     \ !clsScope -> do
       !clsMths <-
         sequence $
           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
             | (nm, vc, hp) <-
-                [ ( "(+)",
+                [ ( "(==)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((==) :: a -> a -> Bool)
+                  ),
+                  ( "(==.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((==) :: a -> a -> Bool)
+                  ),
+                  ( "(!=)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((/=) :: a -> a -> Bool)
+                  ),
+                  ( "(!=.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((/=) :: a -> a -> Bool)
+                  ),
+                  ( "(>=)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((>=) :: a -> a -> Bool)
+                  ),
+                  ( "(>=.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((<=) :: a -> a -> Bool)
+                  ),
+                  ( "(<=)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((<=) :: a -> a -> Bool)
+                  ),
+                  ( "(<=.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((>=) :: a -> a -> Bool)
+                  ),
+                  ( "(>)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((>) :: a -> a -> Bool)
+                  ),
+                  ( "(>.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((<) :: a -> a -> Bool)
+                  ),
+                  ( "(<)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((<) :: a -> a -> Bool)
+                  ),
+                  ( "(<.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((>) :: a -> a -> Bool)
+                  ),
+                  ( "(+)",
                     EdhMethod,
                     wrapHostProc $ devColOpProc ((+) :: a -> a -> a)
                   ),
-                  -- ("(+.)", EdhMethod, wrapHostProc $ devColOpProc addToOp),
-                  -- ("(+=)", EdhMethod, wrapHostProc $ colInpProc addOp),
-                  -- ("(-)", EdhMethod, wrapHostProc $ devColOpProc subtractOp),
-                  -- ("(-.)", EdhMethod, wrapHostProc $ devColOpProc subtFromOp),
-                  -- ("(-=)", EdhMethod, wrapHostProc $ colInpProc subtractOp),
-                  -- ("(*)", EdhMethod, wrapHostProc $ devColOpProc mulOp),
-                  -- ("(*.)", EdhMethod, wrapHostProc $ devColOpProc mulToOp),
-                  -- ("(*=)", EdhMethod, wrapHostProc $ colInpProc mulOp),
-                  -- ("(/)", EdhMethod, wrapHostProc $ devColOpProc divOp),
-                  -- ("(/.)", EdhMethod, wrapHostProc $ devColOpProc divByOp),
-                  -- ("(/=)", EdhMethod, wrapHostProc $ colInpProc divOp),
-                  -- ("(//)", EdhMethod, wrapHostProc $ devColOpProc divIntOp),
-                  -- ("(//.)", EdhMethod, wrapHostProc $ devColOpProc divIntByOp),
-                  -- ("(//=)", EdhMethod, wrapHostProc $ colInpProc divIntOp),
-                  -- ("(**)", EdhMethod, wrapHostProc $ devColOpProc powOp),
-                  -- ("(**.)", EdhMethod, wrapHostProc $ devColOpProc powToOp),
-                  -- ("(**=)", EdhMethod, wrapHostProc $ colInpProc powOp),
+                  ( "(+.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((+) :: a -> a -> a)
+                  ),
+                  ( "(+=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc ((+) :: a -> a -> a)
+                  ),
+                  ( "(-)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((-) :: a -> a -> a)
+                  ),
+                  ( "(-.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc (flip (-) :: a -> a -> a)
+                  ),
+                  ( "(-=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc ((-) :: a -> a -> a)
+                  ),
+                  ( "(*)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((*) :: a -> a -> a)
+                  ),
+                  ( "(*.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((*) :: a -> a -> a)
+                  ),
+                  ( "(*=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc ((*) :: a -> a -> a)
+                  ),
+                  ( "(/)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((/) :: a -> a -> a)
+                  ),
+                  ( "(/.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc (flip (/) :: a -> a -> a)
+                  ),
+                  ( "(/=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc ((/) :: a -> a -> a)
+                  ),
+                  -- TODO reason about this:
+                  -- https://stackoverflow.com/questions/38588815/rounding-errors-in-python-floor-division
+                  ( "(//)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColOpProc
+                        ( (\ !x !y -> fromInteger $ floor $ x / y) ::
+                            a -> a -> a
+                        )
+                  ),
+                  ( "(//.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColOpProc
+                        ( (\ !x !y -> fromInteger $ floor $ y / x) ::
+                            a -> a -> a
+                        )
+                  ),
+                  ( "(//=)",
+                    EdhMethod,
+                    wrapHostProc $
+                      colInpProc
+                        ( (\ !x !y -> fromInteger $ floor $ x / y) ::
+                            a -> a -> a
+                        )
+                  ),
+                  ( "(**)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((**) :: a -> a -> a)
+                  ),
+                  ( "(**.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc (flip (**) :: a -> a -> a)
+                  ),
+                  ( "(**=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc ((**) :: a -> a -> a)
+                  ),
                   ("__eq__", EdhMethod, wrapHostProc dtypeEqProc)
                 ]
           ]
@@ -573,80 +750,370 @@ mkFloatSuperDt !dti !outerScope = do
     dtypeAllocator :: EdhObjectAllocator
     dtypeAllocator !ctorExit _ets = ctorExit Nothing dtd
 
+mkIntSuperDt ::
+  forall a.
+  (Bits a, Integral a, Num a, Storable a, EdhXchg a, Typeable a) =>
+  Object ->
+  DataTypeIdent ->
+  Scope ->
+  STM Object
+mkIntSuperDt !dtYesNo !dti !outerScope = do
+  !dtCls <- mkHostClass outerScope dti (allocEdhObj dtypeAllocator) [] $
+    \ !clsScope -> do
+      !clsMths <-
+        sequence $
+          [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
+            | (nm, vc, hp) <-
+                [ ( "(==)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((==) :: a -> a -> Bool)
+                  ),
+                  ( "(==.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((==) :: a -> a -> Bool)
+                  ),
+                  ( "(!=)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((/=) :: a -> a -> Bool)
+                  ),
+                  ( "(!=.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((/=) :: a -> a -> Bool)
+                  ),
+                  ( "(>=)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((>=) :: a -> a -> Bool)
+                  ),
+                  ( "(>=.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((<=) :: a -> a -> Bool)
+                  ),
+                  ( "(<=)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((<=) :: a -> a -> Bool)
+                  ),
+                  ( "(<=.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((>=) :: a -> a -> Bool)
+                  ),
+                  ( "(>)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((>) :: a -> a -> Bool)
+                  ),
+                  ( "(>.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((<) :: a -> a -> Bool)
+                  ),
+                  ( "(<)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((<) :: a -> a -> Bool)
+                  ),
+                  ( "(<.)",
+                    EdhMethod,
+                    wrapHostProc $
+                      devColCmpProc dtYesNo ((>) :: a -> a -> Bool)
+                  ),
+                  ( "(+)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((+) :: a -> a -> a)
+                  ),
+                  ( "(+.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((+) :: a -> a -> a)
+                  ),
+                  ( "(+=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc ((+) :: a -> a -> a)
+                  ),
+                  ( "(-)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((-) :: a -> a -> a)
+                  ),
+                  ( "(-.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc (flip (-) :: a -> a -> a)
+                  ),
+                  ( "(-=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc ((-) :: a -> a -> a)
+                  ),
+                  ( "(*)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((*) :: a -> a -> a)
+                  ),
+                  ( "(*.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((*) :: a -> a -> a)
+                  ),
+                  ( "(*=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc ((*) :: a -> a -> a)
+                  ),
+                  ( "(/)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc (div :: a -> a -> a)
+                  ),
+                  ( "(/.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc (flip div :: a -> a -> a)
+                  ),
+                  ( "(/=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc (div :: a -> a -> a)
+                  ),
+                  ( "(//)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc (div :: a -> a -> a)
+                  ),
+                  ( "(//.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc (flip div :: a -> a -> a)
+                  ),
+                  ( "(//=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc (div :: a -> a -> a)
+                  ),
+                  ( "(**)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc intPow
+                  ),
+                  ( "(**.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc $ flip intPow
+                  ),
+                  ( "(**=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc intPow
+                  ),
+                  ( "(&&)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((.&.) :: a -> a -> a)
+                  ),
+                  ( "(&&.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((.&.) :: a -> a -> a)
+                  ),
+                  ( "(||)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((.|.) :: a -> a -> a)
+                  ),
+                  ( "(||.)",
+                    EdhMethod,
+                    wrapHostProc $ devColOpProc ((.|.) :: a -> a -> a)
+                  ),
+                  ( "(&&=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc ((.&.) :: a -> a -> a)
+                  ),
+                  ( "(||=)",
+                    EdhMethod,
+                    wrapHostProc $ colInpProc ((.|.) :: a -> a -> a)
+                  ),
+                  ("__eq__", EdhMethod, wrapHostProc dtypeEqProc)
+                ]
+          ]
+      let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
+      iopdUpdate clsArts $ edh'scope'entity clsScope
+  !idObj <- unsafeIOToSTM newUnique
+  !supersVar <- newTVar []
+  let !dtObj =
+        Object
+          { edh'obj'ident = idObj,
+            edh'obj'store = dtd,
+            edh'obj'class = dtCls,
+            edh'obj'supers = supersVar
+          }
+  return dtObj
+  where
+    !dtd = HostStore $ toDyn $ mkIntDataType @a dti
+
+    dtypeAllocator :: EdhObjectAllocator
+    dtypeAllocator !ctorExit _ets = ctorExit Nothing dtd
+
+    intPow :: a -> a -> a
+    intPow _ 0 = 1
+    intPow x y
+      -- TODO this justifies?
+      | y < 0 = 0 -- to survive `Exception: Negative exponent`
+      | otherwise = x ^ y
+
+devColCmpProc ::
+  forall a.
+  (Eq a, Storable a, EdhXchg a, Typeable a) =>
+  Object ->
+  (a -> a -> Bool) ->
+  EdhValue ->
+  EdhHostProc
+devColCmpProc !dtYesNo !cmp !other !exit !ets =
+  withColumnSelfOf @a ets exit $ \ !objCol !col -> do
+    let exitWithResult ::
+          Typeable (InMemDevCol YesNo) => InMemDevCol YesNo -> STM ()
+        exitWithResult !colResult =
+          edhCreateHostObj' (edh'obj'class objCol) (toDyn colResult) [dtYesNo]
+            >>= exitEdh ets exit . EdhObject
+
+        vecOp = runEdhTx ets $
+          view'column'data col $ \(cs, cl) ->
+            fromEdh @a other $ \rhv -> edhContIO $ do
+              (fp, csResult) <- newDeviceArray @YesNo cl
+              let p = unsafeForeignPtrToPtr fp
+                  go i
+                    | i < 0 = return ()
+                    | otherwise = do
+                      lhev <- array'reader cs i
+                      pokeElemOff p i $ yesOrNo $ cmp lhev rhv
+                      go $ i - 1
+              go $ cl - 1
+              atomically $ do
+                csvResult <- newTMVar csResult
+                clvResult <- newTVar cl
+                exitWithResult $ InMemDevCol csvResult clvResult
+
+        elemOp :: forall c' f'. ManagedColumn c' f' a => c' a -> STM ()
+        elemOp col' = runEdhTx ets $
+          view'column'data col $ \(cs, cl) ->
+            view'column'data col' $ \(cs', cl') ->
+              if cl' /= cl
+                then
+                  throwEdhTx UsageError $
+                    "column length mistmatch: "
+                      <> T.pack (show cl)
+                      <> " vs "
+                      <> T.pack (show cl')
+                else edhContIO $ do
+                  (fp, csResult) <- newDeviceArray @YesNo cl
+                  let p = unsafeForeignPtrToPtr fp
+                      go i
+                        | i < 0 = return ()
+                        | otherwise = do
+                          lhev <- array'reader cs i
+                          rhev <- array'reader cs' i
+                          pokeElemOff p i $ yesOrNo $ cmp lhev rhev
+                          go $ i - 1
+                  go $ cl - 1
+                  atomically $ do
+                    csvResult <- newTMVar csResult
+                    clvResult <- newTVar cl
+                    exitWithResult $ InMemDevCol csvResult clvResult
+
+    withColumnOf' @a other vecOp elemOp
+
 devColOpProc ::
   forall a.
-  (EdhXchg a, Eq a, Storable a, Typeable a) =>
+  (Eq a, Storable a, EdhXchg a, Typeable a) =>
   (a -> a -> a) ->
   EdhValue ->
   EdhHostProc
-devColOpProc !op !other !exit !ets = withThatColumnOf @a ets $ \ !col -> do
-  let vecOp = runEdhTx ets $
-        view'column'data col $ \(cs, cl) ->
-          fromEdh @a other $ \scalar -> edhContIO $ do
-            (fp, csResult) <- newDeviceArray @a cl
-            let p = unsafeForeignPtrToPtr fp
-                go i
-                  | i < 0 = return ()
-                  | otherwise = do
-                    array'reader cs i
-                      >>= pokeElemOff p i . flip op scalar
-                    go $ i - 1
-            go $ cl - 1
-            atomically $ do
-              csvResult <- newTMVar csResult
-              clvResult <- newTVar cl
-              exitWithNewClone $ InMemDevCol csvResult clvResult
+devColOpProc !op !other !exit !ets =
+  withColumnSelfOf @a ets exit $ \ !objCol !col -> do
+    let exitWithNewClone :: forall c'. Typeable (c' a) => c' a -> STM ()
+        exitWithNewClone !colResult =
+          edhCloneHostObj ets objCol objCol colResult $
+            \ !newObj -> exitEdh ets exit $ EdhObject newObj
 
-      elemOp :: forall c' f'. ManagedColumn c' f' a => c' a -> STM ()
-      elemOp col' = runEdhTx ets $
-        view'column'data col $ \(cs, cl) ->
-          view'column'data col' $ \(cs', cl') ->
-            if cl' /= cl
-              then
-                throwEdhTx UsageError $
-                  "column length mistmatch: "
-                    <> T.pack (show cl)
-                    <> " vs "
-                    <> T.pack (show cl')
-              else edhContIO $ do
-                (fp, csResult) <- newDeviceArray @a cl
-                let p = unsafeForeignPtrToPtr fp
-                    go i
-                      | i < 0 = return ()
-                      | otherwise = do
-                        ev <- array'reader cs i
-                        ev' <- array'reader cs' i
-                        pokeElemOff p i $ op ev ev'
-                        go $ i - 1
-                go $ cl - 1
-                atomically $ do
-                  csvResult <- newTMVar csResult
-                  clvResult <- newTVar cl
-                  exitWithNewClone $ InMemDevCol csvResult clvResult
+        vecOp = runEdhTx ets $
+          view'column'data col $ \(cs, cl) ->
+            fromEdh @a other $ \rhv -> edhContIO $ do
+              (fp, csResult) <- newDeviceArray @a cl
+              let p = unsafeForeignPtrToPtr fp
+                  go i
+                    | i < 0 = return ()
+                    | otherwise = do
+                      lhev <- array'reader cs i
+                      pokeElemOff p i $ op lhev rhv
+                      go $ i - 1
+              go $ cl - 1
+              atomically $ do
+                csvResult <- newTMVar csResult
+                clvResult <- newTVar cl
+                exitWithNewClone $ InMemDevCol csvResult clvResult
 
-  withColumnOf' @a other vecOp elemOp
+        elemOp :: forall c' f'. ManagedColumn c' f' a => c' a -> STM ()
+        elemOp col' = runEdhTx ets $
+          view'column'data col $ \(cs, cl) ->
+            view'column'data col' $ \(cs', cl') ->
+              if cl' /= cl
+                then
+                  throwEdhTx UsageError $
+                    "column length mistmatch: "
+                      <> T.pack (show cl)
+                      <> " vs "
+                      <> T.pack (show cl')
+                else edhContIO $ do
+                  (fp, csResult) <- newDeviceArray @a cl
+                  let p = unsafeForeignPtrToPtr fp
+                      go i
+                        | i < 0 = return ()
+                        | otherwise = do
+                          lhev <- array'reader cs i
+                          rhev <- array'reader cs' i
+                          pokeElemOff p i $ op lhev rhev
+                          go $ i - 1
+                  go $ cl - 1
+                  atomically $ do
+                    csvResult <- newTMVar csResult
+                    clvResult <- newTVar cl
+                    exitWithNewClone $ InMemDevCol csvResult clvResult
+
+    withColumnOf' @a other vecOp elemOp
+
+colInpProc ::
+  forall a.
+  (Eq a, Storable a, EdhXchg a, Typeable a) =>
+  (a -> a -> a) ->
+  EdhValue ->
+  EdhHostProc
+colInpProc !op !other !exit !ets =
+  withColumnSelfOf @a ets exit $ \_objCol !col -> do
+    let vecOp = runEdhTx ets $
+          view'column'data col $ \(cs, cl) ->
+            fromEdh @a other $ \rhv -> edhContIO $ do
+              let go i
+                    | i < 0 = return ()
+                    | otherwise = do
+                      lhev <- array'reader cs i
+                      array'writer cs i $ op lhev rhv
+                      go $ i - 1
+              go $ cl - 1
+              atomically doExit
+
+        elemOp :: forall c' f'. ManagedColumn c' f' a => c' a -> STM ()
+        elemOp col' = runEdhTx ets $
+          view'column'data col $ \(cs, cl) ->
+            view'column'data col' $ \(cs', cl') ->
+              if cl' /= cl
+                then
+                  throwEdhTx UsageError $
+                    "column length mistmatch: "
+                      <> T.pack (show cl)
+                      <> " vs "
+                      <> T.pack (show cl')
+                else edhContIO $ do
+                  let go i
+                        | i < 0 = return ()
+                        | otherwise = do
+                          lhev <- array'reader cs i
+                          rhev <- array'reader cs' i
+                          array'writer cs i $ op lhev rhev
+                          go $ i - 1
+                  go $ cl - 1
+                  atomically doExit
+
+    withColumnOf' @a other vecOp elemOp
   where
-    !that = edh'scope'that $ contextScope $ edh'context ets
-
-    exitWithNewClone :: forall c'. Typeable (c' a) => c' a -> STM ()
-    exitWithNewClone !colResult =
-      edhCloneHostObj ets that that colResult $
-        \ !newObj -> exitEdh ets exit $ EdhObject newObj
-
--- colInpProc :: (Text -> Dynamic) -> EdhValue -> EdhHostProc
--- colInpProc !getOp !other !exit !ets = withThisHostObj ets $ \ !col ->
---   let !otherVal = edhUltimate other
---    in castObjectStore' otherVal >>= \case
---         Just (_, colOther@Column {}) ->
---           elemInpColumn ets getOp col colOther (exitEdh ets exit edhNA) $
---             exitEdh ets exit $
---               EdhObject thatCol
---         _ ->
---           vecInpColumn ets getOp col otherVal (exitEdh ets exit edhNA) $
---             exitEdh ets exit $
---               EdhObject thatCol
---   where
---     !thatCol = edh'scope'that $ contextScope $ edh'context ets
+    that = edh'scope'that $ contextScope $ edh'context ets
+    doExit = exitEdh ets exit $ EdhObject that
 
 createColumnClass :: Object -> Scope -> STM Object
 createColumnClass !defaultDt !clsOuterScope =
@@ -656,9 +1123,9 @@ createColumnClass !defaultDt !clsOuterScope =
         sequence $
           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
             | (nm, vc, hp) <-
-                [ ("__cap__", EdhMethod, wrapHostProc colCapProc),
+                [ {-
+                  ("__cap__", EdhMethod, wrapHostProc colCapProc),
                   ("__len__", EdhMethod, wrapHostProc colLenProc),
-                  {-
                   ("__grow__", EdhMethod, wrapHostProc colGrowProc),
                   ("__mark__", EdhMethod, wrapHostProc colMarkLenProc),
                   ("([])", EdhMethod, wrapHostProc colIdxReadProc),
@@ -668,120 +1135,9 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
                   ("__desc__", EdhMethod, wrapHostProc colDescProc),
                   ("__json__", EdhMethod, wrapHostProc colJsonProc),
-                  ( "(==)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        EQ -> True
-                        _ -> False
-                  ),
-                  ( "(==.)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        EQ -> True
-                        _ -> False
-                  ),
-                  ( "(!=)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        EQ -> False
-                        _ -> True
-                  ),
-                  ( "(!=.)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        EQ -> False
-                        _ -> True
-                  ),
-                  ( "(>=)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        GT -> True
-                        EQ -> True
-                        _ -> False
-                  ),
-                  ( "(<=)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        LT -> True
-                        EQ -> True
-                        _ -> False
-                  ),
-                  ( "(<)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        LT -> True
-                        _ -> False
-                  ),
-                  ( "(>)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        GT -> True
-                        _ -> False
-                  ),
-                  ( "(>=.)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        LT -> True
-                        EQ -> True
-                        _ -> False
-                  ),
-                  ( "(<=.)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        GT -> True
-                        EQ -> True
-                        _ -> False
-                  ),
-                  ( "(<.)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        GT -> True
-                        _ -> False
-                  ),
-                  ( "(>.)",
-                    EdhMethod,
-                    wrapHostProc $
-                      colCmpProc $ \case
-                        LT -> True
-                        _ -> False
-                  ),
-                  ("(&&)", EdhMethod, wrapHostProc $ colOpProc bitAndOp),
-                  ("(&&.)", EdhMethod, wrapHostProc $ colOpProc bitAndOp),
-                  ("(||)", EdhMethod, wrapHostProc $ colOpProc bitOrOp),
-                  ("(||.)", EdhMethod, wrapHostProc $ colOpProc bitOrOp),
-                  ("(&&=)", EdhMethod, wrapHostProc $ colInpProc bitAndOp),
-                  ("(||=)", EdhMethod, wrapHostProc $ colInpProc bitOrOp),
-                  ("(+)", EdhMethod, wrapHostProc $ colOpProc addOp),
-                  ("(+.)", EdhMethod, wrapHostProc $ colOpProc addToOp),
-                  ("(+=)", EdhMethod, wrapHostProc $ colInpProc addOp),
-                  ("(-)", EdhMethod, wrapHostProc $ colOpProc subtractOp),
-                  ("(-.)", EdhMethod, wrapHostProc $ colOpProc subtFromOp),
-                  ("(-=)", EdhMethod, wrapHostProc $ colInpProc subtractOp),
-                  ("(*)", EdhMethod, wrapHostProc $ colOpProc mulOp),
-                  ("(*.)", EdhMethod, wrapHostProc $ colOpProc mulToOp),
-                  ("(*=)", EdhMethod, wrapHostProc $ colInpProc mulOp),
-                  ("(/)", EdhMethod, wrapHostProc $ colOpProc divOp),
-                  ("(/.)", EdhMethod, wrapHostProc $ colOpProc divByOp),
-                  ("(/=)", EdhMethod, wrapHostProc $ colInpProc divOp),
-                  ("(//)", EdhMethod, wrapHostProc $ colOpProc divIntOp),
-                  ("(//.)", EdhMethod, wrapHostProc $ colOpProc divIntByOp),
-                  ("(//=)", EdhMethod, wrapHostProc $ colInpProc divIntOp),
-                  ("(**)", EdhMethod, wrapHostProc $ colOpProc powOp),
-                  ("(**.)", EdhMethod, wrapHostProc $ colOpProc powToOp),
-                  ("(**=)", EdhMethod, wrapHostProc $ colInpProc powOp),
+                  ("copy", EdhMethod, wrapHostProc colCopyProc),
                   -}
-                  ("copy", EdhMethod, wrapHostProc colCopyProc)
+                  ("__init__", EdhMethod, wrapHostProc col__init__)
                 ]
           ]
             ++ [ (AttrByName nm,) <$> mkHostProperty clsScope nm getter setter
@@ -838,33 +1194,76 @@ createColumnClass !defaultDt !clsOuterScope =
 
           badDtype = throwEdh etsCtor UsageError "invalid dtype"
 
+    col__init__ ::
+      "capacity" !: Int ->
+      "length" ?: Int ->
+      "dtype" ?: Object ->
+      ArgsPack -> -- allow/ignore arbitrary ctor args for descendant classes
+      EdhHostProc
+    col__init__
+      _cap
+      _len
+      (defaultArg defaultDt -> dto)
+      _ctorOtherArgs
+      !exit
+      !ets = do
+        supers <- readTVar $ edh'obj'supers that
+        extendsDt $ that : supers
+        exitEdh ets exit nil
+        where
+          scope = contextScope $ edh'context ets
+          this = edh'scope'this scope
+          that = edh'scope'that scope
+
+          extendsDt :: [Object] -> STM ()
+          extendsDt [] = return ()
+          extendsDt (o : rest) = do
+            modifyTVar' (edh'obj'supers o) (++ [dto])
+            if o == this
+              then return ()
+              else extendsDt rest
+
     colDtypeProc :: EdhHostProc
-    colDtypeProc !exit !ets = undefined
-
-    colCopyProc :: EdhHostProc
-    colCopyProc !exit !ets = withThisColObj ets $ \(!this, !col) ->
-      runEdhTx ets $
-        read'column'length col $ \ !cl ->
-          copy'column'slice col 0 cl 1 $ \(disp, col') _ets -> case disp of
-            StayComposed -> edhCloneHostObj ets this that col' $
-              \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
-            ExtractAlone ->
-              edhCreateHostObj (edh'obj'class this) col'
-                >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
+    colDtypeProc !exit !ets = readTVar (edh'obj'supers this) >>= findSuperDto
       where
-        that = edh'scope'that $ contextScope $ edh'context ets
+        scope = contextScope $ edh'context ets
+        this = edh'scope'this scope
 
-    colCapProc :: EdhHostProc
-    colCapProc !exit !ets = withThisColObj ets $ \(_this, !col) ->
-      runEdhTx ets $
-        view'column'data col $ \(cs, _cl) ->
-          exitEdhTx exit $ EdhDecimal $ fromIntegral $ array'capacity cs
+        findSuperDto :: [Object] -> STM ()
+        findSuperDto [] = exitEdh ets exit nil -- impossible actually
+        -- this is right and avoids unnecessary checks in vastly usual cases
+        findSuperDto [dto] = exitEdh ets exit $ EdhObject dto
+        -- safe guard in case a Column instance has been further extended
+        findSuperDto (maybeDto : rest) =
+          withDataType maybeDto (findSuperDto rest) gotDt gotDt
+          where
+            gotDt :: forall dt. dt -> STM ()
+            gotDt _ = exitEdh ets exit $ EdhObject maybeDto
 
-    colLenProc :: EdhHostProc
-    colLenProc !exit !ets = withThisColObj ets $ \(_this, !col) ->
-      runEdhTx ets $
-        read'column'length col $ \ !len ->
-          exitEdhTx exit $ EdhDecimal $ fromIntegral len
+-- colCopyProc :: EdhHostProc
+-- colCopyProc !exit !ets = withThisColObj ets $ \(!this, !col) ->
+--   runEdhTx ets $
+--     read'column'length col $ \ !cl ->
+--       copy'column'slice col 0 cl 1 $ \(disp, col') _ets -> case disp of
+--         StayComposed -> edhCloneHostObj ets this that col' $
+--           \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
+--         ExtractAlone ->
+--           edhCreateHostObj (edh'obj'class this) col'
+--             >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
+--   where
+--     that = edh'scope'that $ contextScope $ edh'context ets
+
+-- colCapProc :: EdhHostProc
+-- colCapProc !exit !ets = withThisColObj ets $ \(_this, !col) ->
+--   runEdhTx ets $
+--     view'column'data col $ \(cs, _cl) ->
+--       exitEdhTx exit $ EdhDecimal $ fromIntegral $ array'capacity cs
+
+-- colLenProc :: EdhHostProc
+-- colLenProc !exit !ets = withThisColObj ets $ \(_this, !col) ->
+--   runEdhTx ets $
+--     read'column'length col $ \ !len ->
+--       exitEdhTx exit $ EdhDecimal $ fromIntegral len
 
 {-
 
