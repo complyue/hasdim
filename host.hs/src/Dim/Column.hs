@@ -4,13 +4,10 @@ module Dim.Column where
 
 import Control.Concurrent.STM
 import Data.Dynamic
-import qualified Data.Text as T
 import Dim.DataType
 import Dim.XCHG
 import Foreign
-import Language.Edh.Curry
 import Language.Edh.EHI
-import Type.Reflection (typeRep)
 import Prelude
 
 class ManagedColumn t where
@@ -255,35 +252,3 @@ extractColumnFancy !ets !thatCol !colIdx !naExit !exit =
               else
                 edhCreateHostObj (edh'obj'class thisCol) colNew
                   >>= exit
-
-data ColumnOf t = ColumnOf !Column !Object
-
-typedColumn :: forall t. ColumnOf t -> Column
-typedColumn (ColumnOf col _obj) = col
-
-instance Typeable t => ScriptArgAdapter (ColumnOf t) where
-  adaptEdhArg !v !exit = case edhUltimate v of
-    EdhObject o -> case edh'obj'store o of
-      HostStore dd -> case fromDynamic dd of
-        Just col@(Column !mcol) -> do
-          let dt = data'type'of'column mcol
-          if isDataTypeFor @t dt
-            then exitEdhTx exit $ ColumnOf col o
-            else
-              throwEdhTx UsageError $
-                "wrong dtype for "
-                  <> T.pack (show $ typeRep @t)
-                  <> ": "
-                  <> data'type'identifier dt
-        Nothing -> badVal
-      _ -> badVal
-    _ -> badVal
-    where
-      badVal = edhValueDescTx v $ \ !badDesc ->
-        throwEdhTx UsageError $
-          "Column of dtype="
-            <> T.pack (show $ typeRep @t)
-            <> " expected but given: "
-            <> badDesc
-
-  adaptedArgValue (ColumnOf _col !obj) = EdhObject obj
