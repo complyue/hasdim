@@ -1574,10 +1574,10 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("__mark__", EdhMethod, wrapHostProc colMarkLenProc),
                   ("__blob__", EdhMethod, wrapHostProc colBlobProc),
                   ("__json__", EdhMethod, wrapHostProc colJsonProc),
-                  {-
                   ("__repr__", EdhMethod, wrapHostProc colReprProc),
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
                   ("__desc__", EdhMethod, wrapHostProc colDescProc),
+                  {-
                   ("([])", EdhMethod, wrapHostProc colIdxReadProc),
                   ("([=])", EdhMethod, wrapHostProc colIdxWriteProc),
                   -}
@@ -1744,6 +1744,99 @@ createColumnClass !defaultDt !clsOuterScope =
                                 go (i -1) $ elemJsonStr : elemJsonStrs
               go (cl - 1) []
 
+    colReprProc :: EdhHostProc
+    colReprProc !exit !ets = withColumnSelf ets exit $ \ !objCol !col ->
+      getColDtype objCol $ \ !dto -> edhValueRepr ets (EdhObject dto) $
+        \ !dtRepr -> runEdhTx ets $
+          view'column'data col $ \(!cs, !cl) -> do
+            let colRepr =
+                  "Column( capacity= "
+                    <> T.pack (show $ array'capacity cs)
+                    <> ", length= "
+                    <> T.pack (show cl)
+                    <> ", dtype= "
+                    <> dtRepr
+                    <> " )"
+            exitEdhTx exit $ EdhString colRepr
+
+    colShowProc :: EdhHostProc
+    colShowProc !exit !ets = withColumnSelf ets exit $ \ !objCol !col ->
+      getColDtype objCol $ \ !dto -> edhValueRepr ets (EdhObject dto) $
+        \ !dtRepr -> runEdhTx ets $
+          view'column'data col $ \(!cs, !cl) -> do
+            let colRepr =
+                  "Column( capacity= "
+                    <> T.pack (show $ array'capacity cs)
+                    <> ", length= "
+                    <> T.pack (show cl)
+                    <> ", dtype= "
+                    <> dtRepr
+                    <> " )"
+                exitWithDetails :: Text -> STM ()
+                exitWithDetails !details =
+                  exitEdh ets exit $ EdhString $ colRepr <> "\n" <> details
+
+                go :: Int -> [Text] -> Int -> Text -> IO ()
+                -- TODO don't generate all lines for large columns
+                go !i !cumLines !lineIdx !line
+                  | i >= cl =
+                    atomically $
+                      exitWithDetails $
+                        if T.null line && null cumLines
+                          then "Zero-Length Column"
+                          else
+                            if null cumLines
+                              then line
+                              else
+                                let !fullLines =
+                                      line :
+                                      " # " -- todo make this tunable ?
+                                        <> T.pack (show lineIdx)
+                                        <> " ~ "
+                                        <> T.pack (show $ i - 1) :
+                                      cumLines
+                                    !lineCnt = length fullLines
+                                 in if lineCnt > 20
+                                      then
+                                        T.unlines $
+                                          reverse $
+                                            take 10 fullLines
+                                              ++ ["# ... "] -- todo make this tunable
+                                              ++ drop (lineCnt - 10) fullLines
+                                      else T.unlines $ reverse fullLines
+                go !i !cumLines !lineIdx !line =
+                  array'reader cs i >>= \ !ev -> atomically $
+                    runEdhTx ets $
+                      toEdh ev $ \ !elemVal ->
+                        edhValueReprTx elemVal $ \ !elemRepr ->
+                          let !tentLine = line <> elemRepr <> ", "
+                           in edhContIO $
+                                if T.length tentLine > 79 -- todo make this tunable ?
+                                  then
+                                    go
+                                      (i + 1)
+                                      ( line :
+                                        ( " # " -- todo make this tunable ?
+                                            <> T.pack (show lineIdx)
+                                            <> " ~ "
+                                            <> T.pack (show $ i - 1)
+                                        ) :
+                                        cumLines
+                                      )
+                                      i
+                                      (elemRepr <> ", ")
+                                  else go (i + 1) cumLines lineIdx tentLine
+            edhContIO $ go 0 [] 0 ""
+
+    -- TODO impl. this following:
+    --      https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Series.describe.html
+    colDescProc :: EdhHostProc
+    colDescProc !exit =
+      exitEdhTx exit $
+        EdhString $
+          " * Statistical Description of Column data,\n"
+            <> "   like pandas describe(), is yet to be implemented."
+
     colCopyProc :: EdhHostProc
     colCopyProc !exit !ets = withColumnSelf ets exit $ \ !objCol !col ->
       runEdhTx ets $
@@ -1777,95 +1870,6 @@ createColumnClass !defaultDt !clsOuterScope =
         this = edh'scope'this scope
 
 {-
-
-    colReprProc :: EdhHostProc
-    colReprProc !exit !ets =
-      withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Column>") $
-        \(Column !col) -> do
-          let !dt = data'type'of'column col
-          !cs <- view'column'data col
-          !cl <- read'column'length col
-          exitEdh ets exit $
-            EdhString $
-              "Column( capacity="
-                <> T.pack (show $ flatArrayCapacity cs)
-                <> ", length="
-                <> T.pack (show cl)
-                <> ", dtype="
-                -- assuming the identifier is available as attr
-                <> data'type'identifier dt
-                <> ")"
-
-    colShowProc :: EdhHostProc
-    colShowProc !exit !ets = withThisHostObj ets $ \(Column !col) -> do
-      let !dt = data'type'of'column col
-      !cs <- view'column'data col
-      !cl <- read'column'length col
-      showData cl $ flat'array'read dt ets cs
-      where
-        !thisCol = edh'scope'this $ contextScope $ edh'context ets
-
-        exitWithDetails :: Text -> STM ()
-        exitWithDetails !details = edhValueRepr ets (EdhObject thisCol) $
-          \ !repr -> exitEdh ets exit $ EdhString $ repr <> "\n" <> details
-
-        showData :: Int -> (Int -> (EdhValue -> STM ()) -> STM ()) -> STM ()
-        showData !len !readElem = go 0 [] 0 ""
-          where
-            go :: Int -> [Text] -> Int -> Text -> STM ()
-            -- TODO don't generate all lines for large columns
-            go !i !cumLines !lineIdx !line
-              | i >= len =
-                exitWithDetails $
-                  if T.null line && null cumLines
-                    then "Zero-Length Column"
-                    else
-                      if null cumLines
-                        then line
-                        else
-                          let !fullLines =
-                                line :
-                                " # " -- todo make this tunable ?
-                                  <> T.pack (show lineIdx)
-                                  <> " ~ "
-                                  <> T.pack (show $ i - 1) :
-                                cumLines
-                              !lineCnt = length fullLines
-                           in if lineCnt > 20
-                                then
-                                  T.unlines $
-                                    reverse $
-                                      take 10 fullLines
-                                        ++ ["# ... "] -- todo make this tunable
-                                        ++ drop (lineCnt - 10) fullLines
-                                else T.unlines $ reverse fullLines
-            go !i !cumLines !lineIdx !line = readElem i $ \ !elemVal ->
-              edhValueRepr ets elemVal $ \ !elemRepr ->
-                let !tentLine = line <> elemRepr <> ", "
-                 in if T.length tentLine > 79 -- todo make this tunable ?
-                      then
-                        go
-                          (i + 1)
-                          ( line :
-                            ( " # " -- todo make this tunable ?
-                                <> T.pack (show lineIdx)
-                                <> " ~ "
-                                <> T.pack (show $ i - 1)
-                            ) :
-                            cumLines
-                          )
-                          i
-                          (elemRepr <> ", ")
-                      else go (i + 1) cumLines lineIdx tentLine
-
-    -- TODO impl. this following:
-    --      https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Series.describe.html
-    colDescProc :: EdhHostProc
-    colDescProc !exit =
-      exitEdhTx exit $
-        EdhString $
-          " * Statistical Description of Column data,\n"
-            <> "   like pandas describe(), is yet to be implemented."
 
     colIdxReadProc :: EdhValue -> EdhHostProc
     colIdxReadProc !idxVal !exit !ets =
