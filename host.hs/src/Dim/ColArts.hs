@@ -1577,8 +1577,8 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("__repr__", EdhMethod, wrapHostProc colReprProc),
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
                   ("__desc__", EdhMethod, wrapHostProc colDescProc),
-                  {-
                   ("([])", EdhMethod, wrapHostProc colIdxReadProc),
+                  {-
                   ("([=])", EdhMethod, wrapHostProc colIdxWriteProc),
                   -}
                   ("copy", EdhMethod, wrapHostProc colCopyProc)
@@ -1837,6 +1837,56 @@ createColumnClass !defaultDt !clsOuterScope =
           " * Statistical Description of Column data,\n"
             <> "   like pandas describe(), is yet to be implemented."
 
+    colIdxReadProc :: EdhValue -> EdhHostProc
+    colIdxReadProc !idxVal !exit !ets =
+      withColumnSelf ets exit $ \ !objCol !col -> do
+        let withBoolIdx ::
+              forall c f. ManagedColumn c f YesNo => c YesNo -> STM ()
+            withBoolIdx !idxCol =
+              undefined
+            -- extractColumnBool ets thatCol idxCol' (exitEdh ets exit edhNA) $
+            --   \_clNew !newColObj -> exitEdh ets exit $ EdhObject newColObj
+
+            withIntpIdx :: forall c f. ManagedColumn c f Int => c Int -> STM ()
+            withIntpIdx !idxCol =
+              undefined
+            -- extractColumnFancy
+            --   ets
+            --   thatCol
+            --   idxCol'
+            --   (exitEdh ets exit edhNA)
+            --   (exitEdh ets exit . EdhObject)
+
+            withEdhIdx :: STM ()
+            withEdhIdx = parseEdhIndex ets idxVal $ \case
+              Left !err -> throwEdh ets UsageError err
+              Right !idx -> runEdhTx ets $
+                view'column'data col $
+                  \(!cs, !cl) -> case idx of
+                    EdhIndex !i ->
+                      edhContIO $
+                        array'reader cs i >>= \ !ev ->
+                          atomically $
+                            runEdhTx ets $
+                              toEdh ev $ \ !elemVal ->
+                                exitEdhTx exit elemVal
+                    EdhAny -> exitEdhTx exit $ EdhObject that
+                    EdhAll -> exitEdhTx exit $ EdhObject that
+                    EdhSlice !start !stop !step -> \_ets ->
+                      edhRegulateSlice ets cl (start, stop, step) $
+                        \(!iStart, !iStop, !iStep) ->
+                          runEdhTx ets $
+                            sliceColumn objCol col iStart iStop iStep $
+                              \(!newColObj, _newCol) ->
+                                exitEdhTx exit $ EdhObject newColObj
+
+        withColumnOf' @YesNo
+          idxVal
+          (withColumnOf' @Int idxVal withEdhIdx withIntpIdx)
+          withBoolIdx
+      where
+        that = edh'scope'that $ contextScope $ edh'context ets
+
     colCopyProc :: EdhHostProc
     colCopyProc !exit !ets = withColumnSelf ets exit $ \ !objCol !col ->
       runEdhTx ets $
@@ -1848,21 +1898,6 @@ createColumnClass !defaultDt !clsOuterScope =
               edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
                 >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
-    getColDtype :: Object -> (Object -> STM ()) -> STM ()
-    getColDtype !objCol !exit =
-      readTVar (edh'obj'supers objCol) >>= findSuperDto
-      where
-        findSuperDto :: [Object] -> STM ()
-        findSuperDto [] = error "bug: no dtype super for column"
-        -- this is right and avoids unnecessary checks in vastly usual cases
-        findSuperDto [dto] = exit dto
-        -- safe guard in case a Column instance has been further extended
-        findSuperDto (maybeDto : rest) =
-          withDataType maybeDto (findSuperDto rest) gotDt gotDt
-          where
-            gotDt :: forall dt. dt -> STM ()
-            gotDt _ = exit maybeDto
-
     colDtypeProc :: EdhHostProc
     colDtypeProc !exit !ets = getColDtype this $ exitEdh ets exit . EdhObject
       where
@@ -1870,45 +1905,6 @@ createColumnClass !defaultDt !clsOuterScope =
         this = edh'scope'this scope
 
 {-
-
-    colIdxReadProc :: EdhValue -> EdhHostProc
-    colIdxReadProc !idxVal !exit !ets =
-      withThisHostObj ets $ \col'@(Column !col) ->
-        castObjectStore' idxVal >>= \case
-          Just (_, idxCol'@(Column !idxCol)) ->
-            case data'type'identifier $ data'type'of'column idxCol of
-              "yesno" ->
-                -- yesno index
-                extractColumnBool ets thatCol idxCol' (exitEdh ets exit edhNA) $
-                  \_clNew !newColObj -> exitEdh ets exit $ EdhObject newColObj
-              "intp" ->
-                -- fancy index
-                extractColumnFancy
-                  ets
-                  thatCol
-                  idxCol'
-                  (exitEdh ets exit edhNA)
-                  (exitEdh ets exit . EdhObject)
-              !badDti ->
-                throwEdh ets UsageError $
-                  "invalid dtype="
-                    <> badDti
-                    <> " for a column as an index to another column"
-          Nothing -> parseEdhIndex ets idxVal $ \case
-            Left !err -> throwEdh ets UsageError err
-            Right (EdhIndex !i) ->
-              unsafeReadColumnCell ets col' i $ exitEdh ets exit
-            Right EdhAny -> exitEdh ets exit $ EdhObject thatCol
-            Right EdhAll -> exitEdh ets exit $ EdhObject thatCol
-            Right (EdhSlice !start !stop !step) -> do
-              !cl <- read'column'length col
-              edhRegulateSlice ets cl (start, stop, step) $
-                \(!iStart, !iStop, !iStep) ->
-                  sliceColumn ets thatCol iStart iStop iStep $
-                    \_ccNew _clNew !newColObj ->
-                      exitEdh ets exit $ EdhObject newColObj
-      where
-        !thatCol = edh'scope'that $ contextScope $ edh'context ets
 
     colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
     colIdxWriteProc !idxVal !other !exit !ets =

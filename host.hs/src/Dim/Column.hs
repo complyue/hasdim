@@ -163,70 +163,43 @@ withStorableColumnSelfOf !ets !exit !colExit = do
               Nothing -> naExit'
               Just HRefl -> exit' col
 
-{-
-sliceColumn ::
-  EdhThreadState ->
-  Object ->
-  Int ->
-  Int ->
-  Int ->
-  (Int -> Int -> Object -> STM ()) ->
-  STM ()
-sliceColumn !ets !thatCol !start !stop !step !exit =
-  castObjectStore thatCol >>= \case
-    Nothing ->
-      throwEdh
-        ets
-        EvalError
-        "bug: not a column object passed to sliceColumn"
-    Just (!thisCol, Column !col) ->
-      if stop >= start && step == 1
-        then runEdhTx ets $
-          view'column'slice col start stop $
-            \ !stayComposed colNew'@(Column !colNew) -> do
-              !ccNew <- columnCapacity colNew'
-              !clNew <- read'column'length colNew
-              if stayComposed
-                then edhCloneHostObj ets thisCol thatCol colNew' $
-                  \ !newColObj -> exit ccNew clNew newColObj
-                else
-                  edhCreateHostObj (edh'obj'class thisCol) colNew'
-                    >>= \ !newColObj -> exit ccNew clNew newColObj
-        else runEdhTx ets $
-          copy'column'slice col start stop step $
-            \ !stayComposed colNew'@(Column !colNew) -> do
-              !ccNew <- columnCapacity colNew'
-              !clNew <- read'column'length colNew
-              if stayComposed
-                then edhCloneHostObj ets thisCol thatCol colNew' $
-                  \ !newColObj -> exit ccNew clNew newColObj
-                else
-                  edhCreateHostObj (edh'obj'class thisCol) colNew'
-                    >>= \ !newColObj -> exit ccNew clNew newColObj
+getColDtype :: Object -> (Object -> STM ()) -> STM ()
+getColDtype !objCol !exit = readTVar (edh'obj'supers objCol) >>= findSuperDto
+  where
+    findSuperDto :: [Object] -> STM ()
+    findSuperDto [] = error "bug: no dtype super for column"
+    -- this is right and avoids unnecessary checks in vastly usual cases
+    findSuperDto [dto] = exit dto
+    -- safe guard in case a Column instance has been further extended
+    findSuperDto (maybeDto : rest) =
+      withDataType maybeDto (findSuperDto rest) gotDt gotDt
+      where
+        gotDt :: forall dt. dt -> STM ()
+        gotDt _ = exit maybeDto
 
-copyColumn ::
-  EdhThreadState ->
+sliceColumn ::
+  forall c f a.
+  ManagedColumn c f a =>
   Object ->
-  (Object -> STM ()) ->
-  STM ()
-copyColumn !ets !thatCol !exit =
-  castObjectStore thatCol >>= \case
-    Nothing ->
-      throwEdh
-        ets
-        EvalError
-        "bug: not a column object passed to copyColumn"
-    Just (!thisCol, Column !col) -> do
-      !clLen <- read'column'length col
-      runEdhTx ets $
-        copy'column'slice col 0 clLen 1 $
-          \ !stayComposed colNew -> do
-            if stayComposed
-              then edhCloneHostObj ets thisCol thatCol colNew $
-                \ !newColObj -> exit newColObj
-              else
-                edhCreateHostObj (edh'obj'class thisCol) colNew
-                  >>= \ !newColObj -> exit newColObj
+  c a ->
+  Int ->
+  Int ->
+  Int ->
+  EdhTxExit (Object, c a) ->
+  EdhTx
+sliceColumn !objCol !col !start !stop !step !exit =
+  if stop >= start && step == 1
+    then view'column'slice col start stop withSliced
+    else copy'column'slice col start stop step withSliced
+  where
+    withSliced (disp, col') !ets = case disp of
+      StayComposed -> edhCloneHostObj ets objCol objCol col' $
+        \ !newColObj -> exitEdh ets exit (newColObj, col')
+      ExtractAlone -> getColDtype objCol $ \ !dto ->
+        edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
+          >>= \ !newColObj -> exitEdh ets exit (newColObj, col')
+
+{-
 
 extractColumnBool ::
   EdhThreadState ->
