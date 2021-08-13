@@ -1573,11 +1573,11 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("__grow__", EdhMethod, wrapHostProc colGrowProc),
                   ("__mark__", EdhMethod, wrapHostProc colMarkLenProc),
                   ("__blob__", EdhMethod, wrapHostProc colBlobProc),
+                  ("__json__", EdhMethod, wrapHostProc colJsonProc),
                   {-
                   ("__repr__", EdhMethod, wrapHostProc colReprProc),
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
                   ("__desc__", EdhMethod, wrapHostProc colDescProc),
-                  ("__json__", EdhMethod, wrapHostProc colJsonProc),
                   ("([])", EdhMethod, wrapHostProc colIdxReadProc),
                   ("([=])", EdhMethod, wrapHostProc colIdxWriteProc),
                   -}
@@ -1721,6 +1721,29 @@ createColumnClass !defaultDt !clsOuterScope =
         this = edh'scope'this scope
         naExit = exitEdh ets exit edhNA
 
+    colJsonProc :: EdhHostProc
+    colJsonProc !exit !ets = withColumnSelf ets exit $ \_objCol !col ->
+      runEdhTx ets $
+        view'column'data col $ \(!cs, !cl) ->
+          if cl < 1
+            then exitEdhTx exit $ EdhString "[]"
+            else edhContIO $ do
+              let go :: Int -> [Text] -> IO ()
+                  go !i !elemJsonStrs
+                    | i < 0 =
+                      atomically $
+                        exitEdh ets exit $
+                          EdhString $
+                            "[" <> T.intercalate "," elemJsonStrs <> "]"
+                    | otherwise =
+                      array'reader cs i >>= \ !ev -> atomically $
+                        runEdhTx ets $
+                          toEdh ev $ \ !elemVal ->
+                            edhValueJsonTx elemVal $ \ !elemJsonStr ->
+                              edhContIO $
+                                go (i -1) $ elemJsonStr : elemJsonStrs
+              go (cl - 1) []
+
     colCopyProc :: EdhHostProc
     colCopyProc !exit !ets = withColumnSelf ets exit $ \ !objCol !col ->
       runEdhTx ets $
@@ -1834,27 +1857,6 @@ createColumnClass !defaultDt !clsOuterScope =
                           i
                           (elemRepr <> ", ")
                       else go (i + 1) cumLines lineIdx tentLine
-
-    colJsonProc :: EdhHostProc
-    colJsonProc !exit !ets = withThisHostObj ets $ \(Column !col) -> do
-      let !dt = data'type'of'column col
-      !cs <- view'column'data col
-      !cl <- read'column'length col
-      if cl <= 0
-        then exitEdh ets exit $ EdhString "[]"
-        else cvt2Json cl $ flat'array'read dt ets cs
-      where
-        cvt2Json :: Int -> (Int -> (EdhValue -> STM ()) -> STM ()) -> STM ()
-        cvt2Json !len !readElem = go (len -1) []
-          where
-            go :: Int -> [Text] -> STM ()
-            go !i !elemJsonStrs
-              | i < 0 =
-                exitEdh ets exit $
-                  EdhString $ "[" <> T.intercalate "," elemJsonStrs <> "]"
-              | otherwise = readElem i $ \ !elemVal ->
-                edhValueJson ets elemVal $ \ !elemJsonStr ->
-                  go (i -1) $ elemJsonStr : elemJsonStrs
 
     -- TODO impl. this following:
     --      https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Series.describe.html
