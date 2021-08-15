@@ -84,12 +84,12 @@ data SomeColumn
     SomeColumn (TypeRep f) (c a)
 
 withColumnOf ::
-  forall a m.
-  (Monad m, Typeable a) =>
+  forall a r.
+  (Typeable a) =>
   Object ->
-  m () ->
-  (forall c f. ManagedColumn c f a => c a -> m ()) ->
-  m ()
+  r ->
+  (forall c f. ManagedColumn c f a => c a -> r) ->
+  r
 withColumnOf !obj !naExit !exit = case dynamicHostData obj of
   Nothing -> naExit
   Just dd -> case fromDynamic dd of
@@ -99,12 +99,12 @@ withColumnOf !obj !naExit !exit = case dynamicHostData obj of
       Just (Refl :: a :~: b) -> exit col
 
 withColumnOf' ::
-  forall a m.
-  (Monad m, Typeable a) =>
+  forall a r.
+  (Typeable a) =>
   EdhValue ->
-  m () ->
-  (forall c f. ManagedColumn c f a => c a -> m ()) ->
-  m ()
+  r ->
+  (forall c f. ManagedColumn c f a => c a -> r) ->
+  r
 withColumnOf' !val !naExit !exit = case edhUltimate val of
   EdhObject !obj -> withColumnOf obj naExit exit
   _ -> naExit
