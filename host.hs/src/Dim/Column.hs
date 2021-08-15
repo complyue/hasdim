@@ -56,6 +56,24 @@ class
     EdhTxExit (InstanceDisposition, c a) ->
     EdhTx
 
+  -- extract elements by a mask column of the same shape
+  extract'column'bool ::
+    forall c' f'.
+    ManagedColumn c' f' YesNo =>
+    c a ->
+    c' YesNo ->
+    EdhTxExit (InstanceDisposition, c a) ->
+    EdhTx
+
+  -- extract elements by an index column
+  extract'column'fancy ::
+    forall c' f'.
+    ManagedColumn c' f' Int =>
+    c a ->
+    c' Int ->
+    EdhTxExit (InstanceDisposition, c a) ->
+    EdhTx
+
 data SomeColumn
   = forall c f a.
     ( ManagedColumn c f a,
@@ -194,60 +212,39 @@ sliceColumn !objCol !col !start !stop !step !exit =
   where
     withSliced (disp, col') !ets = case disp of
       StayComposed -> edhCloneHostObj ets objCol objCol col' $
-        \ !newColObj -> exitEdh ets exit (newColObj, col')
+        \ !objCol' -> exitEdh ets exit (objCol', col')
       ExtractAlone -> getColDtype objCol $ \ !dto ->
         edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
-          >>= \ !newColObj -> exitEdh ets exit (newColObj, col')
-
-{-
+          >>= \ !objCol' -> exitEdh ets exit (objCol', col')
 
 extractColumnBool ::
-  EdhThreadState ->
+  forall c f a c' f'.
+  (ManagedColumn c f a, ManagedColumn c' f' YesNo) =>
   Object ->
-  Column ->
-  STM () ->
-  (Int -> Object -> STM ()) ->
-  STM ()
-extractColumnBool !ets !thatCol !colMask !naExit !exit =
-  castObjectStore thatCol >>= \case
-    Nothing ->
-      throwEdh
-        ets
-        EvalError
-        "bug: not a column object passed to extractColumnBool"
-    Just (!thisCol, Column !col) ->
-      runEdhTx ets $
-        extract'column'bool col colMask naExit $
-          \ !stayComposed colNew'@(Column !colNew) ->
-            read'column'length colNew >>= \ !clNew ->
-              if stayComposed
-                then edhCloneHostObj ets thisCol thatCol colNew' $
-                  \ !newColObj -> exit clNew newColObj
-                else
-                  edhCreateHostObj (edh'obj'class thisCol) colNew'
-                    >>= \ !newColObj -> exit clNew newColObj
+  c a ->
+  c' YesNo ->
+  EdhTxExit (Object, c a) ->
+  EdhTx
+extractColumnBool !objCol !col !colMask !exit =
+  extract'column'bool col colMask $ \(disp, col') !ets -> case disp of
+    StayComposed -> edhCloneHostObj ets objCol objCol col' $
+      \ !objCol' -> exitEdh ets exit (objCol', col')
+    ExtractAlone -> getColDtype objCol $ \ !dto ->
+      edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
+        >>= \ !objCol' -> exitEdh ets exit (objCol', col')
 
 extractColumnFancy ::
-  EdhThreadState ->
+  forall c f a c' f'.
+  (ManagedColumn c f a, ManagedColumn c' f' Int) =>
   Object ->
-  Column ->
-  STM () ->
-  (Object -> STM ()) ->
-  STM ()
-extractColumnFancy !ets !thatCol !colIdx !naExit !exit =
-  castObjectStore thatCol >>= \case
-    Nothing ->
-      throwEdh
-        ets
-        EvalError
-        "bug: not a column object passed to extractColumnBool"
-    Just (!thisCol, Column !col) ->
-      runEdhTx ets $
-        extract'column'fancy col colIdx naExit $
-          \ !stayComposed !colNew ->
-            if stayComposed
-              then edhCloneHostObj ets thisCol thatCol colNew exit
-              else
-                edhCreateHostObj (edh'obj'class thisCol) colNew
-                  >>= exit
--}
+  c a ->
+  c' Int ->
+  EdhTxExit (Object, c a) ->
+  EdhTx
+extractColumnFancy !objCol !col !colIdxs !exit =
+  extract'column'fancy col colIdxs $ \(disp, col') !ets -> case disp of
+    StayComposed -> edhCloneHostObj ets objCol objCol col' $
+      \ !objCol' -> exitEdh ets exit (objCol', col')
+    ExtractAlone -> getColDtype objCol $ \ !dto ->
+      edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
+        >>= \ !objCol' -> exitEdh ets exit (objCol', col')

@@ -1842,20 +1842,14 @@ createColumnClass !defaultDt !clsOuterScope =
       withColumnSelf ets exit $ \ !objCol !col -> do
         let withBoolIdx ::
               forall c f. ManagedColumn c f YesNo => c YesNo -> STM ()
-            withBoolIdx !idxCol =
-              undefined
-            -- extractColumnBool ets thatCol idxCol' (exitEdh ets exit edhNA) $
-            --   \_clNew !newColObj -> exitEdh ets exit $ EdhObject newColObj
+            withBoolIdx !idxCol = runEdhTx ets $
+              extractColumnBool objCol col idxCol $ \(!newColObj, _newCol) ->
+                exitEdhTx exit $ EdhObject newColObj
 
             withIntpIdx :: forall c f. ManagedColumn c f Int => c Int -> STM ()
-            withIntpIdx !idxCol =
-              undefined
-            -- extractColumnFancy
-            --   ets
-            --   thatCol
-            --   idxCol'
-            --   (exitEdh ets exit edhNA)
-            --   (exitEdh ets exit . EdhObject)
+            withIntpIdx !idxCol = runEdhTx ets $
+              extractColumnFancy objCol col idxCol $ \(!newColObj, _newCol) ->
+                exitEdhTx exit $ EdhObject newColObj
 
             withEdhIdx :: STM ()
             withEdhIdx = parseEdhIndex ets idxVal $ \case

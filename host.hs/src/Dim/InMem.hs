@@ -136,6 +136,62 @@ instance
                       exit
                       (StayComposed, InMemDevCol csvNew clvNew)
 
+  extract'column'bool (InMemDevCol csv clv) !idxCol !exit !ets = do
+    DeviceArray _cap (fp :: ForeignPtr a) <- readTMVar csv
+    !cl <- readTVar clv
+    runEdhTx ets $
+      view'column'data idxCol $ \(!idxa, !idxl) ->
+        if idxl /= cl
+          then
+            throwEdhTx UsageError $
+              "bool index shape mismatch - "
+                <> T.pack (show idxl)
+                <> " vs "
+                <> T.pack (show cl)
+          else edhContIO $ do
+            (!fp', !cl') <- withForeignPtr fp $ \ !p -> do
+              !p' <- callocArray cl
+              !fp' <- newForeignPtr finalizerFree p'
+              let extractAt :: Int -> Int -> IO (ForeignPtr a, Int)
+                  extractAt !i !n =
+                    if i >= cl
+                      then return (fp', n)
+                      else do
+                        array'reader idxa i >>= \case
+                          YesNo 0 -> extractAt (i + 1) n
+                          _ -> do
+                            peekElemOff p i >>= pokeElemOff p' n
+                            extractAt (i + 1) (n + 1)
+              extractAt 0 0
+            let !cs' = DeviceArray cl fp'
+            atomically $ do
+              !csvNew <- newTMVar cs'
+              !clvNew <- newTVar cl'
+              exitEdh ets exit (StayComposed, InMemDevCol csvNew clvNew)
+
+  extract'column'fancy (InMemDevCol csv _clv) !idxCol !exit !ets = do
+    DeviceArray _cap (fp :: ForeignPtr a) <- readTMVar csv
+    -- !cl <- readTVar clv
+    runEdhTx ets $
+      view'column'data idxCol $ \(!idxa, !idxl) -> edhContIO $ do
+        !fp' <- withForeignPtr fp $ \ !p -> do
+          !p' <- callocArray idxl
+          !fp' <- newForeignPtr finalizerFree p'
+          let extractAt :: Int -> IO (ForeignPtr a)
+              extractAt !i =
+                if i >= idxl
+                  then return fp'
+                  else do
+                    !idxi <- array'reader idxa i
+                    peekElemOff p idxi >>= pokeElemOff p' i
+                    extractAt (i + 1)
+          extractAt 0
+        let !cs' = DeviceArray idxl fp'
+        atomically $ do
+          !csvNew <- newTMVar cs'
+          !clvNew <- newTVar idxl
+          exitEdh ets exit (StayComposed, InMemDevCol csvNew clvNew)
+
 data InMemDirCol a = (EdhXchg a, Eq a, Typeable a) =>
   InMemDirCol
   { im'devdir'storage :: !(TMVar (DirectArray a)),
@@ -254,3 +310,57 @@ instance
                       ets
                       exit
                       (StayComposed, InMemDirCol csvNew clvNew)
+
+  extract'column'bool (InMemDirCol csv clv) !idxCol !exit !ets = do
+    DirectArray !iov <- readTMVar csv
+    !cl <- readTVar clv
+    runEdhTx ets $
+      view'column'data idxCol $ \(!idxa, !idxl) ->
+        if idxl /= cl
+          then
+            throwEdhTx UsageError $
+              "bool index shape mismatch - "
+                <> T.pack (show idxl)
+                <> " vs "
+                <> T.pack (show cl)
+          else edhContIO $ do
+            (!iov', !cl') <- do
+              !iov' <- MV.new cl
+              let extractAt :: Int -> Int -> IO (MV.IOVector a, Int)
+                  extractAt !i !n =
+                    if i >= cl
+                      then return (iov', n)
+                      else do
+                        array'reader idxa i >>= \case
+                          YesNo 0 -> extractAt (i + 1) n
+                          _ -> do
+                            MV.unsafeRead iov i >>= MV.unsafeWrite iov' n
+                            extractAt (i + 1) (n + 1)
+              extractAt 0 0
+            let !cs' = DirectArray iov'
+            atomically $ do
+              !csvNew <- newTMVar cs'
+              !clvNew <- newTVar cl'
+              exitEdh ets exit (StayComposed, InMemDirCol csvNew clvNew)
+
+  extract'column'fancy (InMemDirCol csv _clv) !idxCol !exit !ets = do
+    DirectArray !iov <- readTMVar csv
+    -- !cl <- readTVar clv
+    runEdhTx ets $
+      view'column'data idxCol $ \(!idxa, !idxl) -> edhContIO $ do
+        !iov' <- do
+          !iov' <- MV.new idxl
+          let extractAt :: Int -> IO (MV.IOVector a)
+              extractAt !i =
+                if i >= idxl
+                  then return iov'
+                  else do
+                    !idxi <- array'reader idxa i
+                    MV.unsafeRead iov idxi >>= MV.unsafeWrite iov' i
+                    extractAt (i + 1)
+          extractAt 0
+        let !cs' = DirectArray iov'
+        atomically $ do
+          !csvNew <- newTMVar cs'
+          !clvNew <- newTVar idxl
+          exitEdh ets exit (StayComposed, InMemDirCol csvNew clvNew)
