@@ -3,6 +3,7 @@ module Dim.ColArts where
 -- import           Debug.Trace
 
 import Control.Concurrent.STM
+import Control.Monad
 import qualified Data.ByteString.Internal as B
 import Data.Dynamic
 import Data.Lossless.Decimal as D
@@ -81,154 +82,6 @@ scanOpProc
             exitWithNewClone $ Column $ InMemColumn dt bicsv biclv
     where
       naExit = exitEdh ets exit edhNA
-
-vecCmpColumn ::
-  DataType ->
-  EdhThreadState ->
-  (Ordering -> Bool) ->
-  Column ->
-  EdhValue ->
-  (Column -> STM ()) ->
-  STM ()
-vecCmpColumn !dtYesNo !ets !cmp (Column !col) !v !exit = do
-  let !dt = data'type'of'column col
-  !cs <- view'column'data col
-  !cl <- read'column'length col
-  resolveDataComparator ets (data'type'identifier dt) cs $ \ !dtOrd -> do
-    let !fa = unsafeSliceFlatArray cs 0 cl
-    flat'cmp'vectorized dtOrd ets fa cmp v $ \ !bifa -> do
-      !bicsv <- newTVar bifa
-      !biclv <- newTVar cl
-      exit $ Column $ InMemColumn dtYesNo bicsv biclv
-
-elemCmpColumn ::
-  DataType ->
-  EdhThreadState ->
-  (Ordering -> Bool) ->
-  Column ->
-  Column ->
-  (Column -> STM ()) ->
-  STM ()
-elemCmpColumn !dtYesNo !ets !cmp (Column !col1) (Column !col2) !exit =
-  if data'type'identifier dt1 /= data'type'identifier dt2
-    then
-      throwEdh ets UsageError $
-        "column dtype mismatch: "
-          <> data'type'identifier dt1
-          <> " vs "
-          <> data'type'identifier dt2
-    else do
-      !cl1 <- read'column'length col1
-      !cl2 <- read'column'length col2
-      if cl1 /= cl2
-        then
-          throwEdh ets UsageError $
-            "column length mismatch: "
-              <> T.pack (show cl1)
-              <> " vs "
-              <> T.pack (show cl2)
-        else do
-          !cs1 <- view'column'data col1
-          !cs2 <- view'column'data col2
-          resolveDataComparator ets (data'type'identifier dt1) cs1 $
-            \ !dtOrd -> do
-              let !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                  !fa2 = unsafeSliceFlatArray cs2 0 cl2
-              flat'cmp'element'wise dtOrd ets fa1 cmp fa2 $ \ !bifa -> do
-                !bicsv <- newTVar bifa
-                !biclv <- newTVar cl1
-                exit $ Column $ InMemColumn dtYesNo bicsv biclv
-  where
-    !dt1 = data'type'of'column col1
-    !dt2 = data'type'of'column col2
-
-vecOpColumn ::
-  EdhThreadState ->
-  (Text -> Dynamic) ->
-  Column ->
-  EdhValue ->
-  STM () ->
-  (Column -> STM ()) ->
-  STM ()
-vecOpColumn !ets !getOp (Column !col) !v !naExit !exit = do
-  !cs <- view'column'data col
-  !cl <- read'column'length col
-  resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp -> do
-    let !fa = unsafeSliceFlatArray cs 0 cl
-    let !dop = getOp (data'type'identifier dt)
-    case fromDynamic dop of
-      Just EdhNil -> naExit
-      _ -> flat'op'vectorized dtOp ets fa dop v $ \ !bifa -> do
-        !bicsv <- newTVar bifa
-        !biclv <- newTVar cl
-        exit $ Column $ InMemColumn dt bicsv biclv
-  where
-    !dt = data'type'of'column col
-
-elemOpColumn ::
-  EdhThreadState ->
-  (Text -> Dynamic) ->
-  Column ->
-  Column ->
-  STM () ->
-  (Column -> STM ()) ->
-  STM ()
-elemOpColumn !ets !getOp (Column !col1) (Column !col2) !naExit !exit =
-  if data'type'identifier dt1 /= data'type'identifier dt2
-    then
-      throwEdh ets UsageError $
-        "column dtype mismatch: "
-          <> data'type'identifier dt1
-          <> " vs "
-          <> data'type'identifier dt2
-    else do
-      !cl1 <- read'column'length col1
-      !cl2 <- read'column'length col2
-      if cl1 /= cl2
-        then
-          throwEdh ets UsageError $
-            "column length mismatch: "
-              <> T.pack (show cl1)
-              <> " vs "
-              <> T.pack (show cl2)
-        else do
-          !cs1 <- view'column'data col1
-          !cs2 <- view'column'data col2
-          resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
-            \ !dtOp -> do
-              let !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                  !fa2 = unsafeSliceFlatArray cs2 0 cl2
-              let !dop = getOp (data'type'identifier dt1)
-              case fromDynamic dop of
-                Just EdhNil -> naExit
-                _ -> flat'op'element'wise dtOp ets fa1 dop fa2 $ \ !bifa ->
-                  do
-                    !bicsv <- newTVar bifa
-                    !biclv <- newTVar cl1
-                    exit $ Column $ InMemColumn dt1 bicsv biclv
-  where
-    !dt1 = data'type'of'column col1
-    !dt2 = data'type'of'column col2
-
-vecInpColumn ::
-  EdhThreadState ->
-  (Text -> Dynamic) ->
-  Column ->
-  EdhValue ->
-  STM () ->
-  STM () ->
-  STM ()
-vecInpColumn !ets !getOp (Column !col) !v !naExit !exit = do
-  !cl <- read'column'length col
-  !cs <- view'column'data col
-  resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp -> do
-    let !fa = unsafeSliceFlatArray cs 0 cl
-    let !dop = getOp (data'type'identifier dt)
-    case fromDynamic dop of
-      Just EdhNil -> naExit
-      _ -> flat'inp'vectorized dtOp ets fa dop v exit
-  where
-    !dt = data'type'of'column col
 
 vecInpSliceColumn ::
   EdhThreadState ->
@@ -1578,9 +1431,7 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("__show__", EdhMethod, wrapHostProc colShowProc),
                   ("__desc__", EdhMethod, wrapHostProc colDescProc),
                   ("([])", EdhMethod, wrapHostProc colIdxReadProc),
-                  {-
                   ("([=])", EdhMethod, wrapHostProc colIdxWriteProc),
-                  -}
                   ("copy", EdhMethod, wrapHostProc colCopyProc)
                 ]
           ]
@@ -1627,7 +1478,7 @@ createColumnClass !defaultDt !clsOuterScope =
                           InMemDevCol @a csv clv
 
           dirDataCol :: DirectDataType -> STM ()
-          dirDataCol (DirectDataType _dti dvh _) =
+          dirDataCol (DirectDataType _dti dvh _ _) =
             dvh $ \(fill'val :: a) -> runEdhTx etsCtor $
               edhContIO $ do
                 (_iov, !cs) <- newDirectArray @a fill'val ctorCap
@@ -1881,6 +1732,130 @@ createColumnClass !defaultDt !clsOuterScope =
       where
         that = edh'scope'that $ contextScope $ edh'context ets
 
+    colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
+    colIdxWriteProc !idxVal !other !exit !ets =
+      withColumnSelf ets exit $ \_objCol (col :: _c a) -> do
+        let withScalarRHS :: STM ()
+            withScalarRHS = runEdhTx ets $
+              fromEdh @a other $ \ !rhv ->
+                view'column'data col $ \(!cs, !cl) _ets -> do
+                  let byBoolIdx ::
+                        forall c f. ManagedColumn c f YesNo => c YesNo -> STM ()
+                      byBoolIdx !idxCol = runEdhTx ets $
+                        view'column'data idxCol $ \(idxa, idxl) ->
+                          if idxl /= cl
+                            then
+                              throwEdhTx UsageError $
+                                "bool index shape mismatch - "
+                                  <> T.pack (show idxl)
+                                  <> " vs "
+                                  <> T.pack (show cl)
+                            else edhContIO $ do
+                              let go :: Int -> IO ()
+                                  go i
+                                    | i >= idxl = return ()
+                                    | otherwise = do
+                                      YesNo yn <- array'reader idxa i
+                                      when (yn /= 0) $ array'writer cs i rhv
+                                      go (i + 1)
+                              go 0
+                              atomically $ runEdhTx ets doneAssign
+
+                      byIntpIdx ::
+                        forall c f. ManagedColumn c f Int => c Int -> STM ()
+                      byIntpIdx !idxCol = runEdhTx ets $
+                        view'column'data idxCol $
+                          \(idxa, idxl) -> edhContIO $ do
+                            let go :: Int -> IO ()
+                                go i
+                                  | i >= idxl = return ()
+                                  | otherwise = do
+                                    idxi <- array'reader idxa i
+                                    array'writer cs idxi rhv
+                                    go (i + 1)
+                            go 0
+                            atomically $ runEdhTx ets doneAssign
+
+                      byEdhIdx :: STM ()
+                      byEdhIdx = parseEdhIndex ets idxVal $ \case
+                        Left !err -> throwEdh ets UsageError err
+                        Right !idx -> runEdhTx ets $ do
+                          let fillAll :: EdhTx
+                              fillAll = edhContIO $ do
+                                let go :: Int -> IO ()
+                                    go i
+                                      | i >= cl = return ()
+                                      | otherwise = do
+                                        array'writer cs i rhv
+                                        go (i + 1)
+                                go 0
+                                atomically $ runEdhTx ets doneAssign
+                          case idx of
+                            EdhIndex !i -> edhContIO $ do
+                              array'writer cs i rhv
+                              atomically $ runEdhTx ets doneAssign
+                            EdhAny -> fillAll
+                            EdhAll -> fillAll
+                            EdhSlice !start !stop !step -> \_ets ->
+                              edhRegulateSlice ets cl (start, stop, step) $
+                                \(!iStart, !iStop, !iStep) -> runEdhTx ets $
+                                  edhContIO $ do
+                                    let go :: Int -> IO ()
+                                        go i
+                                          | i >= iStop = return ()
+                                          | otherwise = do
+                                            array'writer cs i rhv
+                                            go (i + iStep)
+                                    go iStart
+                                    atomically $ runEdhTx ets doneAssign
+
+                  withColumnOf' @YesNo
+                    idxVal
+                    (withColumnOf' @Int idxVal byEdhIdx byIntpIdx)
+                    byBoolIdx
+
+        withColumnOf' @a other withScalarRHS $ \ !rhsCol -> do
+          let byBoolIdx ::
+                forall c f. ManagedColumn c f YesNo => c YesNo -> STM ()
+              byBoolIdx !idxCol =
+                -- TODO match shape and assign individual elements
+                runEdhTx ets $ doneAssign
+
+              byIntpIdx :: forall c f. ManagedColumn c f Int => c Int -> STM ()
+              byIntpIdx !idxCol =
+                -- TODO match shape and assign individual elements
+                runEdhTx ets $ doneAssign
+
+              byEdhIdx :: STM ()
+              byEdhIdx = parseEdhIndex ets idxVal $ \case
+                Left !err -> throwEdh ets UsageError err
+                Right !idx -> runEdhTx ets $
+                  view'column'data col $
+                    \(!cs, !cl) -> case idx of
+                      EdhIndex _i ->
+                        throwEdhTx
+                          UsageError
+                          "can not index-assign a rhs column by scalar index"
+                      EdhAny ->
+                        throwEdhTx
+                          UsageError
+                          "can not index-assign a rhs column by Any index"
+                      EdhAll ->
+                        -- TODO match shape and assign all elements
+                        doneAssign
+                      EdhSlice !start !stop !step -> \_ets ->
+                        edhRegulateSlice ets cl (start, stop, step) $
+                          \(!iStart, !iStop, !iStep) ->
+                            -- TODO match shape and assign individual elements
+                            runEdhTx ets doneAssign
+
+          withColumnOf' @YesNo
+            idxVal
+            (withColumnOf' @Int idxVal byEdhIdx byIntpIdx)
+            byBoolIdx
+      where
+        doneAssign = exitEdhTx exit other
+
     colCopyProc :: EdhHostProc
     colCopyProc !exit !ets = withColumnSelf ets exit $ \ !objCol !col ->
       runEdhTx ets $
@@ -1899,362 +1874,6 @@ createColumnClass !defaultDt !clsOuterScope =
         this = edh'scope'this scope
 
 {-
-
-    colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
-    colIdxWriteProc !idxVal !other !exit !ets =
-      withThisHostObj ets $ \ !col -> idxAssignColumn col idxVal other exit ets
-
-assignOp :: Text -> Dynamic
-assignOp = \case
-  "float64" -> toDyn ((\_x !y -> y) :: Double -> Double -> Double)
-  "float32" -> toDyn ((\_x !y -> y) :: Float -> Float -> Float)
-  "int64" -> toDyn ((\_x !y -> y) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((\_x !y -> y) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((\_x !y -> y) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((\_x !y -> y) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((\_x !y -> y) :: Int -> Int -> Int)
-  "yesno" -> toDyn ((\_x !y -> y) :: YesNo -> YesNo -> YesNo)
-  "decimal" -> toDyn ((\_x !y -> y) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp _x !y !exit !ets = exitEdh ets exit y
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-bitAndOp :: Text -> Dynamic
-bitAndOp = \case
-  -- "float64" -> toDyn ((.&.) :: Double -> Double -> Double)
-  -- "float32" -> toDyn ((.&.) :: Float -> Float -> Float)
-  "int64" -> toDyn ((.&.) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((.&.) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((.&.) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((.&.) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((.&.) :: Int -> Int -> Int)
-  "yesno" -> toDyn ((.&.) :: YesNo -> YesNo -> YesNo)
-  -- "decimal" -> toDyn ((.&.) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "&&" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-bitOrOp :: Text -> Dynamic
-bitOrOp = \case
-  -- "float64" -> toDyn ((.|.) :: Double -> Double -> Double)
-  -- "float32" -> toDyn ((.|.) :: Float -> Float -> Float)
-  "int64" -> toDyn ((.|.) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((.|.) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((.|.) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((.|.) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((.|.) :: Int -> Int -> Int)
-  "yesno" -> toDyn ((.|.) :: YesNo -> YesNo -> YesNo)
-  -- "decimal" -> toDyn ((.|.) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "||" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-addValidOp :: Text -> Dynamic
-addValidOp = \case
-  "float64" -> toDyn (addValidFloat :: Double -> Double -> Double)
-  "float32" -> toDyn (addValidFloat :: Float -> Float -> Float)
-  "int64" -> toDyn (add :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn (add :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn (add :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn (add :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn (add :: Int -> Int -> Int)
-  "decimal" -> toDyn (addValidDecimal :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" -> toDyn addValidEdhValue
-  _ -> toDyn nil -- means not applicable here
-  where
-    add :: Num a => a -> a -> a
-    add = (+)
-
-    addValidFloat :: RealFloat a => a -> a -> a
-    addValidFloat x y
-      | isNaN x = y
-      | isNaN y = x
-      | otherwise = x + y
-
-    addValidDecimal :: D.Decimal -> D.Decimal -> D.Decimal
-    addValidDecimal x y
-      | D.decimalIsNaN x = y
-      | D.decimalIsNaN y = x
-      | otherwise = x + y
-
-    addValidEdhValue :: EdhValue -> EdhValue -> EdhHostProc
-    addValidEdhValue x y exit = case edhUltimate x of
-      EdhDecimal x' | D.decimalIsNaN x' -> exitEdhTx exit y
-      _ -> case edhUltimate y of
-        EdhDecimal y' | D.decimalIsNaN y' -> exitEdhTx exit x
-        _ ->
-          evalInfix
-            "+"
-            (LitExpr $ ValueLiteral x)
-            (LitExpr $ ValueLiteral y)
-            exit
-
-addOp :: Text -> Dynamic
-addOp = \case
-  "float64" -> toDyn ((+) :: Double -> Double -> Double)
-  "float32" -> toDyn ((+) :: Float -> Float -> Float)
-  "int64" -> toDyn ((+) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((+) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((+) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((+) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((+) :: Int -> Int -> Int)
-  "decimal" -> toDyn ((+) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "+" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-addToOp :: Text -> Dynamic
-addToOp = \case
-  "float64" -> toDyn ((+) :: Double -> Double -> Double)
-  "float32" -> toDyn ((+) :: Float -> Float -> Float)
-  "int64" -> toDyn ((+) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((+) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((+) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((+) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((+) :: Int -> Int -> Int)
-  "decimal" -> toDyn ((+) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "+" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-subtractOp :: Text -> Dynamic
-subtractOp = \case
-  "float64" -> toDyn ((-) :: Double -> Double -> Double)
-  "float32" -> toDyn ((-) :: Float -> Float -> Float)
-  "int64" -> toDyn ((-) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((-) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((-) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((-) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((-) :: Int -> Int -> Int)
-  "decimal" -> toDyn ((-) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "-" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-subtFromOp :: Text -> Dynamic
-subtFromOp = \case
-  "float64" -> toDyn ((\ !x !y -> y - x) :: Double -> Double -> Double)
-  "float32" -> toDyn ((\ !x !y -> y - x) :: Float -> Float -> Float)
-  "int64" -> toDyn ((\ !x !y -> y - x) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((\ !x !y -> y - x) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((\ !x !y -> y - x) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((\ !x !y -> y - x) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((\ !x !y -> y - x) :: Int -> Int -> Int)
-  "decimal" ->
-    toDyn ((\ !x !y -> y - x) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "-" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-mulValidOp :: Text -> Dynamic
-mulValidOp = \case
-  "float64" -> toDyn (mulValidFloat :: Double -> Double -> Double)
-  "float32" -> toDyn (mulValidFloat :: Float -> Float -> Float)
-  "int64" -> toDyn (mul :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn (mul :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn (mul :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn (mul :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn (mul :: Int -> Int -> Int)
-  "decimal" -> toDyn (mulValidDecimal :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" -> toDyn mulValidEdhValue
-  _ -> toDyn nil -- means not applicable here
-  where
-    mul :: Num a => a -> a -> a
-    mul = (*)
-
-    mulValidFloat :: RealFloat a => a -> a -> a
-    mulValidFloat x y
-      | isNaN x = y
-      | isNaN y = x
-      | otherwise = x * y
-
-    mulValidDecimal :: D.Decimal -> D.Decimal -> D.Decimal
-    mulValidDecimal x y
-      | D.decimalIsNaN x = y
-      | D.decimalIsNaN y = x
-      | otherwise = x * y
-
-    mulValidEdhValue :: EdhValue -> EdhValue -> EdhHostProc
-    mulValidEdhValue x y exit = case edhUltimate x of
-      EdhDecimal x' | D.decimalIsNaN x' -> exitEdhTx exit y
-      _ -> case edhUltimate y of
-        EdhDecimal y' | D.decimalIsNaN y' -> exitEdhTx exit x
-        _ ->
-          evalInfix
-            "*"
-            (LitExpr $ ValueLiteral x)
-            (LitExpr $ ValueLiteral y)
-            exit
-
-mulOp :: Text -> Dynamic
-mulOp = \case
-  "float64" -> toDyn ((*) :: Double -> Double -> Double)
-  "float32" -> toDyn ((*) :: Float -> Float -> Float)
-  "int64" -> toDyn ((*) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((*) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((*) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((*) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((*) :: Int -> Int -> Int)
-  "decimal" -> toDyn ((*) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "*" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-mulToOp :: Text -> Dynamic
-mulToOp = \case
-  "float64" -> toDyn ((*) :: Double -> Double -> Double)
-  "float32" -> toDyn ((*) :: Float -> Float -> Float)
-  "int64" -> toDyn ((*) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((*) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((*) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((*) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((*) :: Int -> Int -> Int)
-  "decimal" -> toDyn ((*) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "*" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-divOp :: Text -> Dynamic
-divOp = \case
-  "float64" -> toDyn ((/) :: Double -> Double -> Double)
-  "float32" -> toDyn ((/) :: Float -> Float -> Float)
-  "int64" -> toDyn (div :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn (div :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn (div :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn (div :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn (div :: Int -> Int -> Int)
-  "decimal" -> toDyn (D.divDecimal :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "/" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-divByOp :: Text -> Dynamic
-divByOp = \case
-  "float64" -> toDyn ((\ !x !y -> y / x) :: Double -> Double -> Double)
-  "float32" -> toDyn ((\ !x !y -> y / x) :: Float -> Float -> Float)
-  "int64" -> toDyn ((\ !x !y -> div y x) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((\ !x !y -> div y x) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((\ !x !y -> div y x) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((\ !x !y -> div y x) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
-  "decimal" ->
-    toDyn
-      ((\ !x !y -> D.divDecimal y x) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "/" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-divIntOp :: Text -> Dynamic
-divIntOp = \case
-  -- TODO reason about this:
-  -- https://stackoverflow.com/questions/38588815/rounding-errors-in-python-floor-division
-  "float64" ->
-    toDyn
-      ((\ !x !y -> fromInteger $ floor $ x / y) :: Double -> Double -> Double)
-  "float32" ->
-    toDyn
-      ((\ !x !y -> fromInteger $ floor $ x / y) :: Float -> Float -> Float)
-  "int64" -> toDyn (div :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn (div :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn (div :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn (div :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn (div :: Int -> Int -> Int)
-  "decimal" -> toDyn (D.divIntDecimal :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "//" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-divIntByOp :: Text -> Dynamic
-divIntByOp = \case
-  "float64" ->
-    toDyn
-      ((\ !x !y -> fromInteger $ floor $ y / x) :: Double -> Double -> Double)
-  "float32" ->
-    toDyn
-      ((\ !x !y -> fromInteger $ floor $ y / x) :: Float -> Float -> Float)
-  "int64" -> toDyn ((\ !x !y -> div y x) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((\ !x !y -> div y x) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((\ !x !y -> div y x) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((\ !x !y -> div y x) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((\ !x !y -> div y x) :: Int -> Int -> Int)
-  "decimal" ->
-    toDyn
-      ((\ !x !y -> D.divIntDecimal y x) :: D.Decimal -> D.Decimal -> D.Decimal)
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "//" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-powOp :: Text -> Dynamic
-powOp = \case
-  "float64" -> toDyn powerDouble
-  "float32" -> toDyn powerFloat
-  "int64" -> toDyn ((^) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn ((^) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn ((^) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn ((^) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn ((^) :: Int -> Int -> Int)
-  "decimal" -> toDyn D.powerDecimal
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "**" (LitExpr $ ValueLiteral x) (LitExpr $ ValueLiteral y)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
-
-powToOp :: Text -> Dynamic
-powToOp = \case
-  "float64" -> toDyn $ flip powerDouble
-  "float32" -> toDyn $ flip powerFloat
-  "int64" -> toDyn $ flip ((^) :: Int64 -> Int64 -> Int64)
-  "int32" -> toDyn $ flip ((^) :: Int32 -> Int32 -> Int32)
-  "int8" -> toDyn $ flip ((^) :: Int8 -> Int8 -> Int8)
-  "byte" -> toDyn $ flip ((^) :: Word8 -> Word8 -> Word8)
-  "intp" -> toDyn $ flip ((^) :: Int -> Int -> Int)
-  "decimal" -> toDyn $ flip D.powerDecimal
-  "box" ->
-    let edhOp :: EdhValue -> EdhValue -> EdhHostProc
-        edhOp !x !y =
-          evalInfix "**" (LitExpr $ ValueLiteral y) (LitExpr $ ValueLiteral x)
-     in toDyn edhOp
-  _ -> toDyn nil -- means not applicable here
 
 idxAssignColumn :: Column -> EdhValue -> EdhValue -> EdhHostProc
 idxAssignColumn col'@(Column !col) !idxVal !other !exit !ets =

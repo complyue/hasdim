@@ -8,9 +8,7 @@ module Dim.DataType where
 import Control.Concurrent.STM
 import Control.Monad
 import Data.Dynamic
-import qualified Data.Lossless.Decimal as D
 import Data.Maybe
-import Data.Text (Text)
 import Data.Typeable hiding (TypeRep, typeOf, typeRep)
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Storable as VS
@@ -105,6 +103,15 @@ data DirectDataType = DirectDataType
       forall r.
       (forall a. (Eq a, EdhXchg a, Typeable a) => a -> r) ->
       r,
+    direct'data'type'as'of'num ::
+      forall r.
+      r ->
+      ( forall a.
+        (Num a, Eq a, EdhXchg a, Typeable a) =>
+        TypeRep a ->
+        r
+      ) ->
+      r,
     direct'data'type'as'of'frac ::
       forall r.
       r ->
@@ -117,7 +124,7 @@ data DirectDataType = DirectDataType
   }
 
 instance Eq DirectDataType where
-  (DirectDataType x'dti x'dvh _) == (DirectDataType y'dti y'dvh _) =
+  (DirectDataType x'dti x'dvh _ _) == (DirectDataType y'dti y'dvh _ _) =
     x'dvh $ \x'defv -> y'dvh $ \y'defv ->
       case typeOf x'defv `eqTypeRep` typeOf y'defv of
         Just HRefl | x'dti == y'dti && x'defv == y'defv -> True
@@ -134,6 +141,7 @@ mkBoxDataType !dti !defv =
     dti
     ($ defv)
     (\naExit _exit -> naExit)
+    (\naExit _exit -> naExit)
 
 mkRealFracDataType ::
   forall a.
@@ -145,6 +153,7 @@ mkRealFracDataType !dti !defv =
   DirectDataType
     dti
     ($ defv)
+    (\_naExit exit -> exit (typeRep @a))
     (\_naExit exit -> exit (typeRep @a))
 
 withDeviceDataType ::
