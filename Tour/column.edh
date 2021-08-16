@@ -2,8 +2,11 @@
 hd = { import * 'dim' }
 
 # %%
-c = arange(3)
+c = arange(5)
 c' = c.copy()
+
+show$ where( c > 1 )
+
 
 # %%
 r = random( 3, 3..5 )

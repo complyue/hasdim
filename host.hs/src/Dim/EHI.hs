@@ -121,10 +121,11 @@ installDimBatteries !world = do
         fromJust <$> iopdLookup (AttrByName "float64") dtypesModuStore >>= \case
           EdhObject !dto -> return dto
           _ -> error "bug: dtype not object"
-      !defaultRangeDataType <-
+      !dtIntp <-
         fromJust <$> iopdLookup (AttrByName "intp") dtypesModuStore >>= \case
           EdhObject !dto -> return dto
           _ -> error "bug: dtype not object"
+      let !defaultRangeDataType = dtIntp
 
       let !moduScope = contextScope $ edh'context ets
 
@@ -144,9 +145,12 @@ installDimBatteries !world = do
                   ( EdhMethod,
                     "random",
                     wrapHostProc $ randomProc defaultDataType columnClass
+                  ),
+                  ( EdhMethod,
+                    "where",
+                    wrapHostProc $ whereProc columnClass dtIntp
                   )
                   {-
-                  (EdhMethod, "where", wrapHostProc whereProc),
                   ( EdhMethod,
                     "pi",
                     wrapHostProc $ piProc defaultDataType columnClass

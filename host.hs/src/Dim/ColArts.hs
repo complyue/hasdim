@@ -1893,82 +1893,47 @@ randomProc
 
         withDataType dto badDtype createDevCol createDirCol
 
-{-
-
-    castObjectStore dto >>= \case
-      Nothing -> throwEdh ets UsageError "invalid dtype"
-      Just (_, !dt) -> case edhUltimate rngSpec of
-        EdhRange !lower !upper ->
-          createRandomCol dt (edhBoundValue lower) (edhBoundValue upper)
-        _ -> parseEdhIndex ets (edhUltimate rngSpec) $ \case
-          Right (EdhIndex !stop) ->
-            createRandomCol dt (EdhDecimal 0) (EdhDecimal $ fromIntegral stop)
-          Right (EdhSlice !start (Just !stopN) Nothing) ->
-            createRandomCol
-              dt
-              (EdhDecimal $ fromIntegral $ fromMaybe 0 start)
-              (EdhDecimal $ fromIntegral stopN)
-          Left !err -> edhValueDesc ets rngSpec $ \ !rngDesc ->
-            throwEdh ets UsageError $
-              "invalid random range " <> rngDesc <> " - " <> err
-          _ -> edhValueDesc ets rngSpec $ \ !rngDesc ->
-            throwEdh ets UsageError $
-              "invalid random range " <> rngDesc
-    where
-      createRandomCol :: DataType -> EdhValue -> EdhValue -> STM ()
-      createRandomCol !dt !lower !upper =
-        resolveNumDataType ets (data'type'identifier dt) $ \ !ndt ->
-          flat'new'random'array ndt ets size lower upper $ \ !cs -> do
-            !csv <- newTVar cs
-            !clv <- newTVar $ flatArrayCapacity cs
-            let !col = Column $ InMemColumn dt csv clv
-            edhCreateHostObj colClass col >>= exitEdh ets exit . EdhObject
-
 -- TODO impl. `linspace` following:
 --      https://numpy.org/doc/stable/reference/generated/numpy.linspace.html
 -- Note it can be more exact by stepping with LosslessDecimal
 
 -- | resemble https://numpy.org/doc/stable/reference/generated/numpy.where.html
-whereProc :: ArgsPack -> EdhHostProc
-whereProc (ArgsPack [EdhObject !colBoolIdx] !kwargs) !exit !ets
-  | odNull kwargs =
-    castObjectStore colBoolIdx >>= \case
-      Nothing ->
-        throwEdh
-          ets
-          UsageError
-          "invalid index object, need to be a column with dtype=yesno"
-      Just (_, col'@(Column !col)) ->
-        let dt = data'type'of'column col
-         in if data'type'identifier dt /= "yesno"
-              then
-                throwEdh ets UsageError $
-                  "invalid dtype="
-                    <> data'type'identifier dt
-                    <> " for where(), need to be yesno"
-              else nonzeroIdxColumn ets col' $ \ !colResult ->
-                edhCreateHostObj (edh'obj'class colBoolIdx) colResult
-                  >>= exitEdh ets exit
-                    . EdhObject
+whereProc :: Object -> Object -> ArgsPack -> EdhHostProc
+whereProc !colClass !dtIntp (ArgsPack [EdhObject !colYesNo] !kwargs) !exit !ets
+  | odNull kwargs = withColumnOf @YesNo colYesNo naExit $ \ !col ->
+    runEdhTx ets $
+      view'column'data col $ \(cs, cl) -> edhContIO $ do
+        !p <- callocArray @Int cl
+        !fp <- newForeignPtr finalizerFree p
+        let fillIdxs :: Int -> Int -> IO Int
+            fillIdxs !n !i =
+              if i >= cl
+                then return n
+                else
+                  array'reader cs i >>= \case
+                    YesNo 0 -> fillIdxs n (i + 1)
+                    _ -> do
+                      pokeElemOff p n i
+                      fillIdxs (n + 1) (i + 1)
+        !len <- fillIdxs 0 0
+        atomically $ do
+          let !cs' = DeviceArray cl fp
+          !csv <- newTMVar cs'
+          !clv <- newTVar len
+          let !col' = InMemDevCol csv clv
+          edhCreateHostObj'
+            colClass
+            (toDyn $ someColumn col')
+            [dtIntp]
+            >>= exitEdh ets exit . EdhObject
+  where
+    naExit = throwEdh ets UsageError "not a `yesno` column"
 whereProc
+  _colClass
+  _dtIntp
   (ArgsPack [EdhObject !_colBoolIdx, !_trueData, !_falseData] !kwargs)
   _exit
   !ets
     | odNull kwargs = throwEdh ets UsageError "not implemented yet."
-whereProc !apk _ !ets =
+whereProc _colClass _dtIntp !apk _ !ets =
   throwEdh ets UsageError $ "invalid args to where()" <> T.pack (show apk)
-
-nonzeroIdxColumn :: EdhThreadState -> Column -> (Column -> STM ()) -> STM ()
-nonzeroIdxColumn !ets (Column !colMask) !exit =
-  resolveNumDataType ets (data'type'identifier dtIntp) $ \ !ndt -> do
-    !mcl <- read'column'length colMask
-    !mcs <- view'column'data colMask
-    let !ma = unsafeSliceFlatArray mcs 0 mcl
-    flat'new'nonzero'array ndt ets ma $ \(!rfa, !rlen) -> do
-      !csvRtn <- newTVar rfa
-      !clvRtn <- newTVar rlen
-      exit $ Column $ InMemColumn dtIntp csvRtn clvRtn
-  where
-    dtIntp = makeDeviceDataType @Int "intp"
-
--}
