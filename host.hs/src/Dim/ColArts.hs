@@ -168,9 +168,9 @@ mkBoxSuperDt !dti !defv !outerScope = do
               exit
 
       boxInpProc :: Bool -> AttrName -> EdhValue -> EdhHostProc
-      boxInpProc !flipOperands !op !other !exit !ets =
-        withColumnSelfOf @EdhValue ets $ \_objCol !col -> do
-          let vecOp = runEdhTx ets $
+      boxInpProc !flipOperands !op !other !exit !ets = runEdhTx ets $
+        withColumnSelfOf @EdhValue $ \_objCol !col -> do
+          let vecOp =
                 view'column'data col $ \(cs, cl) -> edhContIO $ do
                   let go i
                         | i < 0 = atomically doExit
@@ -187,9 +187,10 @@ mkBoxSuperDt !dti !defv !outerScope = do
               elemOp ::
                 forall c' f'.
                 ManagedColumn c' f' EdhValue =>
+                Object ->
                 c' EdhValue ->
-                STM ()
-              elemOp col' = runEdhTx ets $
+                EdhTx
+              elemOp _ col' =
                 view'column'data col $ \(cs, cl) ->
                   view'column'data col' $ \(cs', cl') ->
                     if cl' /= cl
@@ -219,8 +220,8 @@ mkBoxSuperDt !dti !defv !outerScope = do
           doExit = exitEdh ets exit $ EdhObject that
 
       boxApOpProc :: Bool -> AttrName -> EdhValue -> EdhHostProc
-      boxApOpProc !flipOperands !op !other !exit !ets =
-        withColumnSelfOf @EdhValue ets $ \ !objCol !col -> do
+      boxApOpProc !flipOperands !op !other !exit !ets = runEdhTx ets $
+        withColumnSelfOf @EdhValue $ \ !objCol !col -> do
           let exitWithResult ::
                 Typeable (InMemDirCol EdhValue) =>
                 InMemDirCol EdhValue ->
@@ -232,7 +233,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
                   [dtBox]
                   >>= exitEdh ets exit . EdhObject
 
-              vecOp = runEdhTx ets $
+              vecOp =
                 view'column'data col $ \(cs, cl) -> edhContIO $ do
                   (iov, csResult) <- newDirectArray @EdhValue edhNA cl
                   let go i
@@ -253,9 +254,10 @@ mkBoxSuperDt !dti !defv !outerScope = do
               elemOp ::
                 forall c' f'.
                 ManagedColumn c' f' EdhValue =>
+                Object ->
                 c' EdhValue ->
-                STM ()
-              elemOp col' = runEdhTx ets $
+                EdhTx
+              elemOp _ col' =
                 view'column'data col $ \(cs, cl) ->
                   view'column'data col' $ \(cs', cl') ->
                     if cl' /= cl
@@ -907,8 +909,8 @@ colCmpProc ::
   (a -> a -> Bool) ->
   EdhValue ->
   EdhHostProc
-colCmpProc !dtYesNo !cmp !other !exit !ets =
-  withColumnSelfOf @a ets $ \ !objCol !col -> do
+colCmpProc !dtYesNo !cmp !other !exit !ets = runEdhTx ets $
+  withColumnSelfOf @a $ \ !objCol !col -> do
     let exitWithResult ::
           Typeable (InMemDevCol YesNo) => InMemDevCol YesNo -> STM ()
         exitWithResult !colResult =
@@ -918,7 +920,7 @@ colCmpProc !dtYesNo !cmp !other !exit !ets =
             [dtYesNo]
             >>= exitEdh ets exit . EdhObject
 
-        vecOp = runEdhTx ets $
+        vecOp =
           view'column'data col $ \(cs, cl) ->
             fromEdh' @a other naExit $ \rhv -> edhContIO $ do
               (fp, csResult) <- newDeviceArray @YesNo cl
@@ -935,8 +937,9 @@ colCmpProc !dtYesNo !cmp !other !exit !ets =
                 clvResult <- newTVar cl
                 exitWithResult $ InMemDevCol csvResult clvResult
 
-        elemOp :: forall c' f'. ManagedColumn c' f' a => c' a -> STM ()
-        elemOp col' = runEdhTx ets $
+        elemOp ::
+          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
+        elemOp _ col' =
           view'column'data col $ \(cs, cl) ->
             view'column'data col' $ \(cs', cl') ->
               if cl' /= cl
@@ -972,8 +975,8 @@ devColOpProc ::
   (a -> a -> a) ->
   EdhValue ->
   EdhHostProc
-devColOpProc !op !other !exit !ets =
-  withColumnSelfOf @a ets $ \ !objCol !col -> do
+devColOpProc !op !other !exit !ets = runEdhTx ets $
+  withColumnSelfOf @a $ \ !objCol !col -> do
     let exitWithNewClone ::
           forall c' f'.
           (ManagedColumn c' f' a, Typeable (c' a)) =>
@@ -983,7 +986,7 @@ devColOpProc !op !other !exit !ets =
           edhCloneHostObj ets objCol objCol (someColumn colResult) $
             \ !newObj -> exitEdh ets exit $ EdhObject newObj
 
-        vecOp = runEdhTx ets $
+        vecOp =
           view'column'data col $ \(cs, cl) ->
             fromEdh' @a other naExit $ \rhv -> edhContIO $ do
               (fp, csResult) <- newDeviceArray @a cl
@@ -1000,8 +1003,9 @@ devColOpProc !op !other !exit !ets =
                 clvResult <- newTVar cl
                 exitWithNewClone $ InMemDevCol csvResult clvResult
 
-        elemOp :: forall c' f'. ManagedColumn c' f' a => c' a -> STM ()
-        elemOp col' = runEdhTx ets $
+        elemOp ::
+          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
+        elemOp _ col' =
           view'column'data col $ \(cs, cl) ->
             view'column'data col' $ \(cs', cl') ->
               if cl' /= cl
@@ -1037,8 +1041,8 @@ dirColOpProc ::
   (a -> a -> a) ->
   EdhValue ->
   EdhHostProc
-dirColOpProc !op !other !exit !ets =
-  withColumnSelfOf @a ets $ \ !objCol !col -> do
+dirColOpProc !op !other !exit !ets = runEdhTx ets $
+  withColumnSelfOf @a $ \ !objCol !col -> do
     let exitWithNewClone ::
           forall c' f'.
           (ManagedColumn c' f' a, Typeable (c' a)) =>
@@ -1048,7 +1052,7 @@ dirColOpProc !op !other !exit !ets =
           edhCloneHostObj ets objCol objCol (someColumn colResult) $
             \ !newObj -> exitEdh ets exit $ EdhObject newObj
 
-        vecOp = runEdhTx ets $
+        vecOp =
           view'column'data col $ \(cs, cl) ->
             fromEdh' @a other naExit $ \rhv -> edhContIO $ do
               (iov, csResult) <- newDirectArray @a undefined cl
@@ -1064,8 +1068,9 @@ dirColOpProc !op !other !exit !ets =
                 clvResult <- newTVar cl
                 exitWithNewClone $ InMemDirCol csvResult clvResult
 
-        elemOp :: forall c' f'. ManagedColumn c' f' a => c' a -> STM ()
-        elemOp col' = runEdhTx ets $
+        elemOp ::
+          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
+        elemOp _ col' =
           view'column'data col $ \(cs, cl) ->
             view'column'data col' $ \(cs', cl') ->
               if cl' /= cl
@@ -1100,9 +1105,9 @@ colInpProc ::
   (a -> a -> a) ->
   EdhValue ->
   EdhHostProc
-colInpProc !op !other !exit !ets =
-  withColumnSelfOf @a ets $ \_objCol !col -> do
-    let vecOp = runEdhTx ets $
+colInpProc !op !other !exit !ets = runEdhTx ets $
+  withColumnSelfOf @a $ \_objCol !col -> do
+    let vecOp =
           view'column'data col $ \(cs, cl) ->
             fromEdh' @a other naExit $ \rhv -> edhContIO $ do
               let go i
@@ -1114,8 +1119,9 @@ colInpProc !op !other !exit !ets =
               go $ cl - 1
               atomically doExit
 
-        elemOp :: forall c' f'. ManagedColumn c' f' a => c' a -> STM ()
-        elemOp col' = runEdhTx ets $
+        elemOp ::
+          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
+        elemOp _ col' =
           view'column'data col $ \(cs, cl) ->
             view'column'data col' $ \(cs', cl') ->
               if cl' /= cl
@@ -1206,7 +1212,7 @@ createColumnClass !defaultDt !clsOuterScope =
         | otherwise = withDataType dto badDtype devDataCol dirDataCol
         where
           devDataCol :: DeviceDataType -> STM ()
-          devDataCol (DeviceDataType _dti dth _ _) =
+          devDataCol (DeviceDataType _dti dth _ _ _) =
             dth $ \(_ :: TypeRep a) -> runEdhTx etsCtor $
               edhContIO $ do
                 (_fp, !cs) <- newDeviceArray @a ctorCap
@@ -1265,58 +1271,44 @@ createColumnClass !defaultDt !clsOuterScope =
               else extendsDt rest
 
     colCapProc :: EdhHostProc
-    colCapProc !exit !ets = withColumnSelf ets $ \_objCol !col ->
-      runEdhTx ets $
-        view'column'data col $ \(cs, _cl) ->
-          exitEdhTx exit $ EdhDecimal $ fromIntegral $ array'capacity cs
+    colCapProc !exit = withColumnSelf $ \_objCol !col ->
+      view'column'data col $ \(cs, _cl) ->
+        exitEdhTx exit $ EdhDecimal $ fromIntegral $ array'capacity cs
 
     colLenProc :: EdhHostProc
-    colLenProc !exit !ets = withColumnSelf ets $ \_objCol !col ->
-      runEdhTx ets $
-        read'column'length col $ \ !len ->
-          exitEdhTx exit $ EdhDecimal $ fromIntegral len
+    colLenProc !exit = withColumnSelf $ \_objCol !col ->
+      read'column'length col $ \ !len ->
+        exitEdhTx exit $ EdhDecimal $ fromIntegral len
 
     colGrowProc :: "newCap" !: Int -> EdhHostProc
     colGrowProc (mandatoryArg -> !newCap) !exit !ets =
-      if newCap < 0
-        then
-          throwEdh ets UsageError $
-            "invalid newCap: " <> T.pack (show newCap)
-        else withColumnSelf ets $ \_objCol !col ->
-          runEdhTx ets $
+      runEdhTx ets $
+        if newCap < 0
+          then
+            throwEdhTx UsageError $
+              "invalid newCap: " <> T.pack (show newCap)
+          else withColumnSelf $ \_objCol !col ->
             grow'column'capacity col newCap $
               const $
                 exitEdhTx exit $
                   EdhObject $ edh'scope'that $ contextScope $ edh'context ets
 
     colMarkLenProc :: "newLen" !: Int -> EdhHostProc
-    colMarkLenProc (mandatoryArg -> !newLen) !exit !ets =
-      withColumnSelf ets $ \_objCol !col ->
-        runEdhTx ets $
-          mark'column'length col newLen $
-            const $
-              exitEdhTx exit $
-                EdhObject $ edh'scope'that $ contextScope $ edh'context ets
+    colMarkLenProc (mandatoryArg -> !newLen) !exit !ets = runEdhTx ets $
+      withColumnSelf $ \_objCol !col ->
+        mark'column'length col newLen $
+          const $
+            exitEdhTx exit $
+              EdhObject $ edh'scope'that $ contextScope $ edh'context ets
 
     colBlobProc :: EdhHostProc
-    colBlobProc !exit !ets = getColDtype this $ \ !dto ->
-      withDeviceDataType dto naExit $ \(_ :: TypeRep a) ->
-        withStorableColumnSelfOf @a ets $ \_objCol !col -> runEdhTx ets $
-          view'column'data col $ \(DeviceArray _cap !fp, !cl) ->
-            exitEdhTx exit $
-              EdhBlob $
-                B.fromForeignPtr
-                  (castForeignPtr fp)
-                  0
-                  (cl * sizeOf (undefined :: a))
-      where
-        scope = contextScope $ edh'context ets
-        this = edh'scope'this scope
-        naExit = exitEdh ets exit edhNA
+    colBlobProc !exit = withColumnSelf $ \_ !col -> view'column'data col $
+      \(cs, cl) -> array'as'blob cs cl (exitEdhTx exit edhNA) $ \ !bytes ->
+        exitEdhTx exit $ EdhBlob bytes
 
     colJsonProc :: EdhHostProc
-    colJsonProc !exit !ets = withColumnSelf ets $ \_objCol !col ->
-      runEdhTx ets $
+    colJsonProc !exit !ets = runEdhTx ets $
+      withColumnSelf $ \_objCol !col ->
         view'column'data col $ \(!cs, !cl) ->
           if cl < 1
             then exitEdhTx exit $ EdhString "[]"
@@ -1338,10 +1330,10 @@ createColumnClass !defaultDt !clsOuterScope =
               go (cl - 1) []
 
     colReprProc :: EdhHostProc
-    colReprProc !exit !ets = withColumnSelf ets $ \ !objCol !col ->
-      getColDtype objCol $ \ !dto -> edhValueRepr ets (EdhObject dto) $
-        \ !dtRepr -> runEdhTx ets $
-          view'column'data col $ \(!cs, !cl) -> do
+    colReprProc !exit = withColumnSelf $ \ !objCol !col !ets ->
+      getColDtype objCol $ \ !dto -> runEdhTx ets $
+        edhValueReprTx (EdhObject dto) $
+          \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
             let colRepr =
                   "Column( capacity= "
                     <> T.pack (show $ array'capacity cs)
@@ -1353,73 +1345,74 @@ createColumnClass !defaultDt !clsOuterScope =
             exitEdhTx exit $ EdhString colRepr
 
     colShowProc :: EdhHostProc
-    colShowProc !exit !ets = withColumnSelf ets $ \ !objCol !col ->
-      getColDtype objCol $ \ !dto -> edhValueRepr ets (EdhObject dto) $
-        \ !dtRepr -> runEdhTx ets $
-          view'column'data col $ \(!cs, !cl) -> do
-            let colRepr =
-                  "Column( capacity= "
-                    <> T.pack (show $ array'capacity cs)
-                    <> ", length= "
-                    <> T.pack (show cl)
-                    <> ", dtype= "
-                    <> dtRepr
-                    <> " )"
-                exitWithDetails :: Text -> STM ()
-                exitWithDetails !details =
-                  exitEdh ets exit $ EdhString $ colRepr <> "\n" <> details
+    colShowProc !exit =
+      withColumnSelf $ \ !objCol !col !ets ->
+        getColDtype objCol $ \ !dto -> runEdhTx ets $
+          edhValueReprTx (EdhObject dto) $
+            \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
+              let colRepr =
+                    "Column( capacity= "
+                      <> T.pack (show $ array'capacity cs)
+                      <> ", length= "
+                      <> T.pack (show cl)
+                      <> ", dtype= "
+                      <> dtRepr
+                      <> " )"
+                  exitWithDetails :: Text -> STM ()
+                  exitWithDetails !details =
+                    exitEdh ets exit $ EdhString $ colRepr <> "\n" <> details
 
-                go :: Int -> [Text] -> Int -> Text -> IO ()
-                -- TODO don't generate all lines for large columns
-                go !i !cumLines !lineIdx !line
-                  | i >= cl =
-                    atomically $
-                      exitWithDetails $
-                        if T.null line && null cumLines
-                          then "Zero-Length Column"
-                          else
-                            if null cumLines
-                              then line
-                              else
-                                let !fullLines =
-                                      line :
-                                      " # " -- todo make this tunable ?
-                                        <> T.pack (show lineIdx)
-                                        <> " ~ "
-                                        <> T.pack (show $ i - 1) :
-                                      cumLines
-                                    !lineCnt = length fullLines
-                                 in if lineCnt > 20
-                                      then
-                                        T.unlines $
-                                          reverse $
-                                            take 10 fullLines
-                                              ++ ["# ... "] -- todo make this tunable
-                                              ++ drop (lineCnt - 10) fullLines
-                                      else T.unlines $ reverse fullLines
-                go !i !cumLines !lineIdx !line =
-                  array'reader cs i >>= \ !ev -> atomically $
-                    runEdhTx ets $
-                      toEdh ev $ \ !elemVal ->
-                        edhValueReprTx elemVal $ \ !elemRepr ->
-                          let !tentLine = line <> elemRepr <> ", "
-                           in edhContIO $
-                                if T.length tentLine > 79 -- todo make this tunable ?
-                                  then
-                                    go
-                                      (i + 1)
-                                      ( line :
-                                        ( " # " -- todo make this tunable ?
-                                            <> T.pack (show lineIdx)
-                                            <> " ~ "
-                                            <> T.pack (show $ i - 1)
-                                        ) :
+                  go :: Int -> [Text] -> Int -> Text -> IO ()
+                  -- TODO don't generate all lines for large columns
+                  go !i !cumLines !lineIdx !line
+                    | i >= cl =
+                      atomically $
+                        exitWithDetails $
+                          if T.null line && null cumLines
+                            then "Zero-Length Column"
+                            else
+                              if null cumLines
+                                then line
+                                else
+                                  let !fullLines =
+                                        line :
+                                        " # " -- todo make this tunable ?
+                                          <> T.pack (show lineIdx)
+                                          <> " ~ "
+                                          <> T.pack (show $ i - 1) :
                                         cumLines
-                                      )
-                                      i
-                                      (elemRepr <> ", ")
-                                  else go (i + 1) cumLines lineIdx tentLine
-            edhContIO $ go 0 [] 0 ""
+                                      !lineCnt = length fullLines
+                                   in if lineCnt > 20
+                                        then
+                                          T.unlines $
+                                            reverse $
+                                              take 10 fullLines
+                                                ++ ["# ... "] -- todo make this tunable
+                                                ++ drop (lineCnt - 10) fullLines
+                                        else T.unlines $ reverse fullLines
+                  go !i !cumLines !lineIdx !line =
+                    array'reader cs i >>= \ !ev -> atomically $
+                      runEdhTx ets $
+                        toEdh ev $ \ !elemVal ->
+                          edhValueReprTx elemVal $ \ !elemRepr ->
+                            let !tentLine = line <> elemRepr <> ", "
+                             in edhContIO $
+                                  if T.length tentLine > 79 -- todo make this tunable ?
+                                    then
+                                      go
+                                        (i + 1)
+                                        ( line :
+                                          ( " # " -- todo make this tunable ?
+                                              <> T.pack (show lineIdx)
+                                              <> " ~ "
+                                              <> T.pack (show $ i - 1)
+                                          ) :
+                                          cumLines
+                                        )
+                                        i
+                                        (elemRepr <> ", ")
+                                    else go (i + 1) cumLines lineIdx tentLine
+              edhContIO $ go 0 [] 0 ""
 
     -- TODO impl. this following:
     --      https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Series.describe.html
@@ -1431,21 +1424,30 @@ createColumnClass !defaultDt !clsOuterScope =
             <> "   like pandas describe(), is yet to be implemented."
 
     colIdxReadProc :: EdhValue -> EdhHostProc
-    colIdxReadProc !idxVal !exit !ets =
-      withColumnSelf ets $ \ !objCol !col -> do
+    colIdxReadProc !idxVal !exit !ets = runEdhTx ets $
+      withColumnSelf $ \ !objCol !col -> do
         let withBoolIdx ::
-              forall c f. ManagedColumn c f YesNo => c YesNo -> STM ()
-            withBoolIdx !idxCol = runEdhTx ets $
+              forall c f.
+              ManagedColumn c f YesNo =>
+              Object ->
+              c YesNo ->
+              EdhTx
+            withBoolIdx _ !idxCol =
               extractColumnBool objCol col idxCol $ \(!newColObj, _newCol) ->
                 exitEdhTx exit $ EdhObject newColObj
 
-            withIntpIdx :: forall c f. ManagedColumn c f Int => c Int -> STM ()
-            withIntpIdx !idxCol = runEdhTx ets $
+            withIntpIdx ::
+              forall c f.
+              ManagedColumn c f Int =>
+              Object ->
+              c Int ->
+              EdhTx
+            withIntpIdx _ !idxCol =
               extractColumnFancy objCol col idxCol $ \(!newColObj, _newCol) ->
                 exitEdhTx exit $ EdhObject newColObj
 
-            withEdhIdx :: STM ()
-            withEdhIdx = parseEdhIndex ets idxVal $ \case
+            withEdhIdx :: EdhTx
+            withEdhIdx _ets = parseEdhIndex ets idxVal $ \case
               Left !err -> throwEdh ets UsageError err
               Right !idx -> runEdhTx ets $
                 view'column'data col $
@@ -1475,14 +1477,18 @@ createColumnClass !defaultDt !clsOuterScope =
         that = edh'scope'that $ contextScope $ edh'context ets
 
     colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
-    colIdxWriteProc !idxVal !other !exit !ets =
-      withColumnSelf ets $ \_objCol (col :: _c a) -> runEdhTx ets $
+    colIdxWriteProc !idxVal !other !exit !ets = runEdhTx ets $
+      withColumnSelf $ \_objCol (col :: _c a) ->
         view'column'data col $ \(!cs, !cl) -> do
           let withScalarRHS :: EdhTx
               withScalarRHS = fromEdh @a other $ \ !rhv -> do
                 let byBoolIdx ::
-                      forall c f. ManagedColumn c f YesNo => c YesNo -> EdhTx
-                    byBoolIdx !idxCol =
+                      forall c f.
+                      ManagedColumn c f YesNo =>
+                      Object ->
+                      c YesNo ->
+                      EdhTx
+                    byBoolIdx _ !idxCol =
                       view'column'data idxCol $ \(idxa, idxl) ->
                         if idxl /= cl
                           then
@@ -1503,8 +1509,12 @@ createColumnClass !defaultDt !clsOuterScope =
                             atomically $ runEdhTx ets doneAssign
 
                     byIntpIdx ::
-                      forall c f. ManagedColumn c f Int => c Int -> EdhTx
-                    byIntpIdx !idxCol = view'column'data idxCol $
+                      forall c f.
+                      ManagedColumn c f Int =>
+                      Object ->
+                      c Int ->
+                      EdhTx
+                    byIntpIdx _ !idxCol = view'column'data idxCol $
                       \(idxa, idxl) -> edhContIO $ do
                         let go :: Int -> IO ()
                             go i
@@ -1554,11 +1564,15 @@ createColumnClass !defaultDt !clsOuterScope =
                   (withColumnOf' @Int idxVal byEdhIdx byIntpIdx)
                   byBoolIdx
 
-          withColumnOf' @a other withScalarRHS $ \ !rhsCol ->
+          withColumnOf' @a other withScalarRHS $ \_rhsColInst !rhsCol ->
             view'column'data rhsCol $ \(cs'rhs, cl'rhs) -> do
               let byBoolIdx ::
-                    forall c f. ManagedColumn c f YesNo => c YesNo -> EdhTx
-                  byBoolIdx !idxCol =
+                    forall c f.
+                    ManagedColumn c f YesNo =>
+                    Object ->
+                    c YesNo ->
+                    EdhTx
+                  byBoolIdx _ !idxCol =
                     if cl'rhs /= cl
                       then
                         throwEdhTx UsageError $
@@ -1588,26 +1602,31 @@ createColumnClass !defaultDt !clsOuterScope =
                             atomically $ runEdhTx ets doneAssign
 
                   byIntpIdx ::
-                    forall c f. ManagedColumn c f Int => c Int -> EdhTx
-                  byIntpIdx !idxCol = view'column'data idxCol $ \(idxa, idxl) ->
-                    if cl'rhs /= idxl
-                      then
-                        throwEdhTx UsageError $
-                          "rhs column shape mismatch fancy index - "
-                            <> T.pack (show cl'rhs)
-                            <> " vs "
-                            <> T.pack (show idxl)
-                      else edhContIO $ do
-                        let go :: Int -> IO ()
-                            go i
-                              | i >= idxl = return ()
-                              | otherwise = do
-                                idxi <- array'reader idxa i
-                                array'reader cs'rhs i
-                                  >>= array'writer cs idxi
-                                go (i + 1)
-                        go 0
-                        atomically $ runEdhTx ets doneAssign
+                    forall c f.
+                    ManagedColumn c f Int =>
+                    Object ->
+                    c Int ->
+                    EdhTx
+                  byIntpIdx _ !idxCol = view'column'data idxCol $
+                    \(idxa, idxl) ->
+                      if cl'rhs /= idxl
+                        then
+                          throwEdhTx UsageError $
+                            "rhs column shape mismatch fancy index - "
+                              <> T.pack (show cl'rhs)
+                              <> " vs "
+                              <> T.pack (show idxl)
+                        else edhContIO $ do
+                          let go :: Int -> IO ()
+                              go i
+                                | i >= idxl = return ()
+                                | otherwise = do
+                                  idxi <- array'reader idxa i
+                                  array'reader cs'rhs i
+                                    >>= array'writer cs idxi
+                                  go (i + 1)
+                          go 0
+                          atomically $ runEdhTx ets doneAssign
 
                   byEdhIdx :: EdhTx
                   byEdhIdx _ets = parseEdhIndex ets idxVal $ \case
@@ -1672,8 +1691,8 @@ createColumnClass !defaultDt !clsOuterScope =
         doneAssign = exitEdhTx exit other
 
     colCopyProc :: EdhHostProc
-    colCopyProc !exit !ets = withColumnSelf ets $ \ !objCol !col ->
-      runEdhTx ets $
+    colCopyProc !exit !ets = runEdhTx ets $
+      withColumnSelf $ \ !objCol !col ->
         read'column'length col $ \ !cl ->
           copy'column'slice col 0 cl 1 $ \(disp, col') _ets -> case disp of
             StayComposed ->
@@ -1900,8 +1919,8 @@ randomProc
 -- | resemble https://numpy.org/doc/stable/reference/generated/numpy.where.html
 whereProc :: Object -> Object -> ArgsPack -> EdhHostProc
 whereProc !colClass !dtIntp (ArgsPack [EdhObject !colYesNo] !kwargs) !exit !ets
-  | odNull kwargs = withColumnOf @YesNo colYesNo naExit $ \ !col ->
-    runEdhTx ets $
+  | odNull kwargs = runEdhTx ets $
+    withColumnOf @YesNo colYesNo naExit $ \_ !col ->
       view'column'data col $ \(cs, cl) -> edhContIO $ do
         !p <- callocArray @Int cl
         !fp <- newForeignPtr finalizerFree p
@@ -1927,7 +1946,7 @@ whereProc !colClass !dtIntp (ArgsPack [EdhObject !colYesNo] !kwargs) !exit !ets
             [dtIntp]
             >>= exitEdh ets exit . EdhObject
   where
-    naExit = throwEdh ets UsageError "not a `yesno` column"
+    naExit = throwEdhTx UsageError "not a `yesno` column"
 whereProc
   _colClass
   _dtIntp

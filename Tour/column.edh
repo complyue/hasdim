@@ -7,6 +7,12 @@ c' = c.copy()
 
 show$ where( c > 1 )
 
+# %%
+show$ pi(3)
+
+# %%
+show$ exp( ones(3) )
+
 
 # %%
 r = random( 3, 3..5 )

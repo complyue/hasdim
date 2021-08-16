@@ -103,14 +103,14 @@ someColumn ::
   SomeColumn
 someColumn = SomeColumn (typeRep @f)
 
-withColumnOf ::
+asColumnOf ::
   forall a r.
   (Typeable a) =>
   Object ->
   r ->
   (forall c f. ManagedColumn c f a => c a -> r) ->
   r
-withColumnOf !obj !naExit !exit = case dynamicHostData obj of
+asColumnOf !obj !naExit !exit = case dynamicHostData obj of
   Nothing -> naExit
   Just dd -> case fromDynamic dd of
     Nothing -> naExit
@@ -118,42 +118,62 @@ withColumnOf !obj !naExit !exit = case dynamicHostData obj of
       Nothing -> naExit
       Just (Refl :: a :~: b) -> exit col
 
-withColumnOf' ::
+asColumnOf' ::
   forall a r.
   (Typeable a) =>
   EdhValue ->
   r ->
   (forall c f. ManagedColumn c f a => c a -> r) ->
   r
-withColumnOf' !val !naExit !exit = case edhUltimate val of
-  EdhObject !obj -> withColumnOf obj naExit exit
+asColumnOf' !val !naExit !exit = case edhUltimate val of
+  EdhObject !obj -> asColumnOf obj naExit exit
+  _ -> naExit
+
+withColumnOf ::
+  forall a.
+  Typeable a =>
+  Object ->
+  EdhTx ->
+  (forall c f. ManagedColumn c f a => Object -> c a -> EdhTx) ->
+  EdhTx
+withColumnOf !obj naExit !colExit !ets = do
+  supers <- readTVar $ edh'obj'supers obj
+  withComposition $ obj : supers
+  where
+    withComposition :: [Object] -> STM ()
+    withComposition [] = runEdhTx ets naExit
+    withComposition (o : rest) =
+      asColumnOf @a o (withComposition rest) (runEdhTx ets . colExit o)
+
+withColumnOf' ::
+  forall a.
+  Typeable a =>
+  EdhValue ->
+  EdhTx ->
+  (forall c f. ManagedColumn c f a => Object -> c a -> EdhTx) ->
+  EdhTx
+withColumnOf' !val naExit !colExit = case edhUltimate val of
+  EdhObject !obj -> do
+    withColumnOf obj naExit colExit
   _ -> naExit
 
 withColumnSelfOf ::
   forall a.
   Typeable a =>
-  EdhThreadState ->
-  (forall c f. ManagedColumn c f a => Object -> c a -> STM ()) ->
-  STM ()
-withColumnSelfOf !ets !colExit = do
-  supers <- readTVar $ edh'obj'supers that
-  withComposition $ that : supers
+  (forall c f. ManagedColumn c f a => Object -> c a -> EdhTx) ->
+  EdhTx
+withColumnSelfOf !colExit !ets =
+  runEdhTx ets $ withColumnOf @a that naExit colExit
   where
     that = edh'scope'that $ contextScope $ edh'context ets
     naExit =
-      throwEdh ets UsageError $
+      throwEdhTx UsageError $
         "not an expected self column of type " <> T.pack (show $ typeRep @a)
 
-    withComposition :: [Object] -> STM ()
-    withComposition [] = naExit
-    withComposition (o : rest) =
-      withColumnOf @a o (withComposition rest) (colExit o)
-
 withColumnSelf ::
-  EdhThreadState ->
-  (forall c f a. ManagedColumn c f a => Object -> c a -> STM ()) ->
-  STM ()
-withColumnSelf !ets !colExit = do
+  (forall c f a. ManagedColumn c f a => Object -> c a -> EdhTx) ->
+  EdhTx
+withColumnSelf !colExit !ets = do
   supers <- readTVar $ edh'obj'supers that
   withComposition $ that : supers
   where
@@ -164,43 +184,7 @@ withColumnSelf !ets !colExit = do
     withComposition [] = naExit
     withComposition (o : rest) = case fromDynamic =<< dynamicHostData o of
       Nothing -> withComposition rest
-      Just (SomeColumn _ col) -> colExit o col
-
-withStorableColumnSelfOf ::
-  forall a.
-  Typeable a =>
-  EdhThreadState ->
-  (forall c. ManagedColumn c DeviceArray a => Object -> c a -> STM ()) ->
-  STM ()
-withStorableColumnSelfOf !ets !colExit = do
-  supers <- readTVar $ edh'obj'supers that
-  withComposition $ that : supers
-  where
-    that = edh'scope'that $ contextScope $ edh'context ets
-    naExit =
-      throwEdh ets UsageError $
-        "not an expected self column of type " <> T.pack (show $ typeRep @a)
-
-    withComposition :: [Object] -> STM ()
-    withComposition [] = naExit
-    withComposition (o : rest) =
-      withStorableColumnOf o (withComposition rest) (colExit o)
-
-    withStorableColumnOf ::
-      Object ->
-      STM () ->
-      (forall c. ManagedColumn c DeviceArray a => c a -> STM ()) ->
-      STM ()
-    withStorableColumnOf !obj !naExit' !exit' = case dynamicHostData obj of
-      Nothing -> naExit'
-      Just dd -> case fromDynamic dd of
-        Nothing -> naExit'
-        Just (SomeColumn cstr (col :: c b)) -> case eqT of
-          Nothing -> naExit'
-          Just (Refl :: a :~: b) ->
-            case cstr `eqTypeRep` typeRep @DeviceArray of
-              Nothing -> naExit'
-              Just HRefl -> exit' col
+      Just (SomeColumn _ col) -> runEdhTx ets $ colExit o col
 
 getColDtype :: Object -> (Object -> STM ()) -> STM ()
 getColDtype !objCol !exit = readTVar (edh'obj'supers objCol) >>= findSuperDto

@@ -7,6 +7,7 @@ module Dim.DataType where
 
 import Control.Concurrent.STM
 import Control.Monad
+import qualified Data.ByteString.Internal as B
 import Data.Dynamic
 import Data.Maybe
 import Data.Typeable hiding (TypeRep, typeOf, typeRep)
@@ -42,6 +43,15 @@ data DeviceDataType = DeviceDataType
         r
       ) ->
       r,
+    device'data'type'as'of'float ::
+      forall r.
+      r ->
+      ( forall a.
+        (Floating a, Storable a, EdhXchg a, Typeable a) =>
+        TypeRep a ->
+        r
+      ) ->
+      r,
     device'data'type'as'of'random ::
       forall r.
       r ->
@@ -54,7 +64,7 @@ data DeviceDataType = DeviceDataType
   }
 
 instance Eq DeviceDataType where
-  (DeviceDataType x'dti x'trh _ _) == (DeviceDataType y'dti y'trh _ _) =
+  (DeviceDataType x'dti x'trh _ _ _) == (DeviceDataType y'dti y'trh _ _ _) =
     x'trh $ \x'tr -> y'trh $ \y'tr ->
       case x'tr `eqTypeRep` y'tr of
         Just HRefl | x'dti == y'dti -> True
@@ -73,6 +83,7 @@ mkFloatDataType !dti =
     ($ typeRep @a)
     (\_naExit exit -> exit (typeRep @a))
     (\_naExit exit -> exit (typeRep @a))
+    (\_naExit exit -> exit (typeRep @a))
 
 mkIntDataType ::
   forall a.
@@ -84,6 +95,7 @@ mkIntDataType !dti =
     dti
     ($ typeRep @a)
     (\_naExit exit -> exit (typeRep @a))
+    (\naExit _exit -> naExit)
     (\_naExit exit -> exit (typeRep @a))
 
 -- | Lifted Haskell types as operated directly by the host language
@@ -147,12 +159,11 @@ mkRealFracDataType !dti !defv =
     (\_naExit exit -> exit (typeRep @a))
 
 withDeviceDataType ::
-  forall m.
-  Monad m =>
+  forall r.
   Object ->
-  m () ->
-  (forall a. (Eq a, Storable a, EdhXchg a, Typeable a) => TypeRep a -> m ()) ->
-  m ()
+  r ->
+  (forall a. (Eq a, Storable a, EdhXchg a, Typeable a) => TypeRep a -> r) ->
+  r
 withDeviceDataType !dto !naExit !exit = case edh'obj'store dto of
   HostStore (Dynamic trDataType monoDataType) ->
     case trDataType `eqTypeRep` typeRep @DeviceDataType of
@@ -161,12 +172,11 @@ withDeviceDataType !dto !naExit !exit = case edh'obj'store dto of
   _ -> naExit
 
 withDirectDataType ::
-  forall m.
-  Monad m =>
+  forall r.
   Object ->
-  m () ->
-  (forall a. (Eq a, EdhXchg a, Typeable a) => a -> m ()) ->
-  m ()
+  r ->
+  (forall a. (Eq a, EdhXchg a, Typeable a) => a -> r) ->
+  r
 withDirectDataType !dto !naExit !exit = case edh'obj'store dto of
   HostStore (Dynamic trDataType monoDataType) ->
     case trDataType `eqTypeRep` typeRep @DirectDataType of
@@ -175,13 +185,7 @@ withDirectDataType !dto !naExit !exit = case edh'obj'store dto of
   _ -> naExit
 
 withDataType ::
-  forall m.
-  Monad m =>
-  Object ->
-  m () ->
-  (DeviceDataType -> m ()) ->
-  (DirectDataType -> m ()) ->
-  m ()
+  forall r. Object -> r -> (DeviceDataType -> r) -> (DirectDataType -> r) -> r
 withDataType !dto !naExit !devExit !dirExit = case edh'obj'store dto of
   HostStore (Dynamic trDataType monoDataType) ->
     case trDataType `eqTypeRep` typeRep @DeviceDataType of
@@ -241,6 +245,9 @@ class FlatArray f a where
   -- | indexed writer
   array'writer :: f a -> (ArrayIndex -> a -> IO ())
 
+  -- | convert to blob if possible
+  array'as'blob :: forall r. f a -> ArrayLength -> r -> (B.ByteString -> r) -> r
+
 data DeviceArray a = (EdhXchg a, Typeable a, Storable a) =>
   DeviceArray
   { device'array'cap :: !Int,
@@ -258,6 +265,9 @@ instance FlatArray DeviceArray a where
     where
       -- note: withForeignPtr can not be safer here
       p = unsafeForeignPtrToPtr fp
+  array'as'blob (DeviceArray _cap fp) !len _naExit !exit =
+    exit $
+      B.fromForeignPtr (castForeignPtr fp) 0 (len * sizeOf (undefined :: a))
 
 data DirectArray a
   = (EdhXchg a, Typeable a) => DirectArray !(MV.IOVector a)
@@ -267,6 +277,7 @@ instance FlatArray DirectArray a where
   array'duplicate = dupDirectArray
   array'reader (DirectArray iov) = \ !i -> MV.unsafeRead iov i
   array'writer (DirectArray iov) = \ !i !a -> MV.unsafeWrite iov i a
+  array'as'blob _a _len naExit _exit = naExit
 
 emptyDeviceArray ::
   forall a. (EdhXchg a, Typeable a, Storable a) => IO (DeviceArray a)
