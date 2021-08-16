@@ -6,7 +6,6 @@ import Control.Concurrent.STM
 import Control.Monad
 import qualified Data.ByteString.Internal as B
 import Data.Dynamic
-import Data.Lossless.Decimal as D
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -82,281 +81,6 @@ scanOpProc
             exitWithNewClone $ Column $ InMemColumn dt bicsv biclv
     where
       naExit = exitEdh ets exit edhNA
-
-vecInpSliceColumn ::
-  EdhThreadState ->
-  (Int, Int, Int) ->
-  (Text -> Dynamic) ->
-  Column ->
-  EdhValue ->
-  STM () ->
-  STM () ->
-  STM ()
-vecInpSliceColumn !ets !slice !getOp (Column !col) !v !naExit !exit = do
-  !cl <- read'column'length col
-  !cs <- view'column'data col
-  resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp -> do
-    let !fa = unsafeSliceFlatArray cs 0 cl
-    let !dop = getOp (data'type'identifier dt)
-    case fromDynamic dop of
-      Just EdhNil -> naExit
-      _ -> flat'inp'vectorized'slice dtOp ets slice fa dop v exit
-  where
-    !dt = data'type'of'column col
-
-vecInpMaskedColumn ::
-  EdhThreadState ->
-  Column ->
-  (Text -> Dynamic) ->
-  Column ->
-  EdhValue ->
-  STM () ->
-  STM () ->
-  STM ()
-vecInpMaskedColumn
-  !ets
-  (Column !colMask)
-  !getOp
-  (Column !col)
-  !v
-  !naExit
-  !exit = do
-    !cl <- read'column'length col
-    !cs <- view'column'data col
-    resolveDataOperator' ets (data'type'identifier dt) cs naExit $
-      \ !dtOp -> do
-        let !fa = unsafeSliceFlatArray cs 0 cl
-        let !dop = getOp (data'type'identifier dt)
-        case fromDynamic dop of
-          Just EdhNil -> naExit
-          _ -> do
-            !mcl <- read'column'length colMask
-            if mcl /= cl
-              then
-                throwEdh ets UsageError $
-                  "index length mismatch: "
-                    <> T.pack (show mcl)
-                    <> " vs "
-                    <> T.pack (show cl)
-              else do
-                !mcs <- view'column'data colMask
-                let !ma = unsafeSliceFlatArray mcs 0 mcl
-                flat'inp'vectorized'masked dtOp ets ma fa dop v exit
-    where
-      !dt = data'type'of'column col
-
-vecInpFancyColumn ::
-  EdhThreadState ->
-  Column ->
-  (Text -> Dynamic) ->
-  Column ->
-  EdhValue ->
-  STM () ->
-  STM () ->
-  STM ()
-vecInpFancyColumn !ets (Column !colIdx) !getOp (Column !col) !v !naExit !exit =
-  do
-    !cl <- read'column'length col
-    !cs <- view'column'data col
-    resolveDataOperator' ets (data'type'identifier dt) cs naExit $ \ !dtOp -> do
-      let !fa = unsafeSliceFlatArray cs 0 cl
-      let !dop = getOp (data'type'identifier dt)
-      case fromDynamic dop of
-        Just EdhNil -> naExit
-        _ -> do
-          !icl <- read'column'length colIdx
-          !ics <- view'column'data colIdx
-          let !ia = unsafeSliceFlatArray ics 0 icl
-          flat'inp'vectorized'fancy dtOp ets ia fa dop v exit
-  where
-    !dt = data'type'of'column col
-
-elemInpColumn ::
-  EdhThreadState ->
-  (Text -> Dynamic) ->
-  Column ->
-  Column ->
-  STM () ->
-  STM () ->
-  STM ()
-elemInpColumn !ets !getOp (Column !col1) (Column !col2) !naExit !exit =
-  if data'type'identifier dt1 /= data'type'identifier dt2
-    then
-      throwEdh ets UsageError $
-        "column dtype mismatch: "
-          <> data'type'identifier dt1
-          <> " vs "
-          <> data'type'identifier dt2
-    else do
-      !cl1 <- read'column'length col1
-      !cl2 <- read'column'length col2
-      if cl1 /= cl2
-        then
-          throwEdh ets UsageError $
-            "column length mismatch: "
-              <> T.pack (show cl1)
-              <> " vs "
-              <> T.pack (show cl2)
-        else do
-          !cs1 <- view'column'data col1
-          !cs2 <- view'column'data col2
-          resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
-            \ !dtOp -> do
-              let !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                  !fa2 = unsafeSliceFlatArray cs2 0 cl2
-              let !dop = getOp (data'type'identifier dt1)
-              case fromDynamic dop of
-                Just EdhNil -> naExit
-                _ -> flat'inp'element'wise dtOp ets fa1 dop fa2 exit
-  where
-    !dt1 = data'type'of'column col1
-    !dt2 = data'type'of'column col2
-
-elemInpSliceColumn ::
-  EdhThreadState ->
-  (Int, Int, Int) ->
-  (Text -> Dynamic) ->
-  Column ->
-  Column ->
-  STM () ->
-  STM () ->
-  STM ()
-elemInpSliceColumn
-  !ets
-  !slice
-  !getOp
-  (Column !col1)
-  (Column !col2)
-  !naExit
-  !exit =
-    if data'type'identifier dt1 /= data'type'identifier dt2
-      then
-        throwEdh ets UsageError $
-          "column dtype mismatch: "
-            <> data'type'identifier dt1
-            <> " vs "
-            <> data'type'identifier dt2
-      else do
-        !cl1 <- read'column'length col1
-        !cl2 <- read'column'length col2
-        !cs1 <- view'column'data col1
-        !cs2 <- view'column'data col2
-        resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
-          \ !dtOp -> do
-            let !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                !fa2 = unsafeSliceFlatArray cs2 0 cl2
-            let !dop = getOp (data'type'identifier dt1)
-            case fromDynamic dop of
-              Just EdhNil -> naExit
-              _ -> flat'inp'element'wise'slice dtOp ets slice fa1 dop fa2 exit
-    where
-      !dt1 = data'type'of'column col1
-      !dt2 = data'type'of'column col2
-
-elemInpMaskedColumn ::
-  EdhThreadState ->
-  Column ->
-  (Text -> Dynamic) ->
-  Column ->
-  Column ->
-  STM () ->
-  STM () ->
-  STM ()
-elemInpMaskedColumn
-  !ets
-  (Column !colMask)
-  !getOp
-  (Column !col1)
-  (Column !col2)
-  !naExit
-  !exit =
-    if data'type'identifier dt1 /= data'type'identifier dt2
-      then
-        throwEdh ets UsageError $
-          "column dtype mismatch: "
-            <> data'type'identifier dt1
-            <> " vs "
-            <> data'type'identifier dt2
-      else do
-        !cl1 <- read'column'length col1
-        !cl2 <- read'column'length col2
-        if cl1 /= cl2
-          then
-            throwEdh ets UsageError $
-              "column length mismatch: "
-                <> T.pack (show cl1)
-                <> " vs "
-                <> T.pack (show cl2)
-          else do
-            !mcl <- read'column'length colMask
-            !mcs <- view'column'data colMask
-            !cs1 <- view'column'data col1
-            !cs2 <- view'column'data col2
-            resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
-              \ !dtOp -> do
-                let !ma = unsafeSliceFlatArray mcs 0 mcl
-                    !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                    !fa2 = unsafeSliceFlatArray cs2 0 cl2
-                let !dop = getOp (data'type'identifier dt1)
-                case fromDynamic dop of
-                  Just EdhNil -> naExit
-                  _ ->
-                    flat'inp'element'wise'masked dtOp ets ma fa1 dop fa2 exit
-    where
-      !dt1 = data'type'of'column col1
-      !dt2 = data'type'of'column col2
-
-elemInpFancyColumn ::
-  EdhThreadState ->
-  Column ->
-  (Text -> Dynamic) ->
-  Column ->
-  Column ->
-  STM () ->
-  STM () ->
-  STM ()
-elemInpFancyColumn
-  !ets
-  (Column !colIdx)
-  !getOp
-  (Column !col1)
-  (Column !col2)
-  !naExit
-  !exit =
-    if data'type'identifier dt1 /= data'type'identifier dt2
-      then
-        throwEdh ets UsageError $
-          "column dtype mismatch: "
-            <> data'type'identifier dt1
-            <> " vs "
-            <> data'type'identifier dt2
-      else do
-        !cl1 <- read'column'length col1
-        !cl2 <- read'column'length col2
-        if cl1 /= cl2
-          then
-            throwEdh ets UsageError $
-              "column length mismatch: "
-                <> T.pack (show cl1)
-                <> " vs "
-                <> T.pack (show cl2)
-          else do
-            !icl <- read'column'length colIdx
-            !ics <- view'column'data colIdx
-            !cs1 <- view'column'data col1
-            !cs2 <- view'column'data col2
-            resolveDataOperator' ets (data'type'identifier dt1) cs1 naExit $
-              \ !dtOp -> do
-                let !ia = unsafeSliceFlatArray ics 0 icl
-                    !fa1 = unsafeSliceFlatArray cs1 0 cl1
-                    !fa2 = unsafeSliceFlatArray cs2 0 cl2
-                let !dop = getOp (data'type'identifier dt1)
-                case fromDynamic dop of
-                  Just EdhNil -> naExit
-                  _ -> flat'inp'element'wise'fancy dtOp ets ia fa1 dop fa2 exit
-    where
-      !dt1 = data'type'of'column col1
-      !dt2 = data'type'of'column col2
 
 nonzeroIdxColumn :: EdhThreadState -> Column -> (Column -> STM ()) -> STM ()
 nonzeroIdxColumn !ets (Column !colMask) !exit =
@@ -1439,6 +1163,18 @@ createColumnClass !defaultDt !clsOuterScope =
                   ("__desc__", EdhMethod, wrapHostProc colDescProc),
                   ("([])", EdhMethod, wrapHostProc colIdxReadProc),
                   ("([=])", EdhMethod, wrapHostProc colIdxWriteProc),
+                  {- -- TODO impl. following by super dtypes
+                  ("([++=])", EdhMethod, wrapHostProc $ colIdxUpdWithOpProc "++"),
+                  ("([+=])", EdhMethod, wrapHostProc $ colIdxUpdWithOpProc "+"),
+                  ("([-=])", EdhMethod, wrapHostProc $ colIdxUpdWithOpProc "-"),
+                  ("([*=])", EdhMethod, wrapHostProc $ colIdxUpdWithOpProc "*"),
+                  ("([/=])", EdhMethod, wrapHostProc $ colIdxUpdWithOpProc "/"),
+                  ("([//=])", EdhMethod, wrapHostProc $ colIdxUpdWithOpProc "//"),
+                  ("([%=])", EdhMethod, wrapHostProc $ colIdxUpdWithOpProc "%"),
+                  ("([**=])", EdhMethod, wrapHostProc $ colIdxUpdWithOpProc "**"),
+                  ("([&&=])", EdhMethod, wrapHostProc $ colIdxUpdWithOpProc "&&"),
+                  ("([||=])", EdhMethod, wrapHostProc $ colIdxUpdWithOpProc "||"),
+                  -}
                   ("copy", EdhMethod, wrapHostProc colCopyProc)
                 ]
           ]
@@ -1854,9 +1590,25 @@ createColumnClass !defaultDt !clsOuterScope =
 
                   byIntpIdx ::
                     forall c f. ManagedColumn c f Int => c Int -> EdhTx
-                  byIntpIdx !idxCol =
-                    -- TODO match shape and assign individual elements
-                    doneAssign
+                  byIntpIdx !idxCol = view'column'data idxCol $ \(idxa, idxl) ->
+                    if cl'rhs /= idxl
+                      then
+                        throwEdhTx UsageError $
+                          "rhs column shape mismatch fancy index - "
+                            <> T.pack (show cl'rhs)
+                            <> " vs "
+                            <> T.pack (show idxl)
+                      else edhContIO $ do
+                        let go :: Int -> IO ()
+                            go i
+                              | i >= idxl = return ()
+                              | otherwise = do
+                                idxi <- array'reader idxa i
+                                array'reader cs'rhs i
+                                  >>= array'writer cs idxi
+                                go (i + 1)
+                        go 0
+                        atomically $ runEdhTx ets doneAssign
 
                   byEdhIdx :: EdhTx
                   byEdhIdx _ets = parseEdhIndex ets idxVal $ \case
@@ -1871,13 +1623,47 @@ createColumnClass !defaultDt !clsOuterScope =
                           UsageError
                           "can not index-assign a rhs column by Any index"
                       EdhAll ->
-                        -- TODO match shape and assign all elements
-                        doneAssign
+                        if cl'rhs /= cl
+                          then
+                            throwEdhTx UsageError $
+                              "rhs column shape mismatch - "
+                                <> T.pack (show cl'rhs)
+                                <> " vs "
+                                <> T.pack (show cl)
+                          else edhContIO $ do
+                            let go :: Int -> IO ()
+                                go i
+                                  | i >= cl = return ()
+                                  | otherwise = do
+                                    array'reader cs'rhs i
+                                      >>= array'writer cs i
+                                    go (i + 1)
+                            go 0
+                            atomically $ runEdhTx ets doneAssign
                       EdhSlice !start !stop !step -> \_ets ->
                         edhRegulateSlice ets cl (start, stop, step) $
                           \(!iStart, !iStop, !iStep) ->
-                            -- TODO match shape and assign individual elements
-                            runEdhTx ets doneAssign
+                            if cl'rhs < ((iStop - iStart) `quot` iStep)
+                              then
+                                throwEdh ets UsageError $
+                                  "rhs column shape mismatch slicing index - "
+                                    <> T.pack (show cl'rhs)
+                                    <> " vs "
+                                    <> T.pack
+                                      ( show iStart <> ":" <> show iStop <> ":"
+                                          <> show iStep
+                                      )
+                              else runEdhTx ets $
+                                edhContIO $ do
+                                  let go :: Int -> Int -> IO ()
+                                      go i n
+                                        | i >= iStop = return ()
+                                        | otherwise = do
+                                          array'reader cs'rhs n
+                                            >>= array'writer cs i
+                                          go (i + iStep) (n + 1)
+                                  go 0 0
+                                  atomically $ runEdhTx ets doneAssign
 
               withColumnOf' @YesNo
                 idxVal
@@ -1904,158 +1690,6 @@ createColumnClass !defaultDt !clsOuterScope =
         this = edh'scope'this scope
 
 {-
-
-idxAssignColumn :: Column -> EdhValue -> EdhValue -> EdhHostProc
-idxAssignColumn col'@(Column !col) !idxVal !other !exit !ets =
-  castObjectStore' (edhUltimate other) >>= \case
-    -- assign column to column
-    Just (_, colOther'@(Column !colOther)) ->
-      let !dtOther = data'type'of'column colOther
-       in if dtOther /= dt
-            then
-              throwEdh ets UsageError $
-                "assigning column of dtype="
-                  <> data'type'identifier dtOther
-                  <> " to dtype="
-                  <> data'type'identifier dt
-                  <> " not supported."
-            else
-              castObjectStore' idxVal >>= \case
-                Just (_, idxCol'@(Column !idxCol)) ->
-                  case data'type'identifier $ data'type'of'column idxCol of
-                    "yesno" ->
-                      -- yesno index
-                      elemInpMaskedColumn
-                        ets
-                        idxCol'
-                        assignOp
-                        col'
-                        colOther'
-                        (exitEdh ets exit edhNA)
-                        $ exitEdh ets exit other
-                    "intp" ->
-                      -- fancy index
-                      elemInpFancyColumn
-                        ets
-                        idxCol'
-                        assignOp
-                        col'
-                        colOther'
-                        (exitEdh ets exit edhNA)
-                        $ exitEdh ets exit other
-                    !badDti ->
-                      throwEdh ets UsageError $
-                        "invalid dtype="
-                          <> badDti
-                          <> " for a column as an index to another column"
-                Nothing -> parseEdhIndex ets idxVal $ \case
-                  Left !err -> throwEdh ets UsageError err
-                  Right (EdhIndex _) ->
-                    throwEdh
-                      ets
-                      UsageError
-                      "can not assign a column to a single index of another column"
-                  Right EdhAny ->
-                    throwEdh
-                      ets
-                      UsageError
-                      "can not assign a column to every element of another column"
-                  Right EdhAll ->
-                    if dtOther /= dt
-                      then
-                        throwEdh ets UsageError $
-                          "assigning column of dtype="
-                            <> data'type'identifier dtOther
-                            <> " to "
-                            <> data'type'identifier dt
-                            <> " not supported."
-                      else do
-                        !cl <- read'column'length col
-                        !clOther <- read'column'length colOther
-                        if clOther /= cl
-                          then
-                            throwEdh ets UsageError $
-                              "column length mismatch: "
-                                <> T.pack (show clOther)
-                                <> " vs "
-                                <> T.pack (show cl)
-                          else
-                            elemInpColumn
-                              ets
-                              assignOp
-                              col'
-                              colOther'
-                              (exitEdh ets exit edhNA)
-                              $ exitEdh ets exit other
-                  Right (EdhSlice !start !stop !step) -> do
-                    !cl <- read'column'length col
-                    edhRegulateSlice ets cl (start, stop, step) $ \ !slice ->
-                      elemInpSliceColumn
-                        ets
-                        slice
-                        assignOp
-                        col'
-                        colOther'
-                        (exitEdh ets exit edhNA)
-                        $ exitEdh ets exit other
-
-    -- assign scalar to column
-    Nothing ->
-      castObjectStore' idxVal >>= \case
-        Just (_, idxCol'@(Column !idxCol)) ->
-          case data'type'identifier $ data'type'of'column idxCol of
-            "yesno" ->
-              -- yesno index
-              vecInpMaskedColumn
-                ets
-                idxCol'
-                assignOp
-                col'
-                (edhUltimate other)
-                (exitEdh ets exit edhNA)
-                $ exitEdh ets exit other
-            "intp" ->
-              -- fancy index
-              vecInpFancyColumn
-                ets
-                idxCol'
-                assignOp
-                col'
-                (edhUltimate other)
-                (exitEdh ets exit edhNA)
-                $ exitEdh ets exit other
-            !badDti ->
-              throwEdh ets UsageError $
-                "invalid dtype="
-                  <> badDti
-                  <> " for a column as an index to another column"
-        Nothing -> parseEdhIndex ets idxVal $ \case
-          Left !err -> throwEdh ets UsageError err
-          Right (EdhIndex !i) ->
-            unsafeWriteColumnCell ets col' i (edhUltimate other) $
-              exitEdh ets exit
-          Right EdhAny -> do
-            !cl <- read'column'length col
-            unsafeFillColumn ets col' (edhUltimate other) [0 .. cl - 1] $
-              exitEdh ets exit other
-          Right EdhAll -> do
-            !cl <- read'column'length col
-            unsafeFillColumn ets col' (edhUltimate other) [0 .. cl - 1] $
-              exitEdh ets exit other
-          Right (EdhSlice !start !stop !step) -> do
-            !cl <- read'column'length col
-            edhRegulateSlice ets cl (start, stop, step) $
-              \(!iStart, !iStop, !iStep) ->
-                vecInpSliceColumn
-                  ets
-                  (iStart, iStop, iStep)
-                  assignOp
-                  col'
-                  (edhUltimate other)
-                  (exitEdh ets exit edhNA)
-                  $ exitEdh ets exit other
-  where
-    !dt = data'type'of'column col
 
 arangeProc ::
   Object ->
