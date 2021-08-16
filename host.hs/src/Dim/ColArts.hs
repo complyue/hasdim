@@ -81,19 +81,6 @@ scanOpProc
             exitWithNewClone $ Column $ InMemColumn dt bicsv biclv
     where
       naExit = exitEdh ets exit edhNA
-
-nonzeroIdxColumn :: EdhThreadState -> Column -> (Column -> STM ()) -> STM ()
-nonzeroIdxColumn !ets (Column !colMask) !exit =
-  resolveNumDataType ets (data'type'identifier dtIntp) $ \ !ndt -> do
-    !mcl <- read'column'length colMask
-    !mcs <- view'column'data colMask
-    let !ma = unsafeSliceFlatArray mcs 0 mcl
-    flat'new'nonzero'array ndt ets ma $ \(!rfa, !rlen) -> do
-      !csvRtn <- newTVar rfa
-      !clvRtn <- newTVar rlen
-      exit $ Column $ InMemColumn dtIntp csvRtn clvRtn
-  where
-    dtIntp = makeDeviceDataType @Int "intp"
 -}
 
 mkYesNoSuperDt :: DataTypeIdent -> Scope -> STM Object
@@ -986,9 +973,13 @@ devColOpProc ::
   EdhHostProc
 devColOpProc !op !other !exit !ets =
   withColumnSelfOf @a ets $ \ !objCol !col -> do
-    let exitWithNewClone :: forall c'. Typeable (c' a) => c' a -> STM ()
+    let exitWithNewClone ::
+          forall c' f'.
+          (ManagedColumn c' f' a, Typeable (c' a)) =>
+          c' a ->
+          STM ()
         exitWithNewClone !colResult =
-          edhCloneHostObj ets objCol objCol colResult $
+          edhCloneHostObj ets objCol objCol (someColumn colResult) $
             \ !newObj -> exitEdh ets exit $ EdhObject newObj
 
         vecOp = runEdhTx ets $
@@ -1047,9 +1038,13 @@ dirColOpProc ::
   EdhHostProc
 dirColOpProc !op !other !exit !ets =
   withColumnSelfOf @a ets $ \ !objCol !col -> do
-    let exitWithNewClone :: forall c'. Typeable (c' a) => c' a -> STM ()
+    let exitWithNewClone ::
+          forall c' f'.
+          (ManagedColumn c' f' a, Typeable (c' a)) =>
+          c' a ->
+          STM ()
         exitWithNewClone !colResult =
-          edhCloneHostObj ets objCol objCol colResult $
+          edhCloneHostObj ets objCol objCol (someColumn colResult) $
             \ !newObj -> exitEdh ets exit $ EdhObject newObj
 
         vecOp = runEdhTx ets $
@@ -1696,8 +1691,6 @@ createColumnClass !defaultDt !clsOuterScope =
         scope = contextScope $ edh'context ets
         this = edh'scope'this scope
 
-{-
-
 arangeProc ::
   Object ->
   Object ->
@@ -1710,31 +1703,86 @@ arangeProc
   (mandatoryArg -> !rngSpec)
   (defaultArg defaultDt -> !dto)
   !exit
-  !ets =
-    castObjectStore dto >>= \case
-      Nothing -> throwEdh ets UsageError "invalid dtype"
-      Just (_, !dt) -> parseEdhIndex ets (edhUltimate rngSpec) $ \case
-        Right (EdhIndex !stop)
-          | stop >= 0 -> createRangeCol dt 0 stop 1
-        Right (EdhSlice !start (Just !stopN) !step) -> do
-          let !startN = fromMaybe 0 start
-          createRangeCol dt startN stopN $
-            fromMaybe (if stopN >= startN then 1 else -1) step
-        Left !err -> edhValueDesc ets rngSpec $ \ !rngDesc ->
-          throwEdh ets UsageError $
-            "invalid range " <> rngDesc <> " - " <> err
-        _ -> edhValueDesc ets rngSpec $ \ !rngDesc ->
-          throwEdh ets UsageError $
-            "invalid range " <> rngDesc
+  !ets = parseEdhIndex ets (edhUltimate rngSpec) $ \case
+    Right (EdhIndex !stop)
+      | stop >= 0 -> createRangeCol 0 stop 1
+    Right (EdhSlice !start (Just !stopN) !step) -> do
+      let !startN = fromMaybe 0 start
+      createRangeCol startN stopN $
+        fromMaybe (if stopN >= startN then 1 else -1) step
+    Left !err -> edhSimpleDesc ets rngSpec $ \ !rngDesc ->
+      throwEdh ets UsageError $ "invalid range " <> rngDesc <> " - " <> err
+    _ -> edhSimpleDesc ets rngSpec $ \ !rngDesc ->
+      throwEdh ets UsageError $ "invalid range " <> rngDesc
     where
-      createRangeCol :: DataType -> Int -> Int -> Int -> STM ()
-      createRangeCol !dt !start !stop !step =
-        resolveNumDataType ets (data'type'identifier dt) $ \ !ndt ->
-          flat'new'range'array ndt ets start stop step $ \ !cs -> do
-            !csv <- newTVar cs
-            !clv <- newTVar $ flatArrayCapacity cs
-            let !col = Column $ InMemColumn dt csv clv
-            edhCreateHostObj colClass col >>= exitEdh ets exit . EdhObject
+      badDtype = edhSimpleDesc ets (EdhObject dto) $ \ !badDesc ->
+        throwEdh ets UsageError $ "invalid dtype: " <> badDesc
+
+      notNumDt dti = throwEdh ets UsageError $ "not a numeric dtype: " <> dti
+
+      createRangeCol :: Int -> Int -> Int -> STM ()
+      createRangeCol !start !stop !step =
+        if (stop > start && step <= 0) || (stop < start && step >= 0)
+          then throwEdh ets UsageError "range is not converging"
+          else do
+            let (q, r) = quotRem (stop - start) step
+                !len = if r == 0 then abs q else 1 + abs q
+                createDevCol :: DeviceDataType -> STM ()
+                createDevCol !dt = device'data'type'as'of'num
+                  dt
+                  (notNumDt $ device'data'type'ident dt)
+                  $ \(_ :: TypeRep a) -> runEdhTx ets $
+                    edhContIO $ do
+                      !p <- callocArray @a len
+                      !fp <- newForeignPtr finalizerFree p
+                      let fillRng :: Int -> Int -> IO ()
+                          fillRng !n !i =
+                            if i >= len
+                              then return ()
+                              else do
+                                pokeElemOff p i $ fromIntegral n
+                                fillRng (n + step) (i + 1)
+                      fillRng start 0
+                      atomically $ do
+                        let !cs = DeviceArray len fp
+                        !csv <- newTMVar cs
+                        !clv <- newTVar len
+                        let !col = InMemDevCol csv clv
+                        edhCreateHostObj'
+                          colClass
+                          (toDyn $ someColumn col)
+                          [dto]
+                          >>= exitEdh ets exit . EdhObject
+
+                createDirCol :: DirectDataType -> STM ()
+                createDirCol !dt = direct'data'type'as'of'num
+                  dt
+                  (notNumDt $ direct'data'type'ident dt)
+                  $ \(_ :: TypeRep a) -> runEdhTx ets $
+                    edhContIO $ do
+                      (iov :: MV.IOVector a) <- MV.new len
+                      let fillRng :: Int -> Int -> IO ()
+                          fillRng !n !i =
+                            if i >= len
+                              then return ()
+                              else do
+                                MV.unsafeWrite iov i $ fromIntegral n
+                                fillRng (n + step) (i + 1)
+                      fillRng start 0
+                      atomically $ do
+                        let !cs = DirectArray iov
+                        !csv <- newTMVar cs
+                        !clv <- newTVar len
+                        let !col = InMemDirCol csv clv
+                        edhCreateHostObj'
+                          colClass
+                          (toDyn $ someColumn col)
+                          [dto]
+                          >>= exitEdh ets exit . EdhObject
+
+            withDataType dto badDtype createDevCol createDirCol
+
+{-
 
 randomProc ::
   Object ->
@@ -1813,5 +1861,18 @@ whereProc
     | odNull kwargs = throwEdh ets UsageError "not implemented yet."
 whereProc !apk _ !ets =
   throwEdh ets UsageError $ "invalid args to where()" <> T.pack (show apk)
+
+nonzeroIdxColumn :: EdhThreadState -> Column -> (Column -> STM ()) -> STM ()
+nonzeroIdxColumn !ets (Column !colMask) !exit =
+  resolveNumDataType ets (data'type'identifier dtIntp) $ \ !ndt -> do
+    !mcl <- read'column'length colMask
+    !mcs <- view'column'data colMask
+    let !ma = unsafeSliceFlatArray mcs 0 mcl
+    flat'new'nonzero'array ndt ets ma $ \(!rfa, !rlen) -> do
+      !csvRtn <- newTVar rfa
+      !clvRtn <- newTVar rlen
+      exit $ Column $ InMemColumn dtIntp csvRtn clvRtn
+  where
+    dtIntp = makeDeviceDataType @Int "intp"
 
 -}

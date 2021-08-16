@@ -201,68 +201,6 @@ withDataType !dto !naExit !devExit !dirExit = case edh'obj'store dto of
         _ -> naExit
   _ -> naExit
 
--- createDataTypeClass :: Scope -> STM Object
--- createDataTypeClass !clsOuterScope =
---   mkHostClass clsOuterScope "dtype" (allocEdhObj dtypeAllocator) [] $
---     \ !clsScope -> do
---       !mths <-
---         sequence $
---           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
---             | (nm, vc, hp) <-
---                 [ ("__eq__", EdhMethod, wrapHostProc dtypeEqProc)
---                 ]
---           ]
---       iopdUpdate mths $ edh'scope'entity clsScope
---   where
---     dtypeAllocator :: "dti" ?: Text -> EdhObjectAllocator
---     dtypeAllocator (optionalArg -> !maybeDti) !ctorExit !ets = case maybeDti of
---       Nothing -> box
---       Just "float64" -> f8
---       Just "f8" -> f8
---       Just "float32" -> f4
---       Just "f4" -> f4
---       Just "intp" -> intp
---       Just "int64" -> i8
---       Just "i8" -> i8
---       Just "int32" -> i4
---       Just "i4" -> i4
---       Just "int8" -> i1
---       Just "i1" -> i1
---       Just "bool" -> yesno
---       Just "yesno" -> yesno
---       Just "box" -> box
---       Just "object" -> box -- for Python Numpy compatibility
---       Just "decimal" -> decimal
---       Just badDti -> throwEdh ets UsageError $ "invalid dtype id: " <> badDti
---       where
---         f8 =
---           ctorExit Nothing $
---             HostStore $ toDyn $ mkFloatDataType @Double "float64"
---         f4 =
---           ctorExit Nothing $
---             HostStore $ toDyn $ mkFloatDataType @Float "float32"
---         intp =
---           ctorExit Nothing $
---             HostStore $ toDyn $ mkIntDataType @Int "intp"
---         i8 =
---           ctorExit Nothing $
---             HostStore $ toDyn $ mkIntDataType @Int64 "int64"
---         i4 =
---           ctorExit Nothing $
---             HostStore $ toDyn $ mkIntDataType @Int32 "int32"
---         i1 =
---           ctorExit Nothing $
---             HostStore $ toDyn $ mkIntDataType @Int8 "int8"
---         yesno =
---           ctorExit Nothing $
---             HostStore $ toDyn $ mkIntDataType @YesNo "yesno"
---         box =
---           ctorExit Nothing $
---             HostStore $ toDyn $ mkBoxDataType @EdhValue "box" edhNA
---         decimal =
---           ctorExit Nothing $
---             HostStore $ toDyn $ mkRealFracDataType @Decimal "decimal" D.nan
-
 dtypeEqProc :: EdhValue -> EdhHostProc
 dtypeEqProc !other !exit !ets = case edhUltimate other of
   EdhObject !objOther ->

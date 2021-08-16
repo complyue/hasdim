@@ -2,7 +2,7 @@
 hd = { import * 'dim' }
 
 # %%
-c = Column(3)
+c = arange(3)
 c' = c.copy()
 
 # %%

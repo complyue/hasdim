@@ -1,7 +1,7 @@
 module Dim.EHI
   ( installDimBatteries,
     withColumnClass,
-    withDtypeClass,
+    withYesNoDtype,
     module Dim.XCHG,
     module Dim.DataType,
     module Dim.Column,
@@ -133,17 +133,15 @@ installDimBatteries !world = do
       -- !tableClass <- createTableClass columnClass moduScope
       -- !dbArrayClass <- createDbArrayClass columnClass defaultDataType moduScope
 
-      {-
       !moduArts0 <-
         sequence $
           [ (AttrByName nm,) <$> mkHostProc moduScope mc nm hp
             | (mc, nm, hp) <-
-                [
-                  ( EdhMethod,
-
+                [ ( EdhMethod,
                     "arange",
                     wrapHostProc $ arangeProc defaultRangeDataType columnClass
-                  ),
+                  )
+                  {-
                   ( EdhMethod,
                     "random",
                     wrapHostProc $ randomProc defaultDataType columnClass
@@ -168,16 +166,16 @@ installDimBatteries !world = do
                   (EdhMethod, "asinh", wrapHostProc $ floatOpProc float'asinh),
                   (EdhMethod, "acosh", wrapHostProc $ floatOpProc float'acosh),
                   (EdhMethod, "atanh", wrapHostProc $ floatOpProc float'atanh)
+                  -}
                 ]
           ]
-                  -}
 
       let !moduArts =
-            -- moduArts0 ++
-            [ (AttrByName "Column", EdhObject columnClass)
-            --  (AttrByName "Table", EdhObject tableClass),
-            --  (AttrByName "DbArray", EdhObject dbArrayClass)
-            ]
+            moduArts0
+              ++ [ (AttrByName "Column", EdhObject columnClass)
+              --  (AttrByName "Table", EdhObject tableClass),
+              --  (AttrByName "DbArray", EdhObject dbArrayClass)
+                 ]
       iopdUpdate moduArts $ edh'scope'entity moduScope
       prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
         iopdUpdate moduArts esExps
@@ -190,8 +188,8 @@ withColumnClass !act = importEdhModule "dim/RT" $ \ !moduRT !ets ->
     (_, EdhObject !clsColumn) -> runEdhTx ets $ act clsColumn
     _ -> error "bug: dim/RT provides no Column class"
 
-withDtypeClass :: (Object -> EdhTx) -> EdhTx
-withDtypeClass !act = importEdhModule "dim/dtypes" $ \ !moduDtypes !ets ->
-  lookupEdhObjAttr moduDtypes (AttrByName "dtype") >>= \case
+withYesNoDtype :: (Object -> EdhTx) -> EdhTx
+withYesNoDtype !act = importEdhModule "dim/dtypes" $ \ !moduDtypes !ets ->
+  lookupEdhObjAttr moduDtypes (AttrByName "yesno") >>= \case
     (_, EdhObject !clsDtype) -> runEdhTx ets $ act clsDtype
-    _ -> error "bug: dim/dtypes provides no dtype class"
+    _ -> error "bug: dim/dtypes provides no `yesno` dtype"
