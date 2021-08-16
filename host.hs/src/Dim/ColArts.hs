@@ -1205,7 +1205,7 @@ colCmpProc !dtYesNo !cmp !other !exit !ets =
 
         vecOp = runEdhTx ets $
           view'column'data col $ \(cs, cl) ->
-            fromEdh @a other $ \rhv -> edhContIO $ do
+            fromEdh' @a other naExit $ \rhv -> edhContIO $ do
               (fp, csResult) <- newDeviceArray @YesNo cl
               let p = unsafeForeignPtrToPtr fp
                   go i
@@ -1248,6 +1248,8 @@ colCmpProc !dtYesNo !cmp !other !exit !ets =
                     exitWithResult $ InMemDevCol csvResult clvResult
 
     withColumnOf' @a other vecOp elemOp
+  where
+    naExit = exitEdhTx exit edhNA
 
 devColOpProc ::
   forall a.
@@ -1264,7 +1266,7 @@ devColOpProc !op !other !exit !ets =
 
         vecOp = runEdhTx ets $
           view'column'data col $ \(cs, cl) ->
-            fromEdh @a other $ \rhv -> edhContIO $ do
+            fromEdh' @a other naExit $ \rhv -> edhContIO $ do
               (fp, csResult) <- newDeviceArray @a cl
               let p = unsafeForeignPtrToPtr fp
                   go i
@@ -1307,6 +1309,8 @@ devColOpProc !op !other !exit !ets =
                     exitWithNewClone $ InMemDevCol csvResult clvResult
 
     withColumnOf' @a other vecOp elemOp
+  where
+    naExit = exitEdhTx exit edhNA
 
 dirColOpProc ::
   forall a.
@@ -1323,7 +1327,7 @@ dirColOpProc !op !other !exit !ets =
 
         vecOp = runEdhTx ets $
           view'column'data col $ \(cs, cl) ->
-            fromEdh @a other $ \rhv -> edhContIO $ do
+            fromEdh' @a other naExit $ \rhv -> edhContIO $ do
               (iov, csResult) <- newDirectArray @a undefined cl
               let go i
                     | i < 0 = return ()
@@ -1364,6 +1368,8 @@ dirColOpProc !op !other !exit !ets =
                     exitWithNewClone $ InMemDirCol csvResult clvResult
 
     withColumnOf' @a other vecOp elemOp
+  where
+    naExit = exitEdhTx exit edhNA
 
 colInpProc ::
   forall a.
@@ -1375,7 +1381,7 @@ colInpProc !op !other !exit !ets =
   withColumnSelfOf @a ets exit $ \_objCol !col -> do
     let vecOp = runEdhTx ets $
           view'column'data col $ \(cs, cl) ->
-            fromEdh @a other $ \rhv -> edhContIO $ do
+            fromEdh' @a other naExit $ \rhv -> edhContIO $ do
               let go i
                     | i < 0 = return ()
                     | otherwise = do
@@ -1411,6 +1417,7 @@ colInpProc !op !other !exit !ets =
   where
     that = edh'scope'that $ contextScope $ edh'context ets
     doExit = exitEdh ets exit $ EdhObject that
+    naExit = exitEdhTx exit edhNA
 
 createColumnClass :: Object -> Scope -> STM Object
 createColumnClass !defaultDt !clsOuterScope =

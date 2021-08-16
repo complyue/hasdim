@@ -18,20 +18,32 @@ import qualified Data.Text as T
 import Foreign (Bits, Int8, Storable)
 import Language.Edh.EHI
 import System.Random
+import Type.Reflection
 import Prelude
 
-class EdhXchg t where
+class Typeable t => EdhXchg t where
   toEdh :: t -> EdhTxExit EdhValue -> EdhTx
+
+  fromEdh' :: EdhValue -> EdhTx -> EdhTxExit t -> EdhTx
+
   fromEdh :: EdhValue -> EdhTxExit t -> EdhTx
+  fromEdh v = fromEdh' v $
+    edhValueDescTx v $ \ !badDesc ->
+      throwEdhTx UsageError $
+        "can not convert to host type `"
+          <> T.pack (show $ typeRep @t)
+          <> "` from value: "
+          <> badDesc
 
 instance EdhXchg EdhValue where
   toEdh !v !exit = exit v
-  fromEdh !v !exit = exit v
+  fromEdh' !v _naExit !exit = exit v
 
 instance EdhXchg D.Decimal where
   toEdh !v !exit = exit $ EdhDecimal v
-  fromEdh (EdhDecimal !v) !exit = exit v
-  fromEdh _ !exit = exit D.nan
+  fromEdh' !v naExit !exit = case edhUltimate v of
+    (EdhDecimal !d) -> exit d
+    _ -> naExit
 
 newtype YesNo = YesNo Int8
   deriving (Eq, Ord, Storable, Num, Enum, Real, Integral, Bits)
@@ -41,34 +53,33 @@ yesOrNo b = YesNo $ if b then 1 else 0
 
 instance {-# OVERLAPPABLE #-} EdhXchg YesNo where
   toEdh (YesNo !b) !exit = exit $ EdhBool $ b /= 0
-  fromEdh !v !exit =
+  fromEdh' !v _naExit !exit =
     edhValueNullTx v $ \ !b -> exit $ YesNo $ if b then 0 else 1
 
 instance {-# OVERLAPPABLE #-} EdhXchg Text where
   toEdh !s !exit = exit $ EdhString s
-  fromEdh (EdhString !s) !exit = exit s
-  fromEdh !v !exit = edhValueReprTx v exit
+  fromEdh' (EdhString !s) _naExit !exit = exit s
+  fromEdh' !v _naExit !exit = edhValueReprTx v exit
 
 instance {-# OVERLAPPABLE #-} EdhXchg Char where
   toEdh !s !exit = exit $ EdhString $ T.singleton s
-  fromEdh (EdhString !s) !exit = case T.uncons s of
-    Just (!c, _) -> exit c
-    Nothing -> exit '\0'
-  fromEdh !v !exit = edhValueReprTx v $ \ !s -> case T.uncons s of
-    Just (!c, _) -> exit c
-    Nothing -> exit '\0'
+  fromEdh' !v naExit !exit = case edhUltimate v of
+    EdhString !s -> case T.uncons s of
+      Just (!c, _) -> exit c
+      Nothing -> exit '\0'
+    _ -> naExit
 
 instance {-# OVERLAPPABLE #-} EdhXchg Double where
   toEdh !n !exit = exit $ EdhDecimal $ D.decimalFromRealFloat n
-  fromEdh !v !exit = coerceEdhToFloat v exit
+  fromEdh' = coerceEdhToFloat
 
 instance {-# OVERLAPPABLE #-} EdhXchg Float where
   toEdh !n !exit = exit $ EdhDecimal $ D.decimalFromRealFloat n
-  fromEdh !v !exit = coerceEdhToFloat v exit
+  fromEdh' = coerceEdhToFloat
 
-instance {-# OVERLAPPABLE #-} (Integral a) => EdhXchg a where
+instance {-# OVERLAPPABLE #-} (Integral a, Typeable a) => EdhXchg a where
   toEdh !n !exit = exit $ EdhDecimal $ fromIntegral n
-  fromEdh !v !exit = coerceEdhToIntegral v exit
+  fromEdh' = coerceEdhToIntegral
 
 instance Random Decimal where
   -- assuming not too many bits are needed with host decimal arrays
@@ -85,16 +96,9 @@ instance Random Decimal where
     let (f :: Float, g') = random g
      in (D.decimalFromRealFloat f, g')
 
-coerceEdhToFloat :: (RealFloat a) => EdhValue -> EdhTxExit a -> EdhTx
-coerceEdhToFloat !v =
-  coerceEdhToFloat' v $
-    edhValueReprTx v $ \ !r ->
-      throwEdhTx UsageError $
-        "float expected but given a " <> edhTypeNameOf v <> ": " <> r
-
-coerceEdhToFloat' ::
+coerceEdhToFloat ::
   (RealFloat a) => EdhValue -> EdhTx -> EdhTxExit a -> EdhTx
-coerceEdhToFloat' !v !naExit !exit !ets = case edhUltimate v of
+coerceEdhToFloat !v naExit !exit !ets = case edhUltimate v of
   EdhDecimal !d -> exitWith d
   EdhObject !o ->
     lookupEdhObjMagic o (AttrByName "__float__") >>= \case
@@ -132,16 +136,8 @@ coerceEdhToFloat' !v !naExit !exit !ets = case edhUltimate v of
       exitEdh ets exit $ D.decimalToRealFloat d
 
 coerceEdhToIntegral ::
-  (Integral a) => EdhValue -> EdhTxExit a -> EdhTx
-coerceEdhToIntegral !v =
-  coerceEdhToIntegral' v $
-    edhValueReprTx v $ \ !r ->
-      throwEdhTx UsageError $
-        "integer expected but given a " <> edhTypeNameOf v <> ": " <> r
-
-coerceEdhToIntegral' ::
   (Integral a) => EdhValue -> EdhTx -> EdhTxExit a -> EdhTx
-coerceEdhToIntegral' !v !naExit !exit !ets = case edhUltimate v of
+coerceEdhToIntegral !v naExit !exit !ets = case edhUltimate v of
   EdhDecimal !d -> exitWith d
   EdhObject !o ->
     lookupEdhObjMagic o (AttrByName "__int__") >>= \case
