@@ -1,12 +1,16 @@
 # %%
 hd = { import * 'dim' }
-effect import * 'dim/effects'
-
 
 # %%
-default'filled = empty(5)
-zero'filled = zeros(5)
-one'filled = ones(5)
+c = Column(3)
+c' = c.copy()
+
+# %%
+show$ default'filled = empty(5)
+# %%
+show$ zero'filled = zeros(5)
+# %%
+show$ one'filled = ones(5)
 
 
 # %%

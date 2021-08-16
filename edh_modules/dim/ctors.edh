@@ -4,16 +4,18 @@
 
 import * 'dim/dtypes'
 
-import (
-  Table, Column,
-  arange, random, where,
-  pi,
-  exp, log, sqrt,
-  sin, cos, tan, asin, acos, atan,
-  sinh, cosh, tanh, asinh, acosh, atanh,
-  DbArray,
-  **
-) 'dim/RT'
+# import (
+#   Table, Column,
+#   arange, random, where,
+#   pi,
+#   exp, log, sqrt,
+#   sin, cos, tan, asin, acos, atan,
+#   sinh, cosh, tanh, asinh, acosh, atanh,
+#   DbArray,
+#   **
+# ) 'dim/RT'
+
+import * 'dim/RT'
 
 import * 'dim/primitive/ops'
 

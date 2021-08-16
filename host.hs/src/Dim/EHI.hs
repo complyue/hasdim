@@ -31,80 +31,45 @@ import Foreign hiding (void)
 import Language.Edh.EHI
 import Prelude
 
-builtinDataTypes :: Object -> STM [(DataTypeIdent, Object)]
-builtinDataTypes !dtClass =
-  concat
-    <$> sequence
-      [ mkFloatDtWithAlias @Double "float64" ["f8"],
-        mkFloatDtWithAlias @Float "float32" ["f4"],
-        mkIntDtWithAlias @Int64 "int64" ["i8"],
-        mkIntDtWithAlias @Int32 "int32" ["i4"],
-        mkIntDtWithAlias @Int8 "int8" ["byte"],
-        mkIntDtWithAlias @Int "intp" [],
-        mkIntDtWithAlias @YesNo "yesno" ["bool"],
-        mkRealFracDtWithAlias @D.Decimal "decimal" D.nan [],
-        mkBoxDtWithAlias @EdhValue
-          "box"
-          edhNA
-          [ "object" -- for numpy compat, not all values are objects in Edh
-          ]
-      ]
-  where
-    mkIntDtWithAlias ::
-      forall a.
-      (Integral a, Storable a, EdhXchg a, Typeable a) =>
-      DataTypeIdent ->
-      [DataTypeIdent] ->
-      STM [(DataTypeIdent, Object)]
-    mkIntDtWithAlias !dti !alias =
-      let !dt = mkIntDataType @a dti
-       in edhCreateHostObj dtClass dt
-            >>= \ !dto -> return $ ((dti, dto) :) $ (,dto) <$> alias
-    mkFloatDtWithAlias ::
-      forall a.
-      (RealFloat a, Storable a, EdhXchg a, Typeable a) =>
-      DataTypeIdent ->
-      [DataTypeIdent] ->
-      STM [(DataTypeIdent, Object)]
-    mkFloatDtWithAlias !dti !alias =
-      let !dt = mkFloatDataType @a dti
-       in edhCreateHostObj dtClass dt
-            >>= \ !dto -> return $ ((dti, dto) :) $ (,dto) <$> alias
+builtinDataTypes :: Scope -> STM [(DataTypeIdent, Object)]
+builtinDataTypes !moduScope = do
+  yesno <- mkYesNoSuperDt "yesno" moduScope
+  box <- mkBoxSuperDt "box" edhNA moduScope
+  decimal <- mkRealFracSuperDt @Decimal yesno "decimal" moduScope
+  float64 <- mkFloatSuperDt @Double yesno "float64" moduScope
+  float32 <- mkFloatSuperDt @Float yesno "float32" moduScope
+  int64 <- mkIntSuperDt @Int64 yesno "int64" moduScope
+  int32 <- mkIntSuperDt @Int32 yesno "int32" moduScope
+  int8 <- mkIntSuperDt @Int8 yesno "int8" moduScope
+  intp <- mkIntSuperDt @Int yesno "intp" moduScope
 
-    mkBoxDtWithAlias ::
-      forall a.
-      (EdhXchg a, Eq a, Typeable a) =>
-      DataTypeIdent ->
-      a ->
-      [DataTypeIdent] ->
-      STM [(DataTypeIdent, Object)]
-    mkBoxDtWithAlias !dti !def'val !alias =
-      let !dt = mkBoxDataType dti def'val
-       in edhCreateHostObj dtClass dt
-            >>= \ !dto -> return $ ((dti, dto) :) $ (,dto) <$> alias
-
-    mkRealFracDtWithAlias ::
-      forall a.
-      (RealFrac a, EdhXchg a, Eq a, Typeable a) =>
-      DataTypeIdent ->
-      a ->
-      [DataTypeIdent] ->
-      STM [(DataTypeIdent, Object)]
-    mkRealFracDtWithAlias !dti !def'val !alias =
-      let !dt = mkRealFracDataType dti def'val
-       in edhCreateHostObj dtClass dt
-            >>= \ !dto -> return $ ((dti, dto) :) $ (,dto) <$> alias
+  return
+    [ ("float64", float64),
+      ("f8", float64),
+      ("float32", float32),
+      ("f4", float32),
+      ("int64", int64),
+      ("i8", int64),
+      ("int32", int32),
+      ("i4", int32),
+      ("int8", int8),
+      ("byte", int8),
+      ("intp", intp),
+      ("yesno", yesno),
+      ("bool", yesno),
+      ("box", box),
+      ("object", box), -- for numpy compat, not all values are objects in Edh
+      ("decimal", decimal)
+    ]
 
 installDimBatteries :: EdhWorld -> IO ()
 installDimBatteries !world = do
   !moduDtypes <- installEdhModule world "dim/dtypes" $ \ !ets !exit -> do
     let !moduScope = contextScope $ edh'context ets
 
-    -- !dtAlias <- builtinDataTypes dtClass
+    !dtAlias <- builtinDataTypes moduScope
 
-    let !moduArts =
-          []
-    -- (AttrByName k, EdhObject dto) | (k, dto) <- dtAlias
+    let !moduArts = [(AttrByName k, EdhObject dto) | (k, dto) <- dtAlias]
 
     iopdUpdate moduArts $ edh'scope'entity moduScope
     prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
@@ -156,10 +121,10 @@ installDimBatteries !world = do
         fromJust <$> iopdLookup (AttrByName "float64") dtypesModuStore >>= \case
           EdhObject !dto -> return dto
           _ -> error "bug: dtype not object"
-      -- !defaultRangeDataType <-
-      --   fromJust <$> iopdLookup (AttrByName "intp") dtypesModuStore >>= \case
-      --     EdhObject !dto -> return dto
-      --     _ -> error "bug: dtype not object"
+      !defaultRangeDataType <-
+        fromJust <$> iopdLookup (AttrByName "intp") dtypesModuStore >>= \case
+          EdhObject !dto -> return dto
+          _ -> error "bug: dtype not object"
 
       let !moduScope = contextScope $ edh'context ets
 

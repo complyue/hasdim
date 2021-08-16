@@ -4,7 +4,6 @@ module Dim.Column where
 
 import Control.Concurrent.STM
 import Data.Dynamic
-import qualified Data.Text as T
 import Data.Typeable hiding (TypeRep, typeRep)
 import Dim.DataType
 import Dim.XCHG
@@ -16,7 +15,14 @@ import Prelude
 data InstanceDisposition = StayComposed | ExtractAlone
 
 class
-  (EdhXchg a, FlatArray f a, Typeable a, Typeable (c a), Typeable (f a)) =>
+  ( EdhXchg a,
+    FlatArray f a,
+    Typeable a,
+    Typeable (c a),
+    Typeable (f a),
+    Typeable f,
+    Typeable a
+  ) =>
   ManagedColumn c f a
     | c -> f
   where
@@ -79,9 +85,22 @@ data SomeColumn
     ( ManagedColumn c f a,
       Typeable (c a),
       Typeable (f a),
+      Typeable f,
       Typeable a
     ) =>
     SomeColumn (TypeRep f) (c a)
+
+someColumn ::
+  forall c f a.
+  ( ManagedColumn c f a,
+    Typeable (c a),
+    Typeable (f a),
+    Typeable f,
+    Typeable a
+  ) =>
+  c a ->
+  SomeColumn
+someColumn = SomeColumn (typeRep @f)
 
 withColumnOf ::
   forall a r.

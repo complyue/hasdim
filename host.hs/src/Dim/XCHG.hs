@@ -28,7 +28,7 @@ class Typeable t => EdhXchg t where
 
   fromEdh :: EdhValue -> EdhTxExit t -> EdhTx
   fromEdh v = fromEdh' v $
-    edhValueDescTx v $ \ !badDesc ->
+    edhSimpleDescTx v $ \ !badDesc ->
       throwEdhTx UsageError $
         "can not convert to host type `"
           <> T.pack (show $ typeRep @t)
@@ -116,13 +116,13 @@ coerceEdhToFloat !v naExit !exit !ets = case edhUltimate v of
             (ArgsPack [] odEmpty)
             id
             exitWithMagicResult
-      (_, !badMagic) -> edhValueDesc ets badMagic $ \ !badDesc ->
+      (_, !badMagic) -> edhSimpleDesc ets badMagic $ \ !badDesc ->
         throwEdh ets UsageError $ "malformed __float__ magic: " <> badDesc
   _ -> runEdhTx ets naExit
   where
     exitWithMagicResult :: EdhTxExit EdhValue
     exitWithMagicResult (EdhDecimal !d) _ets = exitWith d
-    exitWithMagicResult !badVal _ets = edhValueDesc ets badVal $ \ !badDesc ->
+    exitWithMagicResult !badVal _ets = edhSimpleDesc ets badVal $ \ !badDesc ->
       throwEdh ets UsageError $
         "bad value returned from __float__(): " <> badDesc
     exitWith :: Decimal -> STM ()
@@ -155,13 +155,13 @@ coerceEdhToIntegral !v naExit !exit !ets = case edhUltimate v of
             (ArgsPack [] odEmpty)
             id
             exitWithMagicResult
-      (_, !badMagic) -> edhValueDesc ets badMagic $ \ !badDesc ->
+      (_, !badMagic) -> edhSimpleDesc ets badMagic $ \ !badDesc ->
         throwEdh ets UsageError $ "malformed __int__ magic: " <> badDesc
   _ -> runEdhTx ets naExit
   where
     exitWithMagicResult :: EdhTxExit EdhValue
     exitWithMagicResult (EdhDecimal !d) _ets = exitWith d
-    exitWithMagicResult !badVal _ets = edhValueDesc ets badVal $ \ !badDesc ->
+    exitWithMagicResult !badVal _ets = edhSimpleDesc ets badVal $ \ !badDesc ->
       throwEdh ets UsageError $ "bad value returned from __int__(): " <> badDesc
     exitWith :: Decimal -> STM ()
     exitWith !d = case D.decimalToInteger d of

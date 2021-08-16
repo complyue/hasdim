@@ -121,7 +121,7 @@ piProc !defaultDt !colClass !cap (defaultArg defaultDt -> !dto) !exit !ets =
 floatOpProc :: (FloatOp -> Dynamic) -> "colObj" !: Object -> EdhHostProc
 floatOpProc !fop (mandatoryArg -> !colObj) !exit !ets =
   castObjectStore colObj >>= \case
-    Nothing -> edhValueDesc ets (EdhObject colObj) $ \ !badDesc ->
+    Nothing -> edhSimpleDesc ets (EdhObject colObj) $ \ !badDesc ->
       throwEdh ets UsageError $ "not a column object: " <> badDesc
     Just (!thisCol, Column !col) -> do
       let !dt = data'type'of'column col

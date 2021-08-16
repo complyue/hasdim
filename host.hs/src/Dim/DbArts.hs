@@ -143,7 +143,7 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
               unsafeIOToSTM (writeDbArrayLength hdrPtr $ fromInteger newLen1d)
               exitEdh ets exit $ EdhDecimal $ fromInteger newLen1d
             Left !err -> throwSTM err
-    aryLen1dSetter (Just !badLen1dVal) _ !ets = edhValueDesc ets badLen1dVal $
+    aryLen1dSetter (Just !badLen1dVal) _ !ets = edhSimpleDesc ets badLen1dVal $
       \ !badDesc -> throwEdh ets UsageError $ "bad len1d value: " <> badDesc
 
     aryReprProc :: EdhHostProc

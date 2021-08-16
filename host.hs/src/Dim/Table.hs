@@ -199,7 +199,7 @@ createTableClass !colClass !clsOuterScope =
             EdhArgsPack (ArgsPack !args !kwargs)
               | odNull kwargs ->
                 exit $ boxCol args
-            !badColSpec -> edhValueDesc etsCtor badColSpec $ \ !badDesc ->
+            !badColSpec -> edhSimpleDesc etsCtor badColSpec $ \ !badDesc ->
               throwEdh etsCtor UsageError $
                 "invalid column specification for "
                   <> attrKeyStr key
