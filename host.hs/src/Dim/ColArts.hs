@@ -181,7 +181,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
 
       boxInpProc :: Bool -> AttrName -> EdhValue -> EdhHostProc
       boxInpProc !flipOperands !op !other !exit !ets =
-        withColumnSelfOf @EdhValue ets exit $ \_objCol !col -> do
+        withColumnSelfOf @EdhValue ets $ \_objCol !col -> do
           let vecOp = runEdhTx ets $
                 view'column'data col $ \(cs, cl) -> edhContIO $ do
                   let go i
@@ -232,7 +232,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
 
       boxApOpProc :: Bool -> AttrName -> EdhValue -> EdhHostProc
       boxApOpProc !flipOperands !op !other !exit !ets =
-        withColumnSelfOf @EdhValue ets exit $ \ !objCol !col -> do
+        withColumnSelfOf @EdhValue ets $ \ !objCol !col -> do
           let exitWithResult ::
                 Typeable (InMemDirCol EdhValue) =>
                 InMemDirCol EdhValue ->
@@ -240,7 +240,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
               exitWithResult !colResult =
                 edhCreateHostObj'
                   (edh'obj'class objCol)
-                  (toDyn colResult)
+                  (toDyn $ someColumn colResult)
                   [dtBox]
                   >>= exitEdh ets exit . EdhObject
 
@@ -920,11 +920,14 @@ colCmpProc ::
   EdhValue ->
   EdhHostProc
 colCmpProc !dtYesNo !cmp !other !exit !ets =
-  withColumnSelfOf @a ets exit $ \ !objCol !col -> do
+  withColumnSelfOf @a ets $ \ !objCol !col -> do
     let exitWithResult ::
           Typeable (InMemDevCol YesNo) => InMemDevCol YesNo -> STM ()
         exitWithResult !colResult =
-          edhCreateHostObj' (edh'obj'class objCol) (toDyn colResult) [dtYesNo]
+          edhCreateHostObj'
+            (edh'obj'class objCol)
+            (toDyn $ someColumn colResult)
+            [dtYesNo]
             >>= exitEdh ets exit . EdhObject
 
         vecOp = runEdhTx ets $
@@ -982,7 +985,7 @@ devColOpProc ::
   EdhValue ->
   EdhHostProc
 devColOpProc !op !other !exit !ets =
-  withColumnSelfOf @a ets exit $ \ !objCol !col -> do
+  withColumnSelfOf @a ets $ \ !objCol !col -> do
     let exitWithNewClone :: forall c'. Typeable (c' a) => c' a -> STM ()
         exitWithNewClone !colResult =
           edhCloneHostObj ets objCol objCol colResult $
@@ -1043,7 +1046,7 @@ dirColOpProc ::
   EdhValue ->
   EdhHostProc
 dirColOpProc !op !other !exit !ets =
-  withColumnSelfOf @a ets exit $ \ !objCol !col -> do
+  withColumnSelfOf @a ets $ \ !objCol !col -> do
     let exitWithNewClone :: forall c'. Typeable (c' a) => c' a -> STM ()
         exitWithNewClone !colResult =
           edhCloneHostObj ets objCol objCol colResult $
@@ -1102,7 +1105,7 @@ colInpProc ::
   EdhValue ->
   EdhHostProc
 colInpProc !op !other !exit !ets =
-  withColumnSelfOf @a ets exit $ \_objCol !col -> do
+  withColumnSelfOf @a ets $ \_objCol !col -> do
     let vecOp = runEdhTx ets $
           view'column'data col $ \(cs, cl) ->
             fromEdh' @a other naExit $ \rhv -> edhContIO $ do
@@ -1266,13 +1269,13 @@ createColumnClass !defaultDt !clsOuterScope =
               else extendsDt rest
 
     colCapProc :: EdhHostProc
-    colCapProc !exit !ets = withColumnSelf ets exit $ \_objCol !col ->
+    colCapProc !exit !ets = withColumnSelf ets $ \_objCol !col ->
       runEdhTx ets $
         view'column'data col $ \(cs, _cl) ->
           exitEdhTx exit $ EdhDecimal $ fromIntegral $ array'capacity cs
 
     colLenProc :: EdhHostProc
-    colLenProc !exit !ets = withColumnSelf ets exit $ \_objCol !col ->
+    colLenProc !exit !ets = withColumnSelf ets $ \_objCol !col ->
       runEdhTx ets $
         read'column'length col $ \ !len ->
           exitEdhTx exit $ EdhDecimal $ fromIntegral len
@@ -1283,7 +1286,7 @@ createColumnClass !defaultDt !clsOuterScope =
         then
           throwEdh ets UsageError $
             "invalid newCap: " <> T.pack (show newCap)
-        else withColumnSelf ets exit $ \_objCol !col ->
+        else withColumnSelf ets $ \_objCol !col ->
           runEdhTx ets $
             grow'column'capacity col newCap $
               const $
@@ -1292,7 +1295,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colMarkLenProc :: "newLen" !: Int -> EdhHostProc
     colMarkLenProc (mandatoryArg -> !newLen) !exit !ets =
-      withColumnSelf ets exit $ \_objCol !col ->
+      withColumnSelf ets $ \_objCol !col ->
         runEdhTx ets $
           mark'column'length col newLen $
             const $
@@ -1302,7 +1305,7 @@ createColumnClass !defaultDt !clsOuterScope =
     colBlobProc :: EdhHostProc
     colBlobProc !exit !ets = getColDtype this $ \ !dto ->
       withDeviceDataType dto naExit $ \(_ :: TypeRep a) ->
-        withStorableColumnSelfOf @a ets exit $ \_objCol !col -> runEdhTx ets $
+        withStorableColumnSelfOf @a ets $ \_objCol !col -> runEdhTx ets $
           view'column'data col $ \(DeviceArray _cap !fp, !cl) ->
             exitEdhTx exit $
               EdhBlob $
@@ -1316,7 +1319,7 @@ createColumnClass !defaultDt !clsOuterScope =
         naExit = exitEdh ets exit edhNA
 
     colJsonProc :: EdhHostProc
-    colJsonProc !exit !ets = withColumnSelf ets exit $ \_objCol !col ->
+    colJsonProc !exit !ets = withColumnSelf ets $ \_objCol !col ->
       runEdhTx ets $
         view'column'data col $ \(!cs, !cl) ->
           if cl < 1
@@ -1339,7 +1342,7 @@ createColumnClass !defaultDt !clsOuterScope =
               go (cl - 1) []
 
     colReprProc :: EdhHostProc
-    colReprProc !exit !ets = withColumnSelf ets exit $ \ !objCol !col ->
+    colReprProc !exit !ets = withColumnSelf ets $ \ !objCol !col ->
       getColDtype objCol $ \ !dto -> edhValueRepr ets (EdhObject dto) $
         \ !dtRepr -> runEdhTx ets $
           view'column'data col $ \(!cs, !cl) -> do
@@ -1354,7 +1357,7 @@ createColumnClass !defaultDt !clsOuterScope =
             exitEdhTx exit $ EdhString colRepr
 
     colShowProc :: EdhHostProc
-    colShowProc !exit !ets = withColumnSelf ets exit $ \ !objCol !col ->
+    colShowProc !exit !ets = withColumnSelf ets $ \ !objCol !col ->
       getColDtype objCol $ \ !dto -> edhValueRepr ets (EdhObject dto) $
         \ !dtRepr -> runEdhTx ets $
           view'column'data col $ \(!cs, !cl) -> do
@@ -1433,7 +1436,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colIdxReadProc :: EdhValue -> EdhHostProc
     colIdxReadProc !idxVal !exit !ets =
-      withColumnSelf ets exit $ \ !objCol !col -> do
+      withColumnSelf ets $ \ !objCol !col -> do
         let withBoolIdx ::
               forall c f. ManagedColumn c f YesNo => c YesNo -> STM ()
             withBoolIdx !idxCol = runEdhTx ets $
@@ -1477,7 +1480,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
     colIdxWriteProc !idxVal !other !exit !ets =
-      withColumnSelf ets exit $ \_objCol (col :: _c a) -> runEdhTx ets $
+      withColumnSelf ets $ \_objCol (col :: _c a) -> runEdhTx ets $
         view'column'data col $ \(!cs, !cl) -> do
           let withScalarRHS :: EdhTx
               withScalarRHS = fromEdh @a other $ \ !rhv -> do
@@ -1673,7 +1676,7 @@ createColumnClass !defaultDt !clsOuterScope =
         doneAssign = exitEdhTx exit other
 
     colCopyProc :: EdhHostProc
-    colCopyProc !exit !ets = withColumnSelf ets exit $ \ !objCol !col ->
+    colCopyProc !exit !ets = withColumnSelf ets $ \ !objCol !col ->
       runEdhTx ets $
         read'column'length col $ \ !cl ->
           copy'column'slice col 0 cl 1 $ \(disp, col') _ets -> case disp of
@@ -1681,7 +1684,10 @@ createColumnClass !defaultDt !clsOuterScope =
               edhCloneHostObj ets objCol objCol (someColumn col') $
                 \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
             ExtractAlone -> getColDtype objCol $ \ !dto ->
-              edhCreateHostObj' (edh'obj'class objCol) (toDyn $ someColumn col') [dto]
+              edhCreateHostObj'
+                (edh'obj'class objCol)
+                (toDyn $ someColumn col')
+                [dto]
                 >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
     colDtypeProc :: EdhHostProc

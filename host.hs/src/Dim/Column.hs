@@ -4,6 +4,7 @@ module Dim.Column where
 
 import Control.Concurrent.STM
 import Data.Dynamic
+import qualified Data.Text as T
 import Data.Typeable hiding (TypeRep, typeRep)
 import Dim.DataType
 import Dim.XCHG
@@ -132,15 +133,16 @@ withColumnSelfOf ::
   forall a.
   Typeable a =>
   EdhThreadState ->
-  EdhTxExit EdhValue ->
   (forall c f. ManagedColumn c f a => Object -> c a -> STM ()) ->
   STM ()
-withColumnSelfOf !ets !exit !colExit = do
+withColumnSelfOf !ets !colExit = do
   supers <- readTVar $ edh'obj'supers that
   withComposition $ that : supers
   where
     that = edh'scope'that $ contextScope $ edh'context ets
-    naExit = exitEdh ets exit edhNA
+    naExit =
+      throwEdh ets UsageError $
+        "not an expected self column of type " <> T.pack (show $ typeRep @a)
 
     withComposition :: [Object] -> STM ()
     withComposition [] = naExit
@@ -149,15 +151,14 @@ withColumnSelfOf !ets !exit !colExit = do
 
 withColumnSelf ::
   EdhThreadState ->
-  EdhTxExit EdhValue ->
   (forall c f a. ManagedColumn c f a => Object -> c a -> STM ()) ->
   STM ()
-withColumnSelf !ets !exit !colExit = do
+withColumnSelf !ets !colExit = do
   supers <- readTVar $ edh'obj'supers that
   withComposition $ that : supers
   where
     that = edh'scope'that $ contextScope $ edh'context ets
-    naExit = exitEdh ets exit edhNA
+    naExit = throwEdh ets UsageError "not an expected self column"
 
     withComposition :: [Object] -> STM ()
     withComposition [] = naExit
@@ -169,15 +170,16 @@ withStorableColumnSelfOf ::
   forall a.
   Typeable a =>
   EdhThreadState ->
-  EdhTxExit EdhValue ->
   (forall c. ManagedColumn c DeviceArray a => Object -> c a -> STM ()) ->
   STM ()
-withStorableColumnSelfOf !ets !exit !colExit = do
+withStorableColumnSelfOf !ets !colExit = do
   supers <- readTVar $ edh'obj'supers that
   withComposition $ that : supers
   where
     that = edh'scope'that $ contextScope $ edh'context ets
-    naExit = exitEdh ets exit edhNA
+    naExit =
+      throwEdh ets UsageError $
+        "not an expected self column of type " <> T.pack (show $ typeRep @a)
 
     withComposition :: [Object] -> STM ()
     withComposition [] = naExit
