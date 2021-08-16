@@ -17,6 +17,7 @@ import Dim.XCHG
 import Foreign as F
 import Foreign.ForeignPtr.Unsafe
 import Language.Edh.EHI
+import System.Random
 import Type.Reflection
 import Prelude
 
@@ -41,20 +42,11 @@ data DeviceDataType = DeviceDataType
         r
       ) ->
       r,
-    device'data'type'as'of'int ::
+    device'data'type'as'of'random ::
       forall r.
       r ->
       ( forall a.
-        (Integral a, Storable a, EdhXchg a, Typeable a) =>
-        TypeRep a ->
-        r
-      ) ->
-      r,
-    device'data'type'as'of'float ::
-      forall r.
-      r ->
-      ( forall a.
-        (RealFloat a, Storable a, EdhXchg a, Typeable a) =>
+        (Random a, Eq a, Ord a, Storable a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -62,7 +54,7 @@ data DeviceDataType = DeviceDataType
   }
 
 instance Eq DeviceDataType where
-  (DeviceDataType x'dti x'trh _ _ _) == (DeviceDataType y'dti y'trh _ _ _) =
+  (DeviceDataType x'dti x'trh _ _) == (DeviceDataType y'dti y'trh _ _) =
     x'trh $ \x'tr -> y'trh $ \y'tr ->
       case x'tr `eqTypeRep` y'tr of
         Just HRefl | x'dti == y'dti -> True
@@ -72,7 +64,7 @@ instance Eq DeviceDataType where
 
 mkFloatDataType ::
   forall a.
-  (RealFloat a, Num a, Storable a, EdhXchg a, Typeable a) =>
+  (RealFloat a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
   DataTypeIdent ->
   DeviceDataType
 mkFloatDataType !dti =
@@ -80,12 +72,11 @@ mkFloatDataType !dti =
     dti
     ($ typeRep @a)
     (\_naExit exit -> exit (typeRep @a))
-    (\naExit _exit -> naExit)
     (\_naExit exit -> exit (typeRep @a))
 
 mkIntDataType ::
   forall a.
-  (Integral a, Num a, Storable a, EdhXchg a, Typeable a) =>
+  (Integral a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
   DataTypeIdent ->
   DeviceDataType
 mkIntDataType !dti =
@@ -94,7 +85,6 @@ mkIntDataType !dti =
     ($ typeRep @a)
     (\_naExit exit -> exit (typeRep @a))
     (\_naExit exit -> exit (typeRep @a))
-    (\naExit _exit -> naExit)
 
 -- | Lifted Haskell types as operated directly by the host language
 data DirectDataType = DirectDataType
@@ -112,11 +102,11 @@ data DirectDataType = DirectDataType
         r
       ) ->
       r,
-    direct'data'type'as'of'frac ::
+    direct'data'type'as'of'random ::
       forall r.
       r ->
       ( forall a.
-        (RealFrac a, Eq a, EdhXchg a, Typeable a) =>
+        (Random a, Eq a, Ord a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -145,7 +135,7 @@ mkBoxDataType !dti !defv =
 
 mkRealFracDataType ::
   forall a.
-  (RealFrac a, Eq a, EdhXchg a, Typeable a) =>
+  (RealFrac a, Random a, Eq a, EdhXchg a, Typeable a) =>
   DataTypeIdent ->
   a ->
   DirectDataType

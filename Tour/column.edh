@@ -6,6 +6,9 @@ c = arange(3)
 c' = c.copy()
 
 # %%
+r = random( 3, 3..5 )
+
+# %%
 show$ default'filled = empty(5)
 # %%
 show$ zero'filled = zeros(5)

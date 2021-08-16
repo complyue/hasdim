@@ -46,7 +46,7 @@ instance EdhXchg D.Decimal where
     _ -> naExit
 
 newtype YesNo = YesNo Int8
-  deriving (Eq, Ord, Storable, Num, Enum, Real, Integral, Bits)
+  deriving (Eq, Ord, Storable, Random, Num, Enum, Real, Integral, Bits)
 
 yesOrNo :: Bool -> YesNo
 yesOrNo b = YesNo $ if b then 1 else 0

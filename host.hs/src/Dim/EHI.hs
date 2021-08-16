@@ -140,12 +140,12 @@ installDimBatteries !world = do
                 [ ( EdhMethod,
                     "arange",
                     wrapHostProc $ arangeProc defaultRangeDataType columnClass
-                  )
-                  {-
+                  ),
                   ( EdhMethod,
                     "random",
                     wrapHostProc $ randomProc defaultDataType columnClass
-                  ),
+                  )
+                  {-
                   (EdhMethod, "where", wrapHostProc whereProc),
                   ( EdhMethod,
                     "pi",

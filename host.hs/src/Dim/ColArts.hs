@@ -20,6 +20,7 @@ import Foreign.ForeignPtr.Unsafe
 import GHC.Conc (unsafeIOToSTM)
 import GHC.Float
 import Language.Edh.EHI
+import System.Random
 import Type.Reflection
 import Prelude
 
@@ -336,7 +337,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
 
 mkRealFracSuperDt ::
   forall a.
-  (RealFrac a, Eq a, EdhXchg a, Typeable a) =>
+  (RealFrac a, Random a, Eq a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Scope ->
@@ -522,7 +523,7 @@ mkRealFracSuperDt !dtYesNo !dti !outerScope = do
 
 mkFloatSuperDt ::
   forall a.
-  (RealFloat a, Num a, Storable a, EdhXchg a, Typeable a) =>
+  (RealFloat a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Scope ->
@@ -703,7 +704,7 @@ mkFloatSuperDt !dtYesNo !dti !outerScope = do
 
 mkIntSuperDt ::
   forall a.
-  (Bits a, Integral a, Num a, Storable a, EdhXchg a, Typeable a) =>
+  (Bits a, Integral a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Scope ->
@@ -1205,7 +1206,7 @@ createColumnClass !defaultDt !clsOuterScope =
         | otherwise = withDataType dto badDtype devDataCol dirDataCol
         where
           devDataCol :: DeviceDataType -> STM ()
-          devDataCol (DeviceDataType _dti dth _ _ _) =
+          devDataCol (DeviceDataType _dti dth _ _) =
             dth $ \(_ :: TypeRep a) -> runEdhTx etsCtor $
               edhContIO $ do
                 (_fp, !cs) <- newDeviceArray @a ctorCap
@@ -1782,8 +1783,6 @@ arangeProc
 
             withDataType dto badDtype createDevCol createDirCol
 
-{-
-
 randomProc ::
   Object ->
   Object ->
@@ -1798,7 +1797,104 @@ randomProc
   (defaultArg (EdhDecimal 1) -> !rngSpec)
   (defaultArg defaultDt -> !dto)
   !exit
-  !ets =
+  !ets = case edhUltimate rngSpec of
+    EdhRange !lower !upper ->
+      createRandomCol (edhBoundValue lower) (edhBoundValue upper)
+    _ -> parseEdhIndex ets (edhUltimate rngSpec) $ \case
+      Right (EdhIndex !stop) ->
+        createRandomCol (EdhDecimal 0) (EdhDecimal $ fromIntegral stop)
+      Right (EdhSlice !start (Just !stopN) Nothing) ->
+        createRandomCol
+          (EdhDecimal $ fromIntegral $ fromMaybe 0 start)
+          (EdhDecimal $ fromIntegral stopN)
+      Left !err -> edhValueDesc ets rngSpec $ \ !rngDesc ->
+        throwEdh ets UsageError $
+          "invalid random range " <> rngDesc <> " - " <> err
+      _ -> edhValueDesc ets rngSpec $ \ !rngDesc ->
+        throwEdh ets UsageError $
+          "invalid random range " <> rngDesc
+    where
+      badDtype = edhSimpleDesc ets (EdhObject dto) $ \ !badDesc ->
+        throwEdh ets UsageError $ "invalid dtype: " <> badDesc
+
+      notRndDt dti = throwEdh ets UsageError $ "not a numeric dtype: " <> dti
+
+      createRandomCol :: EdhValue -> EdhValue -> STM ()
+      createRandomCol !lowerValue !upperValue = do
+        let createDevCol :: DeviceDataType -> STM ()
+            createDevCol !dt = device'data'type'as'of'random
+              dt
+              (notRndDt $ device'data'type'ident dt)
+              $ \(_ :: TypeRep a) -> runEdhTx ets $
+                fromEdh lowerValue $ \ !lower ->
+                  fromEdh upperValue $ \ !upper ->
+                    if lower == upper
+                      then throwEdhTx UsageError "random range is zero-width"
+                      else edhContIO $ do
+                        let (!lower', !upper') =
+                              if lower < upper
+                                then (lower, upper)
+                                else (upper, lower)
+                        !p <- callocArray @a size
+                        !fp <- newForeignPtr finalizerFree p
+                        let fillRng :: Int -> IO ()
+                            fillRng !i =
+                              if i >= size
+                                then return ()
+                                else do
+                                  pokeElemOff p i =<< randomRIO (lower', upper')
+                                  fillRng (i + 1)
+                        fillRng 0
+                        atomically $ do
+                          let !cs = DeviceArray size fp
+                          !csv <- newTMVar cs
+                          !clv <- newTVar size
+                          let !col = InMemDevCol csv clv
+                          edhCreateHostObj'
+                            colClass
+                            (toDyn $ someColumn col)
+                            [dto]
+                            >>= exitEdh ets exit . EdhObject
+
+            createDirCol :: DirectDataType -> STM ()
+            createDirCol !dt = direct'data'type'as'of'random
+              dt
+              (notRndDt $ direct'data'type'ident dt)
+              $ \(_ :: TypeRep a) -> runEdhTx ets $
+                fromEdh lowerValue $ \ !lower ->
+                  fromEdh upperValue $ \ !upper ->
+                    if lower == upper
+                      then throwEdhTx UsageError "random range is zero-width"
+                      else edhContIO $ do
+                        let (!lower', !upper') =
+                              if lower < upper
+                                then (lower, upper)
+                                else (upper, lower)
+                        (iov :: MV.IOVector a) <- MV.new size
+                        let fillRng :: Int -> IO ()
+                            fillRng !i =
+                              if i >= size
+                                then return ()
+                                else do
+                                  MV.unsafeWrite iov i
+                                    =<< randomRIO (lower', upper')
+                                  fillRng (i + 1)
+                        fillRng 0
+                        atomically $ do
+                          let !cs = DirectArray iov
+                          !csv <- newTMVar cs
+                          !clv <- newTVar size
+                          let !col = InMemDirCol csv clv
+                          edhCreateHostObj'
+                            colClass
+                            (toDyn $ someColumn col)
+                            [dto]
+                            >>= exitEdh ets exit . EdhObject
+
+        withDataType dto badDtype createDevCol createDirCol
+
+{-
+
     castObjectStore dto >>= \case
       Nothing -> throwEdh ets UsageError "invalid dtype"
       Just (_, !dt) -> case edhUltimate rngSpec of
