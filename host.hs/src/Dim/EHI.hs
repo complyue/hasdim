@@ -85,12 +85,12 @@ installDimBatteries !world = do
 
       !moduArts0 <-
         sequence $
-          [ (AttrByName nm,) <$> mkHostProc moduScope mc nm hp
-            | (mc, nm, hp) <-
-                [ (EdhMethod, "fold", wrapHostProc foldOpProc),
-                  (EdhMethod, "foldl", wrapHostProc foldlOpProc),
-                  (EdhMethod, "foldr", wrapHostProc foldrOpProc)
-                  -- (EdhMethod, "scan", wrapHostProc scanOpProc)
+          [ (AttrByName nm,) <$> def nm moduScope
+            | (nm, def) <-
+                [ ("fold", defineComputMethod foldComput),
+                  ("foldl", defineComputMethod foldlComput),
+                  ("foldr", defineComputMethod foldrComput)
+                  -- ( "scan", defineComputMethod  scanComput)
                 ]
           ]
 

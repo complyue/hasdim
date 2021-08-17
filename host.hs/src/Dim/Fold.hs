@@ -25,135 +25,141 @@ newtype FoldOp
         )
       )
 
-foldOpProc ::
-  "fop" !: FoldOp ->
-  "colObj" !: Object ->
-  EdhHostProc
-foldOpProc
-  (mandatoryArg -> FoldOp !fop)
-  (mandatoryArg -> !colObj)
-  !exit
-  !ets = getColDtype colObj $
-    \ !dto -> withDataType dto badColDt $ \(dt :: DataType a) -> do
-      let dtMismatch =
-            throwEdhTx UsageError "bug: Column mismatch its dtype"
-          naExit =
-            throwEdhTx UsageError $
-              "operation not applicable to dtype: " <> data'type'ident dt
-      runEdhTx ets $
-        fop dt naExit $ \ !op ->
-          withColumnOf @a colObj dtMismatch $ \_ col ->
-            view'column'data col $ \(cs, cl) ->
-              if cl < 1
-                then exitEdhTx exit nil
-                else edhContIO $ do
-                  let go :: Int -> a -> IO ()
-                      go i v
-                        | i >= cl =
-                          atomically $ runEdhTx ets $ toEdh @a v exit
-                        | otherwise = do
-                          e <- array'reader cs i
-                          go (i + 1) $ op v e
-                  go 1 =<< array'reader cs 0
+foldComput ::
+  "fop" @: HostValue FoldOp ->
+  "colObj" @: Object ->
+  ComputEdh_
+foldComput
+  (appliedArg -> HostValue (FoldOp !fop) _)
+  (appliedArg -> !colObj) = ComputEdh_ comput
     where
-      badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
-        throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
+      comput :: EdhTxExit EdhValue -> EdhTx
+      comput !exit !ets = getColDtype colObj $
+        \ !dto -> withDataType dto badColDt $ \(dt :: DataType a) -> do
+          let dtMismatch =
+                throwEdhTx UsageError "bug: Column mismatch its dtype"
+              naExit =
+                throwEdhTx UsageError $
+                  "operation not applicable to dtype: " <> data'type'ident dt
+          runEdhTx ets $
+            fop dt naExit $ \ !op ->
+              withColumnOf @a colObj dtMismatch $ \_ col ->
+                view'column'data col $ \(cs, cl) ->
+                  if cl < 1
+                    then exitEdhTx exit nil
+                    else edhContIO $ do
+                      let go :: Int -> a -> IO ()
+                          go i v
+                            | i >= cl =
+                              atomically $ runEdhTx ets $ toEdh @a v exit
+                            | otherwise = do
+                              e <- array'reader cs i
+                              go (i + 1) $ op v e
+                      go 1 =<< array'reader cs 0
+        where
+          badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
+            throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
 
 data FoldlOp b
   = (EdhXchg b, Typeable b) =>
     FoldlOp (forall r a. DataType a -> r -> ((b -> a -> b) -> r) -> r)
 
-foldlOpProc ::
-  "fop" !: Object ->
-  "start" !: EdhValue ->
-  "col" !: Object ->
-  EdhHostProc
-foldlOpProc
-  (mandatoryArg -> !fopObj)
-  (mandatoryArg -> !startVal)
-  (mandatoryArg -> !colObj)
-  !exit
-  !ets = case dynamicHostData fopObj of
-    Nothing -> badOp
-    Just (Dynamic trFOP monotypedFOP) -> case trFOP of
-      App trCtor (_ :: TypeRep b) ->
-        case trCtor `eqTypeRep` (typeRep @FoldlOp) of
-          Nothing -> badOp
-          Just HRefl -> case monotypedFOP of
-            FoldlOp fop -> getColDtype colObj $ \ !dto ->
-              withDataType dto badColDt $ \(dt :: DataType a) -> do
-                let naExit =
-                      throwEdhTx UsageError $
-                        "fold operation not applicable to dtype: "
-                          <> data'type'ident dt
-                runEdhTx ets $
-                  fop dt naExit $ \ !op ->
-                    withColumnOf @a colObj dtMismatch $ \_ col ->
-                      view'column'data col $ \(cs, cl) ->
-                        fromEdh startVal $ \ !start -> edhContIO $ do
-                          let go i v
-                                | i >= cl =
-                                  atomically $ runEdhTx ets $ toEdh @b v exit
-                                | otherwise = do
-                                  e <- array'reader cs i
-                                  go (i + 1) $ op v e
-                          go 0 start
-      _ -> badOp
+foldlComput ::
+  "fop" @: Object ->
+  "start" @: EdhValue ->
+  "colObj" @: Object ->
+  ComputEdh_
+foldlComput
+  (appliedArg -> !fopObj)
+  (appliedArg -> !startVal)
+  (appliedArg -> !colObj) = ComputEdh_ comput
     where
-      badOp = edhSimpleDesc ets (EdhObject fopObj) $ \ !badDesc ->
-        throwEdh ets UsageError $ "bad foldl operation: " <> badDesc
-      badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
-        throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
-      dtMismatch =
-        throwEdhTx UsageError "bug: Column mismatch its dtype"
+      comput :: EdhTxExit EdhValue -> EdhTx
+      comput !exit !ets = case dynamicHostData fopObj of
+        Nothing -> badOp
+        Just (Dynamic trFOP monotypedFOP) -> case trFOP of
+          App trCtor (_ :: TypeRep b) ->
+            case trCtor `eqTypeRep` (typeRep @FoldlOp) of
+              Nothing -> badOp
+              Just HRefl -> case monotypedFOP of
+                FoldlOp fop -> getColDtype colObj $ \ !dto ->
+                  withDataType dto badColDt $ \(dt :: DataType a) -> do
+                    let naExit =
+                          throwEdhTx UsageError $
+                            "fold operation not applicable to dtype: "
+                              <> data'type'ident dt
+                    runEdhTx ets $
+                      fop dt naExit $ \ !op ->
+                        withColumnOf @a colObj dtMismatch $ \_ col ->
+                          view'column'data col $ \(cs, cl) ->
+                            fromEdh startVal $ \ !start -> edhContIO $ do
+                              let go i v
+                                    | i >= cl =
+                                      atomically $
+                                        runEdhTx ets $ toEdh @b v exit
+                                    | otherwise = do
+                                      e <- array'reader cs i
+                                      go (i + 1) $ op v e
+                              go 0 start
+          _ -> badOp
+        where
+          badOp = edhSimpleDesc ets (EdhObject fopObj) $ \ !badDesc ->
+            throwEdh ets UsageError $ "bad foldl operation: " <> badDesc
+          badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
+            throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
+          dtMismatch =
+            throwEdhTx UsageError "bug: Column mismatch its dtype"
 
 data FoldrOp b
   = (EdhXchg b, Typeable b) =>
     FoldrOp (forall r a. DataType a -> r -> ((a -> b -> b) -> r) -> r)
 
-foldrOpProc ::
-  "fop" !: Object ->
-  "start" !: EdhValue ->
-  "col" !: Object ->
-  EdhHostProc
-foldrOpProc
-  (mandatoryArg -> !fopObj)
-  (mandatoryArg -> !startVal)
-  (mandatoryArg -> !colObj)
-  !exit
-  !ets = case dynamicHostData fopObj of
-    Nothing -> badOp
-    Just (Dynamic trFOP monotypedFOP) -> case trFOP of
-      App trCtor (_ :: TypeRep b) ->
-        case trCtor `eqTypeRep` (typeRep @FoldrOp) of
-          Nothing -> badOp
-          Just HRefl -> case monotypedFOP of
-            FoldrOp fop -> getColDtype colObj $
-              \ !dto -> withDataType dto badColDt $ \(dt :: DataType a) -> do
-                let naExit =
-                      throwEdhTx UsageError $
-                        "fold operation not applicable to dtype: "
-                          <> data'type'ident dt
-                runEdhTx ets $
-                  fop dt naExit $ \ !op ->
-                    withColumnOf @a colObj dtMismatch $ \_ col ->
-                      view'column'data col $ \(cs, cl) ->
-                        fromEdh startVal $ \ !start -> edhContIO $ do
-                          let go i v
-                                | i < 0 =
-                                  atomically $ runEdhTx ets $ toEdh @b v exit
-                                | otherwise = do
-                                  e <- array'reader cs i
-                                  go (i - 1) $ op e v
-                          go (cl - 1) start
-      _ -> badOp
+foldrComput ::
+  "fop" @: Object ->
+  "start" @: EdhValue ->
+  "colObj" @: Object ->
+  ComputEdh_
+foldrComput
+  (appliedArg -> !fopObj)
+  (appliedArg -> !startVal)
+  (appliedArg -> !colObj) = ComputEdh_ comput
     where
-      badOp = edhSimpleDesc ets (EdhObject fopObj) $ \ !badDesc ->
-        throwEdh ets UsageError $ "bad foldl operation: " <> badDesc
-      badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
-        throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
-      dtMismatch =
-        throwEdhTx UsageError "bug: Column mismatch its dtype"
+      comput :: EdhTxExit EdhValue -> EdhTx
+      comput !exit !ets = case dynamicHostData fopObj of
+        Nothing -> badOp
+        Just (Dynamic trFOP monotypedFOP) -> case trFOP of
+          App trCtor (_ :: TypeRep b) ->
+            case trCtor `eqTypeRep` (typeRep @FoldrOp) of
+              Nothing -> badOp
+              Just HRefl -> case monotypedFOP of
+                FoldrOp fop -> getColDtype colObj $
+                  \ !dto ->
+                    withDataType dto badColDt $ \(dt :: DataType a) -> do
+                      let naExit =
+                            throwEdhTx UsageError $
+                              "fold operation not applicable to dtype: "
+                                <> data'type'ident dt
+                      runEdhTx ets $
+                        fop dt naExit $ \ !op ->
+                          withColumnOf @a colObj dtMismatch $ \_ col ->
+                            view'column'data col $ \(cs, cl) ->
+                              fromEdh startVal $ \ !start -> edhContIO $ do
+                                let go i v
+                                      | i < 0 =
+                                        atomically $
+                                          runEdhTx ets $ toEdh @b v exit
+                                      | otherwise = do
+                                        e <- array'reader cs i
+                                        go (i - 1) $ op e v
+                                go (cl - 1) start
+          _ -> badOp
+        where
+          badOp = edhSimpleDesc ets (EdhObject fopObj) $ \ !badDesc ->
+            throwEdh ets UsageError $ "bad foldr operation: " <> badDesc
+          badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
+            throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
+          dtMismatch =
+            throwEdhTx UsageError "bug: Column mismatch its dtype"
 
 {-
 
