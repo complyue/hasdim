@@ -292,147 +292,126 @@ mkRealFracSuperDt !dtYesNo !dti !outerScope = do
             | (nm, vc, hp) <-
                 [ ( "(==)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((==) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (==)
                   ),
                   ( "(==.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((==) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (==)
                   ),
                   ( "(!=)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((/=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (/=)
                   ),
                   ( "(!=.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((/=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (/=)
                   ),
                   ( "(>=)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>=)
                   ),
                   ( "(>=.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<=)
                   ),
                   ( "(<=)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<=)
                   ),
                   ( "(<=.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>=)
                   ),
                   ( "(>)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>)
                   ),
                   ( "(>.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<)
                   ),
                   ( "(<)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<)
                   ),
                   ( "(<.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>)
                   ),
                   ( "(+)",
                     EdhMethod,
-                    wrapHostProc $ dirColOpProc ((+) :: a -> a -> a)
+                    wrapHostProc $ dirColOpProc @a (+)
                   ),
                   ( "(+.)",
                     EdhMethod,
-                    wrapHostProc $ dirColOpProc ((+) :: a -> a -> a)
+                    wrapHostProc $ dirColOpProc @a (+)
                   ),
                   ( "(+=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((+) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (+)
                   ),
                   ( "(-)",
                     EdhMethod,
-                    wrapHostProc $ dirColOpProc ((-) :: a -> a -> a)
+                    wrapHostProc $ dirColOpProc @a (-)
                   ),
                   ( "(-.)",
                     EdhMethod,
-                    wrapHostProc $ dirColOpProc (flip (-) :: a -> a -> a)
+                    wrapHostProc $ dirColOpProc @a (flip (-))
                   ),
                   ( "(-=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((-) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (-)
                   ),
                   ( "(*)",
                     EdhMethod,
-                    wrapHostProc $ dirColOpProc ((*) :: a -> a -> a)
+                    wrapHostProc $ dirColOpProc @a (*)
                   ),
                   ( "(*.)",
                     EdhMethod,
-                    wrapHostProc $ dirColOpProc ((*) :: a -> a -> a)
+                    wrapHostProc $ dirColOpProc @a (*)
                   ),
                   ( "(*=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((*) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (*)
                   ),
                   ( "(/)",
                     EdhMethod,
-                    wrapHostProc $ dirColOpProc ((/) :: a -> a -> a)
+                    wrapHostProc $ dirColOpProc @a (/)
                   ),
                   ( "(/.)",
                     EdhMethod,
-                    wrapHostProc $ dirColOpProc (flip (/) :: a -> a -> a)
+                    wrapHostProc $ dirColOpProc @a (flip (/))
                   ),
                   ( "(/=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((/) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (/)
                   ),
                   ( "(//)",
                     EdhMethod,
                     wrapHostProc $
-                      dirColOpProc
-                        ( (\ !x !y -> fromInteger $ floor $ x / y) ::
-                            a -> a -> a
-                        )
+                      dirColOpProc @a (\ !x !y -> fromInteger $ floor $ x / y)
                   ),
                   ( "(//.)",
                     EdhMethod,
                     wrapHostProc $
-                      dirColOpProc
-                        ( (\ !x !y -> fromInteger $ floor $ y / x) ::
-                            a -> a -> a
-                        )
+                      dirColOpProc @a (\ !x !y -> fromInteger $ floor $ y / x)
                   ),
                   ( "(//=)",
                     EdhMethod,
                     wrapHostProc $
-                      colInpProc
-                        ( (\ !x !y -> fromInteger $ floor $ x / y) ::
-                            a -> a -> a
-                        )
+                      colInpProc @a (\ !x !y -> fromInteger $ floor $ x / y)
                   ),
                   ( "(**)",
                     EdhMethod,
-                    wrapHostProc $ dirColOpProc fracPow
+                    wrapHostProc $ dirColOpProc @a fracPow
                   ),
                   ( "(**.)",
                     EdhMethod,
-                    wrapHostProc $ dirColOpProc $ flip fracPow
+                    wrapHostProc $ dirColOpProc @a $ flip fracPow
                   ),
                   ( "(**=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc fracPow
+                    wrapHostProc $ colInpProc @a fracPow
                   ),
                   ("__eq__", EdhMethod, wrapHostProc dtypeEqProc)
                 ]
@@ -478,149 +457,128 @@ mkFloatSuperDt !dtYesNo !dti !outerScope = do
             | (nm, vc, hp) <-
                 [ ( "(==)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((==) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (==)
                   ),
                   ( "(==.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((==) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (==)
                   ),
                   ( "(!=)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((/=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (/=)
                   ),
                   ( "(!=.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((/=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (/=)
                   ),
                   ( "(>=)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>=)
                   ),
                   ( "(>=.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<=)
                   ),
                   ( "(<=)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<=)
                   ),
                   ( "(<=.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>=)
                   ),
                   ( "(>)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>)
                   ),
                   ( "(>.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<)
                   ),
                   ( "(<)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<)
                   ),
                   ( "(<.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>)
                   ),
                   ( "(+)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((+) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (+)
                   ),
                   ( "(+.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((+) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (+)
                   ),
                   ( "(+=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((+) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (+)
                   ),
                   ( "(-)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((-) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (-)
                   ),
                   ( "(-.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc (flip (-) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (flip (-))
                   ),
                   ( "(-=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((-) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (-)
                   ),
                   ( "(*)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((*) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (*)
                   ),
                   ( "(*.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((*) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (*)
                   ),
                   ( "(*=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((*) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (*)
                   ),
                   ( "(/)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((/) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (/)
                   ),
                   ( "(/.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc (flip (/) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (flip (/))
                   ),
                   ( "(/=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((/) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (/)
                   ),
                   -- TODO reason about this:
                   -- https://stackoverflow.com/questions/38588815/rounding-errors-in-python-floor-division
                   ( "(//)",
                     EdhMethod,
                     wrapHostProc $
-                      dirColOpProc
-                        ( (\ !x !y -> fromInteger $ floor $ x / y) ::
-                            a -> a -> a
-                        )
+                      dirColOpProc @a (\ !x !y -> fromInteger $ floor $ x / y)
                   ),
                   ( "(//.)",
                     EdhMethod,
                     wrapHostProc $
-                      dirColOpProc
-                        ( (\ !x !y -> fromInteger $ floor $ y / x) ::
-                            a -> a -> a
-                        )
+                      dirColOpProc @a (\ !x !y -> fromInteger $ floor $ y / x)
                   ),
                   ( "(//=)",
                     EdhMethod,
                     wrapHostProc $
-                      colInpProc
-                        ( (\ !x !y -> fromInteger $ floor $ x / y) ::
-                            a -> a -> a
-                        )
+                      colInpProc @a (\ !x !y -> fromInteger $ floor $ x / y)
                   ),
                   ( "(**)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((**) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (**)
                   ),
                   ( "(**.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc (flip (**) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (flip (**))
                   ),
                   ( "(**=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((**) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (**)
                   ),
                   ("__eq__", EdhMethod, wrapHostProc dtypeEqProc)
                 ]
@@ -659,123 +617,111 @@ mkIntSuperDt !dtYesNo !dti !outerScope = do
             | (nm, vc, hp) <-
                 [ ( "(==)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((==) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (==)
                   ),
                   ( "(==.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((==) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (==)
                   ),
                   ( "(!=)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((/=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (/=)
                   ),
                   ( "(!=.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((/=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (/=)
                   ),
                   ( "(>=)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>=)
                   ),
                   ( "(>=.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<=)
                   ),
                   ( "(<=)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<=)
                   ),
                   ( "(<=.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>=) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>=)
                   ),
                   ( "(>)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>)
                   ),
                   ( "(>.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<)
                   ),
                   ( "(<)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((<) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (<)
                   ),
                   ( "(<.)",
                     EdhMethod,
-                    wrapHostProc $
-                      colCmpProc dtYesNo ((>) :: a -> a -> Bool)
+                    wrapHostProc $ colCmpProc @a dtYesNo (>)
                   ),
                   ( "(+)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((+) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (+)
                   ),
                   ( "(+.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((+) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (+)
                   ),
                   ( "(+=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((+) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (+)
                   ),
                   ( "(-)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((-) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (-)
                   ),
                   ( "(-.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc (flip (-) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (flip (-))
                   ),
                   ( "(-=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((-) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (-)
                   ),
                   ( "(*)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((*) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (*)
                   ),
                   ( "(*.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((*) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (*)
                   ),
                   ( "(*=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((*) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (*)
                   ),
                   ( "(/)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc (div :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a div
                   ),
                   ( "(/.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc (flip div :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (flip div)
                   ),
                   ( "(/=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc (div :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a div
                   ),
                   ( "(//)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc (div :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a div
                   ),
                   ( "(//.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc (flip div :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (flip div)
                   ),
                   ( "(//=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc (div :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a div
                   ),
                   ( "(**)",
                     EdhMethod,
@@ -791,27 +737,27 @@ mkIntSuperDt !dtYesNo !dti !outerScope = do
                   ),
                   ( "(&&)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((.&.) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (.&.)
                   ),
                   ( "(&&.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((.&.) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (.&.)
                   ),
                   ( "(||)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((.|.) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (.|.)
                   ),
                   ( "(||.)",
                     EdhMethod,
-                    wrapHostProc $ devColOpProc ((.|.) :: a -> a -> a)
+                    wrapHostProc $ devColOpProc @a (.|.)
                   ),
                   ( "(&&=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((.&.) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (.&.)
                   ),
                   ( "(||=)",
                     EdhMethod,
-                    wrapHostProc $ colInpProc ((.|.) :: a -> a -> a)
+                    wrapHostProc $ colInpProc @a (.|.)
                   ),
                   ("__eq__", EdhMethod, wrapHostProc dtypeEqProc)
                 ]
