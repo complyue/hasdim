@@ -22,6 +22,13 @@ newtype FoldOp
         )
       )
 
+addOp :: FoldOp
+addOp = FoldOp $ \(gdt :: DataType a) naExit exit -> case gdt of
+  DeviceDt dt -> device'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+    exit (+)
+  DirectDt dt -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+    exit (+)
+
 addValidOp :: FoldOp
 addValidOp = FoldOp $ \(gdt :: DataType a) naExit exit -> case gdt of
   DeviceDt dt -> do
@@ -43,18 +50,35 @@ addValidOp = FoldOp $ \(gdt :: DataType a) naExit exit -> case gdt of
     Nothing -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
       exit (+)
 
-{-
-newtype SelfFold
-  = SelfFold
-      ( forall r.
-        ((forall a. (Foldee a, Typeable a) => a -> a -> a) -> r) ->
-        r
-      )
+mulOp :: FoldOp
+mulOp = FoldOp $ \(gdt :: DataType a) naExit exit -> case gdt of
+  DeviceDt dt -> device'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+    exit (*)
+  DirectDt dt -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+    exit (*)
 
-selfFold ::
-  (forall a. (Foldee a, Typeable a) => a -> a -> a) -> SelfFold
-selfFold !fop = SelfFold $
-  \(exit :: forall r. ((forall a. a -> a -> a) -> r)) -> exit (fop @a)
+mulValidOp :: FoldOp
+mulValidOp = FoldOp $ \(gdt :: DataType a) naExit exit -> case gdt of
+  DeviceDt dt -> do
+    let usualNum = device'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+          exit (*)
+    device'data'type'as'of'float dt usualNum $ \(_ :: TypeRep a) ->
+      exit $ \lhs rhs ->
+        if
+            | isNaN lhs -> rhs
+            | isNaN rhs -> lhs
+            | otherwise -> lhs + rhs
+  DirectDt dt -> case eqT of
+    Just (Refl :: a :~: D.Decimal) ->
+      exit $ \lhs rhs ->
+        if
+            | D.decimalIsNaN lhs -> rhs
+            | D.decimalIsNaN rhs -> lhs
+            | otherwise -> lhs + rhs
+    Nothing -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+      exit (*)
+
+{-
 
 newtype LeftFold
   = LeftFold

@@ -21,7 +21,7 @@ import System.Random
 import Type.Reflection
 import Prelude
 
--- * DataType holding runtime representation
+-- * DataType holding runtime representation & type class instances
 
 -- | Device-native types stored in memory shared with computing devices
 -- (a computing device can be a GPU or CPU with heavy SIMD orientation)
@@ -201,7 +201,7 @@ withDeviceDataType ::
   r
 withDeviceDataType !dto !naExit !exit = case edh'obj'store dto of
   HostStore (Dynamic trGDT monoDataType) -> case trGDT of
-    App trDataType a -> case trDataType `eqTypeRep` typeRep @DataType of
+    App trDataType _a -> case trDataType `eqTypeRep` typeRep @DataType of
       Just HRefl -> case monoDataType of
         DeviceDt dt -> device'data'type'holder dt exit
         _ -> naExit
@@ -217,7 +217,7 @@ withDirectDataType ::
   r
 withDirectDataType !dto !naExit !exit = case edh'obj'store dto of
   HostStore (Dynamic trGDT monoDataType) -> case trGDT of
-    App trDataType a -> case trDataType `eqTypeRep` typeRep @DataType of
+    App trDataType _a -> case trDataType `eqTypeRep` typeRep @DataType of
       Just HRefl -> case monoDataType of
         DirectDt dt -> direct'data'defv'holder dt exit
         _ -> naExit
@@ -248,7 +248,9 @@ dtypeEqProc !other !exit !ets = case edhUltimate other of
     badSelf = throwEdh ets EvalError "bug: not a host value of DataType"
     exitNeg = exitEdh ets exit $ EdhBool False
 
--- * Flat Array
+-- * Unified Flat Array Interface
+
+-- todo SIMD optimizations?
 
 type ArrayCapacity = Int
 

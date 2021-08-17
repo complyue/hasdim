@@ -94,17 +94,14 @@ installDimBatteries !world = do
 
       !moduArts1 <-
         sequence
-          [ --
-            -- (AttrByName "add",) . EdhObject
-            --   <$> edhWrapHostValue ets (selfFold @Double (+)),
+          [ (AttrByName "add",) . EdhObject
+              <$> edhWrapHostValue ets addOp,
             (AttrByName "add'valid",) . EdhObject
-              <$> edhWrapHostValue ets addValidOp
-              {-
-              (AttrByName "multiply",) . EdhObject
-                <$> edhWrapHostValue ets mulOp,
-              (AttrByName "multiply'valid",) . EdhObject
-                <$> edhWrapHostValue ets mulValidOp
-              -}
+              <$> edhWrapHostValue ets addValidOp,
+            (AttrByName "multiply",) . EdhObject
+              <$> edhWrapHostValue ets mulOp,
+            (AttrByName "multiply'valid",) . EdhObject
+              <$> edhWrapHostValue ets mulValidOp
           ]
 
       let !moduArts = moduArts0 ++ moduArts1
