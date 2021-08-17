@@ -5,6 +5,9 @@ hd = { import * 'dim' }
 c = arange(5)
 c' = c.copy()
 
+assert$ c.dtype is c'.dtype
+
+# %%
 show$ where( c > 1 )
 
 # %%
