@@ -2,22 +2,22 @@
  # Resemble Numpy vectorized operations, with simplified `ufunc`s
  #}
 
-import * 'dim/primitive/ops'
-
 
 export {
 
-  method sum( col ) fold( col, 0, add, )
-  method nansum( col ) fold( col, 0, add'valid, )
+  import * 'dim/primitive/ops'
 
-  method cumsum( col ) scan( col, 0, add, )
-  method nancumsum( col ) scan( col, 0, add'valid, )
+  method sum( col ) fold( add, col )
+  method nansum( col ) fold( add'valid, col )
+
+  method cumsum( col ) scan( add, col )
+  method nancumsum( col ) scan( add'valid, col )
 
 
-  method prod( col ) fold( col, 1, multiply, )
-  method nanprod( col ) fold( col, 1, multiply'valid, )
+  method prod( col ) fold( multiply, col )
+  method nanprod( col ) fold( multiply'valid, col )
 
-  method cumprod( col ) scan( col, 1, multiply, )
-  method nancumprod( col ) scan( col, 1, multiply'valid, )
+  method cumprod( col ) scan( multiply, col )
+  method nancumprod( col ) scan( multiply'valid, col )
 
 }

@@ -5,6 +5,7 @@ module Dim.EHI
     module Dim.XCHG,
     module Dim.DataType,
     module Dim.Column,
+    module Dim.Fold,
     module Dim.InMem,
     module Dim.Table,
     module Dim.DbArray,
@@ -24,6 +25,7 @@ import Dim.DataType
 import Dim.DbArray
 import Dim.DbArts
 import Dim.Float
+import Dim.Fold
 import Dim.InMem
 import Dim.Table
 import Dim.XCHG
@@ -85,22 +87,25 @@ installDimBatteries !world = do
         sequence $
           [ (AttrByName nm,) <$> mkHostProc moduScope mc nm hp
             | (mc, nm, hp) <-
-                []
+                [ (EdhMethod, "fold", wrapHostProc foldOpProc)
+                -- (EdhMethod, "scan", wrapHostProc scanOpProc)
+                ]
           ]
-      -- (EdhMethod, "fold", wrapHostProc foldOpProc)
-      -- (EdhMethod, "scan", wrapHostProc scanOpProc)
 
       !moduArts1 <-
         sequence
-          []
-      {-
-      (AttrByName "add",) . EdhObject <$> edhWrapHostValue ets addOp,
-      (AttrByName "add'valid",) . EdhObject
-        <$> edhWrapHostValue ets addValidOp,
-      (AttrByName "multiply",) . EdhObject <$> edhWrapHostValue ets mulOp,
-      (AttrByName "multiply'valid",) . EdhObject
-        <$> edhWrapHostValue ets mulValidOp
-      -}
+          [ --
+            -- (AttrByName "add",) . EdhObject
+            --   <$> edhWrapHostValue ets (selfFold @Double (+)),
+            (AttrByName "add'valid",) . EdhObject
+              <$> edhWrapHostValue ets addValidOp
+              {-
+              (AttrByName "multiply",) . EdhObject
+                <$> edhWrapHostValue ets mulOp,
+              (AttrByName "multiply'valid",) . EdhObject
+                <$> edhWrapHostValue ets mulValidOp
+              -}
+          ]
 
       let !moduArts = moduArts0 ++ moduArts1
 

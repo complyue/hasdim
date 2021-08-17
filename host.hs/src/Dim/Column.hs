@@ -195,10 +195,7 @@ getColDtype !objCol !exit = readTVar (edh'obj'supers objCol) >>= findSuperDto
     findSuperDto [dto] = exit dto
     -- safe guard in case a Column instance has been further extended
     findSuperDto (maybeDto : rest) =
-      withDataType maybeDto (findSuperDto rest) gotDt gotDt
-      where
-        gotDt :: forall dt. dt -> STM ()
-        gotDt _ = exit maybeDto
+      withDataType maybeDto (findSuperDto rest) (const $ exit maybeDto)
 
 sliceColumn ::
   forall c f a.

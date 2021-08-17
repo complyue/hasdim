@@ -14,15 +14,8 @@ import Prelude
 
 piProc :: Object -> Object -> Int -> "dtype" ?: Object -> EdhHostProc
 piProc !defaultDt !colClass !cap (defaultArg defaultDt -> !dto) !exit !ets =
-  withDataType dto badDtype createDevCol createDirCol
-  where
-    badDtype = edhSimpleDesc ets (EdhObject dto) $ \ !badDesc ->
-      throwEdh ets UsageError $ "invalid dtype: " <> badDesc
-
-    notFloatDt dti = throwEdh ets UsageError $ "not a floating dtype: " <> dti
-
-    createDevCol :: DeviceDataType -> STM ()
-    createDevCol !dt = device'data'type'as'of'float
+  withDataType dto badDtype $ \case
+    DeviceDt dt -> device'data'type'as'of'float
       dt
       (notFloatDt $ device'data'type'ident dt)
       $ \(_ :: TypeRep a) ->
@@ -48,10 +41,13 @@ piProc !defaultDt !colClass !cap (defaultArg defaultDt -> !dto) !exit !ets =
                 (toDyn $ someColumn col)
                 [dto]
                 >>= exitEdh ets exit . EdhObject
-
-    createDirCol :: DirectDataType -> STM ()
-    createDirCol _dt =
+    DirectDt _dt ->
       throwEdh ets UsageError "not implemented for direct dtype yet"
+  where
+    badDtype = edhSimpleDesc ets (EdhObject dto) $ \ !badDesc ->
+      throwEdh ets UsageError $ "invalid dtype: " <> badDesc
+
+    notFloatDt dti = throwEdh ets UsageError $ "not a floating dtype: " <> dti
 
 floatOpProc ::
   (forall a. Floating a => a -> a) -> "colObj" !: Object -> EdhHostProc
@@ -59,36 +55,32 @@ floatOpProc !fop (mandatoryArg -> !colObj) !exit !ets =
   getColDtype colObj $ \ !dto -> runEdhTx ets $ do
     let badDtype = edhSimpleDescTx (EdhObject dto) $ \ !badDesc ->
           throwEdhTx UsageError $ "invalid dtype: " <> badDesc
-    withDataType dto badDtype onDevCol onDirCol
+    withDataType dto badDtype $ \case
+      DeviceDt dt -> device'data'type'as'of'float
+        dt
+        (notFloatDt $ device'data'type'ident dt)
+        $ \(_ :: TypeRep a) ->
+          withColumnOf @a colObj dtMismatch $ \ !colInst !col ->
+            view'column'data col $ \(cs, cl) -> edhContIO $ do
+              !p <- callocArray @a cl
+              !fp <- newForeignPtr finalizerFree p
+              let pumpAt :: Int -> IO ()
+                  pumpAt !i =
+                    if i >= cl
+                      then return ()
+                      else do
+                        array'reader cs i >>= pokeElemOff p i . fop
+                        pumpAt (i + 1)
+              pumpAt 0
+              atomically $ do
+                let !cs' = DeviceArray cl fp
+                !csv <- newTMVar cs'
+                !clv <- newTVar cl
+                let !col' = InMemDevCol csv clv
+                edhCloneHostObj ets colInst colObj (someColumn col') $
+                  exitEdh ets exit . EdhObject
+      DirectDt _dt ->
+        throwEdhTx UsageError "not implemented for direct dtype yet"
   where
     notFloatDt dti = throwEdhTx UsageError $ "not a floating dtype: " <> dti
     dtMismatch = throwEdhTx EvalError "bug: dtype mismatch column"
-
-    onDevCol :: DeviceDataType -> EdhTx
-    onDevCol !dt = device'data'type'as'of'float
-      dt
-      (notFloatDt $ device'data'type'ident dt)
-      $ \(_ :: TypeRep a) ->
-        withColumnOf @a colObj dtMismatch $ \ !colInst !col ->
-          view'column'data col $ \(cs, cl) -> edhContIO $ do
-            !p <- callocArray @a cl
-            !fp <- newForeignPtr finalizerFree p
-            let pumpAt :: Int -> IO ()
-                pumpAt !i =
-                  if i >= cl
-                    then return ()
-                    else do
-                      array'reader cs i >>= pokeElemOff p i . fop
-                      pumpAt (i + 1)
-            pumpAt 0
-            atomically $ do
-              let !cs' = DeviceArray cl fp
-              !csv <- newTMVar cs'
-              !clv <- newTVar cl
-              let !col' = InMemDevCol csv clv
-              edhCloneHostObj ets colInst colObj (someColumn col') $
-                exitEdh ets exit . EdhObject
-
-    onDirCol :: DirectDataType -> EdhTx
-    onDirCol _dt =
-      throwEdhTx UsageError "not implemented for direct dtype yet"

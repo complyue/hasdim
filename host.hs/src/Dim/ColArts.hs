@@ -4,7 +4,6 @@ module Dim.ColArts where
 
 import Control.Concurrent.STM
 import Control.Monad
-import qualified Data.ByteString.Internal as B
 import Data.Dynamic
 import Data.Maybe
 import Data.Text (Text)
@@ -23,66 +22,6 @@ import Language.Edh.EHI
 import System.Random
 import Type.Reflection
 import Prelude
-
-{-
-
-foldOpProc ::
-  "col" !: SomeColumn ->
-  "identityVal" !: EdhValue ->
-  "associativeOp" !: (Text -> Dynamic) ->
-  EdhHostProc
-foldOpProc
-  (mandatoryArg -> SomeColumn !col)
-  (mandatoryArg -> !identVal)
-  (mandatoryArg -> !getOp)
-  !exit
-  !ets =
-    do
-      !cs <- view'column'data col
-      !cl <- read'column'length col
-      resolveDataOperator' ets (data'type'identifier dt) cs naExit $
-        \ !dtOp -> do
-          let !fa = unsafeSliceFlatArray cs 0 cl
-          let !dop = getOp (data'type'identifier dt)
-          case fromDynamic dop of
-            Just EdhNil -> naExit
-            _ -> flat'op'fold dtOp ets fa dop ident $ exitEdh ets exit
-    where
-      naExit = exitEdh ets exit edhNA
-      !dt = data'type'of'column col
-      !ident = edhUltimate identVal
-
-scanOpProc ::
-  "col" !: Object ->
-  "identityVal" !: EdhValue ->
-  "associativeOp" !: (Text -> Dynamic) ->
-  EdhHostProc
-scanOpProc
-  (mandatoryArg -> !colThat)
-  (mandatoryArg -> !identVal)
-  (mandatoryArg -> !getOp)
-  !exit
-  !ets = withDerivedHostObject ets colThat $ \ !colThis (Column !col) -> do
-    let !dt = data'type'of'column col
-        !ident = edhUltimate identVal
-        exitWithNewClone !colResult =
-          edhCloneHostObj ets colThis colThat colResult $
-            \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
-    !cs <- view'column'data col
-    !cl <- read'column'length col
-    resolveDataOperator' ets (data'type'identifier dt) cs naExit $
-      \ !dtOp -> do
-        let !fa = unsafeSliceFlatArray cs 0 cl
-        let !dop = getOp (data'type'identifier dt)
-        case fromDynamic dop of
-          Just EdhNil -> naExit
-          _ -> flat'op'scan dtOp ets fa dop ident $ \ !bifa -> do
-            !bicsv <- newTVar bifa
-            !biclv <- newTVar cl
-            exitWithNewClone $ Column $ InMemColumn dt bicsv biclv
-    where
-      naExit = exitEdh ets exit edhNA
--}
 
 mkYesNoSuperDt :: DataTypeIdent -> Scope -> STM Object
 mkYesNoSuperDt !dti !outerScope = do
@@ -1209,36 +1148,34 @@ createColumnClass !defaultDt !clsOuterScope =
           throwEdh etsCtor UsageError $
             "column length should be zero or a positive integer, not "
               <> T.pack (show ctorLen)
-        | otherwise = withDataType dto badDtype devDataCol dirDataCol
+        | otherwise = withDataType dto badDtype $ \case
+          DeviceDt dt ->
+            device'data'type'holder dt $ \(_ :: TypeRep a) ->
+              runEdhTx etsCtor $
+                edhContIO $ do
+                  (_fp, !cs) <- newDeviceArray @a ctorCap
+                  atomically $ do
+                    !csv <- newTMVar cs
+                    !clv <- newTVar ctorLen
+                    ctorExit Nothing $
+                      HostStore $
+                        toDyn $
+                          SomeColumn (typeRep @DeviceArray) $
+                            InMemDevCol @a csv clv
+          DirectDt dt ->
+            direct'data'defv'holder dt $ \(fill'val :: a) ->
+              runEdhTx etsCtor $
+                edhContIO $ do
+                  (_iov, !cs) <- newDirectArray @a fill'val ctorCap
+                  atomically $ do
+                    !csv <- newTMVar cs
+                    !clv <- newTVar ctorLen
+                    ctorExit Nothing $
+                      HostStore $
+                        toDyn $
+                          SomeColumn (typeRep @DirectArray) $
+                            InMemDirCol @a csv clv
         where
-          devDataCol :: DeviceDataType -> STM ()
-          devDataCol (DeviceDataType _dti dth _ _ _) =
-            dth $ \(_ :: TypeRep a) -> runEdhTx etsCtor $
-              edhContIO $ do
-                (_fp, !cs) <- newDeviceArray @a ctorCap
-                atomically $ do
-                  !csv <- newTMVar cs
-                  !clv <- newTVar ctorLen
-                  ctorExit Nothing $
-                    HostStore $
-                      toDyn $
-                        SomeColumn (typeRep @DeviceArray) $
-                          InMemDevCol @a csv clv
-
-          dirDataCol :: DirectDataType -> STM ()
-          dirDataCol (DirectDataType _dti dvh _ _) =
-            dvh $ \(fill'val :: a) -> runEdhTx etsCtor $
-              edhContIO $ do
-                (_iov, !cs) <- newDirectArray @a fill'val ctorCap
-                atomically $ do
-                  !csv <- newTMVar cs
-                  !clv <- newTVar ctorLen
-                  ctorExit Nothing $
-                    HostStore $
-                      toDyn $
-                        SomeColumn (typeRep @DirectArray) $
-                          InMemDirCol @a csv clv
-
           badDtype = throwEdh etsCtor UsageError "invalid dtype"
 
     col__init__ ::
@@ -1747,60 +1684,56 @@ arangeProc
           else do
             let (q, r) = quotRem (stop - start) step
                 !len = if r == 0 then abs q else 1 + abs q
-                createDevCol :: DeviceDataType -> STM ()
-                createDevCol !dt = device'data'type'as'of'num
-                  dt
-                  (notNumDt $ device'data'type'ident dt)
-                  $ \(_ :: TypeRep a) -> runEdhTx ets $
-                    edhContIO $ do
-                      !p <- callocArray @a len
-                      !fp <- newForeignPtr finalizerFree p
-                      let fillRng :: Int -> Int -> IO ()
-                          fillRng !n !i =
-                            if i >= len
-                              then return ()
-                              else do
-                                pokeElemOff p i $ fromIntegral n
-                                fillRng (n + step) (i + 1)
-                      fillRng start 0
-                      atomically $ do
-                        let !cs = DeviceArray len fp
-                        !csv <- newTMVar cs
-                        !clv <- newTVar len
-                        let !col = InMemDevCol csv clv
-                        edhCreateHostObj'
-                          colClass
-                          (toDyn $ someColumn col)
-                          [dto]
-                          >>= exitEdh ets exit . EdhObject
-
-                createDirCol :: DirectDataType -> STM ()
-                createDirCol !dt = direct'data'type'as'of'num
-                  dt
-                  (notNumDt $ direct'data'type'ident dt)
-                  $ \(_ :: TypeRep a) -> runEdhTx ets $
-                    edhContIO $ do
-                      (iov :: MV.IOVector a) <- MV.new len
-                      let fillRng :: Int -> Int -> IO ()
-                          fillRng !n !i =
-                            if i >= len
-                              then return ()
-                              else do
-                                MV.unsafeWrite iov i $ fromIntegral n
-                                fillRng (n + step) (i + 1)
-                      fillRng start 0
-                      atomically $ do
-                        let !cs = DirectArray iov
-                        !csv <- newTMVar cs
-                        !clv <- newTVar len
-                        let !col = InMemDirCol csv clv
-                        edhCreateHostObj'
-                          colClass
-                          (toDyn $ someColumn col)
-                          [dto]
-                          >>= exitEdh ets exit . EdhObject
-
-            withDataType dto badDtype createDevCol createDirCol
+            withDataType dto badDtype $ \case
+              DeviceDt dt -> device'data'type'as'of'num
+                dt
+                (notNumDt $ device'data'type'ident dt)
+                $ \(_ :: TypeRep a) -> runEdhTx ets $
+                  edhContIO $ do
+                    !p <- callocArray @a len
+                    !fp <- newForeignPtr finalizerFree p
+                    let fillRng :: Int -> Int -> IO ()
+                        fillRng !n !i =
+                          if i >= len
+                            then return ()
+                            else do
+                              pokeElemOff p i $ fromIntegral n
+                              fillRng (n + step) (i + 1)
+                    fillRng start 0
+                    atomically $ do
+                      let !cs = DeviceArray len fp
+                      !csv <- newTMVar cs
+                      !clv <- newTVar len
+                      let !col = InMemDevCol csv clv
+                      edhCreateHostObj'
+                        colClass
+                        (toDyn $ someColumn col)
+                        [dto]
+                        >>= exitEdh ets exit . EdhObject
+              DirectDt dt -> direct'data'type'as'of'num
+                dt
+                (notNumDt $ direct'data'type'ident dt)
+                $ \(_ :: TypeRep a) -> runEdhTx ets $
+                  edhContIO $ do
+                    (iov :: MV.IOVector a) <- MV.new len
+                    let fillRng :: Int -> Int -> IO ()
+                        fillRng !n !i =
+                          if i >= len
+                            then return ()
+                            else do
+                              MV.unsafeWrite iov i $ fromIntegral n
+                              fillRng (n + step) (i + 1)
+                    fillRng start 0
+                    atomically $ do
+                      let !cs = DirectArray iov
+                      !csv <- newTMVar cs
+                      !clv <- newTVar len
+                      let !col = InMemDirCol csv clv
+                      edhCreateHostObj'
+                        colClass
+                        (toDyn $ someColumn col)
+                        [dto]
+                        >>= exitEdh ets exit . EdhObject
 
 randomProc ::
   Object ->
@@ -1840,77 +1773,73 @@ randomProc
 
       createRandomCol :: EdhValue -> EdhValue -> STM ()
       createRandomCol !lowerValue !upperValue = do
-        let createDevCol :: DeviceDataType -> STM ()
-            createDevCol !dt = device'data'type'as'of'random
-              dt
-              (notRndDt $ device'data'type'ident dt)
-              $ \(_ :: TypeRep a) -> runEdhTx ets $
-                fromEdh lowerValue $ \ !lower ->
-                  fromEdh upperValue $ \ !upper ->
-                    if lower == upper
-                      then throwEdhTx UsageError "random range is zero-width"
-                      else edhContIO $ do
-                        let (!lower', !upper') =
-                              if lower < upper
-                                then (lower, upper)
-                                else (upper, lower)
-                        !p <- callocArray @a size
-                        !fp <- newForeignPtr finalizerFree p
-                        let fillRng :: Int -> IO ()
-                            fillRng !i =
-                              if i >= size
-                                then return ()
-                                else do
-                                  pokeElemOff p i =<< randomRIO (lower', upper')
-                                  fillRng (i + 1)
-                        fillRng 0
-                        atomically $ do
-                          let !cs = DeviceArray size fp
-                          !csv <- newTMVar cs
-                          !clv <- newTVar size
-                          let !col = InMemDevCol csv clv
-                          edhCreateHostObj'
-                            colClass
-                            (toDyn $ someColumn col)
-                            [dto]
-                            >>= exitEdh ets exit . EdhObject
-
-            createDirCol :: DirectDataType -> STM ()
-            createDirCol !dt = direct'data'type'as'of'random
-              dt
-              (notRndDt $ direct'data'type'ident dt)
-              $ \(_ :: TypeRep a) -> runEdhTx ets $
-                fromEdh lowerValue $ \ !lower ->
-                  fromEdh upperValue $ \ !upper ->
-                    if lower == upper
-                      then throwEdhTx UsageError "random range is zero-width"
-                      else edhContIO $ do
-                        let (!lower', !upper') =
-                              if lower < upper
-                                then (lower, upper)
-                                else (upper, lower)
-                        (iov :: MV.IOVector a) <- MV.new size
-                        let fillRng :: Int -> IO ()
-                            fillRng !i =
-                              if i >= size
-                                then return ()
-                                else do
-                                  MV.unsafeWrite iov i
-                                    =<< randomRIO (lower', upper')
-                                  fillRng (i + 1)
-                        fillRng 0
-                        atomically $ do
-                          let !cs = DirectArray iov
-                          !csv <- newTMVar cs
-                          !clv <- newTVar size
-                          let !col = InMemDirCol csv clv
-                          edhCreateHostObj'
-                            colClass
-                            (toDyn $ someColumn col)
-                            [dto]
-                            >>= exitEdh ets exit . EdhObject
-
-        withDataType dto badDtype createDevCol createDirCol
+        withDataType dto badDtype $ \case
+          DeviceDt dt -> device'data'type'as'of'random
+            dt
+            (notRndDt $ device'data'type'ident dt)
+            $ \(_ :: TypeRep a) -> runEdhTx ets $
+              fromEdh lowerValue $ \ !lower ->
+                fromEdh upperValue $ \ !upper ->
+                  if lower == upper
+                    then throwEdhTx UsageError "random range is zero-width"
+                    else edhContIO $ do
+                      let (!lower', !upper') =
+                            if lower < upper
+                              then (lower, upper)
+                              else (upper, lower)
+                      !p <- callocArray @a size
+                      !fp <- newForeignPtr finalizerFree p
+                      let fillRng :: Int -> IO ()
+                          fillRng !i =
+                            if i >= size
+                              then return ()
+                              else do
+                                pokeElemOff p i =<< randomRIO (lower', upper')
+                                fillRng (i + 1)
+                      fillRng 0
+                      atomically $ do
+                        let !cs = DeviceArray size fp
+                        !csv <- newTMVar cs
+                        !clv <- newTVar size
+                        let !col = InMemDevCol csv clv
+                        edhCreateHostObj'
+                          colClass
+                          (toDyn $ someColumn col)
+                          [dto]
+                          >>= exitEdh ets exit . EdhObject
+          DirectDt dt -> direct'data'type'as'of'random
+            dt
+            (notRndDt $ direct'data'type'ident dt)
+            $ \(_ :: TypeRep a) -> runEdhTx ets $
+              fromEdh lowerValue $ \ !lower ->
+                fromEdh upperValue $ \ !upper ->
+                  if lower == upper
+                    then throwEdhTx UsageError "random range is zero-width"
+                    else edhContIO $ do
+                      let (!lower', !upper') =
+                            if lower < upper
+                              then (lower, upper)
+                              else (upper, lower)
+                      (iov :: MV.IOVector a) <- MV.new size
+                      let fillRng :: Int -> IO ()
+                          fillRng !i =
+                            if i >= size
+                              then return ()
+                              else do
+                                MV.unsafeWrite iov i
+                                  =<< randomRIO (lower', upper')
+                                fillRng (i + 1)
+                      fillRng 0
+                      atomically $ do
+                        let !cs = DirectArray iov
+                        !csv <- newTMVar cs
+                        !clv <- newTVar size
+                        let !col = InMemDirCol csv clv
+                        edhCreateHostObj'
+                          colClass
+                          (toDyn $ someColumn col)
+                          [dto]
+                          >>= exitEdh ets exit . EdhObject
 
 -- TODO impl. `linspace` following:
 --      https://numpy.org/doc/stable/reference/generated/numpy.linspace.html

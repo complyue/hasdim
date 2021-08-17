@@ -5,7 +5,6 @@ module Dim.DataType where
 
 -- import           Debug.Trace
 
-import Control.Concurrent.STM
 import Control.Monad
 import qualified Data.ByteString.Internal as B
 import Data.Dynamic
@@ -24,21 +23,23 @@ import Prelude
 
 -- * DataType holding runtime representation
 
-type DataTypeIdent = AttrName
-
--- | Native types stored in shared memory with computing devices (GPU or CPU
--- with heavy SIMD orientation)
-data DeviceDataType = DeviceDataType
+-- | Device-native types stored in memory shared with computing devices
+-- (a computing device can be a GPU or CPU with heavy SIMD orientation)
+data DeviceDataType a' = DeviceDataType
   { device'data'type'ident :: !DataTypeIdent,
     device'data'type'holder ::
       forall r.
-      (forall a. (Eq a, Storable a, EdhXchg a, Typeable a) => TypeRep a -> r) ->
+      ( forall a.
+        (a ~ a', Eq a, Storable a, EdhXchg a, Typeable a) =>
+        TypeRep a ->
+        r
+      ) ->
       r,
     device'data'type'as'of'num ::
       forall r.
       r ->
       ( forall a.
-        (Num a, Storable a, EdhXchg a, Typeable a) =>
+        (a ~ a', Num a, Storable a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -47,7 +48,7 @@ data DeviceDataType = DeviceDataType
       forall r.
       r ->
       ( forall a.
-        (Floating a, Storable a, EdhXchg a, Typeable a) =>
+        (a ~ a', RealFloat a, Storable a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -56,60 +57,29 @@ data DeviceDataType = DeviceDataType
       forall r.
       r ->
       ( forall a.
-        (Random a, Eq a, Ord a, Storable a, EdhXchg a, Typeable a) =>
+        (a ~ a', Random a, Eq a, Ord a, Storable a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
       r
   }
 
-instance Eq DeviceDataType where
-  (DeviceDataType x'dti x'trh _ _ _) == (DeviceDataType y'dti y'trh _ _ _) =
-    x'trh $ \x'tr -> y'trh $ \y'tr ->
-      case x'tr `eqTypeRep` y'tr of
-        Just HRefl | x'dti == y'dti -> True
-        _ -> False
-
-{- HLINT ignore "Use const" -}
-
-mkFloatDataType ::
-  forall a.
-  (RealFloat a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
-  DataTypeIdent ->
-  DeviceDataType
-mkFloatDataType !dti =
-  DeviceDataType
-    dti
-    ($ typeRep @a)
-    (\_naExit exit -> exit (typeRep @a))
-    (\_naExit exit -> exit (typeRep @a))
-    (\_naExit exit -> exit (typeRep @a))
-
-mkIntDataType ::
-  forall a.
-  (Integral a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
-  DataTypeIdent ->
-  DeviceDataType
-mkIntDataType !dti =
-  DeviceDataType
-    dti
-    ($ typeRep @a)
-    (\_naExit exit -> exit (typeRep @a))
-    (\naExit _exit -> naExit)
-    (\_naExit exit -> exit (typeRep @a))
-
--- | Lifted Haskell types as operated directly by the host language
-data DirectDataType = DirectDataType
+-- | Lifted Haskell types directly operatable by the host language
+data DirectDataType a' = DirectDataType
   { direct'data'type'ident :: !DataTypeIdent,
     direct'data'defv'holder ::
       forall r.
-      (forall a. (Eq a, EdhXchg a, Typeable a) => a -> r) ->
+      ( forall a.
+        (a ~ a', Eq a, EdhXchg a, Typeable a) =>
+        a ->
+        r
+      ) ->
       r,
     direct'data'type'as'of'num ::
       forall r.
       r ->
       ( forall a.
-        (Num a, Eq a, EdhXchg a, Typeable a) =>
+        (a ~ a', Num a, Eq a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -118,45 +88,110 @@ data DirectDataType = DirectDataType
       forall r.
       r ->
       ( forall a.
-        (Random a, Eq a, Ord a, EdhXchg a, Typeable a) =>
+        (a ~ a', Random a, Eq a, Ord a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
       r
   }
 
-instance Eq DirectDataType where
-  (DirectDataType x'dti x'dvh _ _) == (DirectDataType y'dti y'dvh _ _) =
-    x'dvh $ \x'defv -> y'dvh $ \y'defv ->
-      case typeOf x'defv `eqTypeRep` typeOf y'defv of
-        Just HRefl | x'dti == y'dti && x'defv == y'defv -> True
+type DataTypeIdent = AttrName
+
+-- | A data type conveys the representation as well as its relevant type class
+-- instances to runtime, for dynamic linkage (i.e. high-performance execution)
+-- in scripted fashion
+--
+-- note: need separate data constructors along respective ADTs because GHC does
+--       not yet support impredicative polymorphism
+data DataType a
+  = Typeable a => DeviceDt !(DeviceDataType a)
+  | Typeable a => DirectDt !(DirectDataType a)
+
+data'type'ident :: DataType a -> DataTypeIdent
+data'type'ident (DeviceDt dt) = device'data'type'ident dt
+data'type'ident (DirectDt dt) = direct'data'type'ident dt
+
+instance Eq (DataType a) where
+  DeviceDt x == DeviceDt y =
+    device'data'type'holder x $ \x'tr -> device'data'type'holder y $ \y'tr ->
+      case x'tr `eqTypeRep` y'tr of
+        Just HRefl
+          | device'data'type'ident x == device'data'type'ident y -> True
         _ -> False
+  DirectDt x == DirectDt y =
+    direct'data'defv'holder x $ \x'defv ->
+      direct'data'defv'holder y $ \y'defv ->
+        case typeOf x'defv `eqTypeRep` typeOf y'defv of
+          Just HRefl
+            | direct'data'type'ident x == direct'data'type'ident y
+                && x'defv == y'defv ->
+              True
+          _ -> False
+  _ == _ = False
+
+eqDataType ::
+  forall a b. (Typeable a, Typeable b) => DataType a -> DataType b -> Bool
+eqDataType x y = case eqT of
+  Nothing -> False
+  Just (Refl :: a :~: b) -> x == y
+
+{- HLINT ignore "Use const" -}
+
+mkFloatDataType ::
+  forall a.
+  (RealFloat a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
+  DataTypeIdent ->
+  DataType a
+mkFloatDataType !dti =
+  DeviceDt $
+    DeviceDataType
+      dti
+      ($ typeRep @a)
+      (\_naExit exit -> exit (typeRep @a))
+      (\_naExit exit -> exit (typeRep @a))
+      (\_naExit exit -> exit (typeRep @a))
+
+mkIntDataType ::
+  forall a.
+  (Integral a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
+  DataTypeIdent ->
+  DataType a
+mkIntDataType !dti =
+  DeviceDt $
+    DeviceDataType
+      dti
+      ($ typeRep @a)
+      (\_naExit exit -> exit (typeRep @a))
+      (\naExit _exit -> naExit)
+      (\_naExit exit -> exit (typeRep @a))
 
 mkBoxDataType ::
   forall a.
   (Eq a, EdhXchg a, Typeable a) =>
   DataTypeIdent ->
   a ->
-  DirectDataType
+  DataType a
 mkBoxDataType !dti !defv =
-  DirectDataType
-    dti
-    ($ defv)
-    (\naExit _exit -> naExit)
-    (\naExit _exit -> naExit)
+  DirectDt $
+    DirectDataType
+      dti
+      ($ defv)
+      (\naExit _exit -> naExit)
+      (\naExit _exit -> naExit)
 
 mkRealFracDataType ::
   forall a.
   (RealFrac a, Random a, Eq a, EdhXchg a, Typeable a) =>
   DataTypeIdent ->
   a ->
-  DirectDataType
+  DataType a
 mkRealFracDataType !dti !defv =
-  DirectDataType
-    dti
-    ($ defv)
-    (\_naExit exit -> exit (typeRep @a))
-    (\_naExit exit -> exit (typeRep @a))
+  DirectDt $
+    DirectDataType
+      dti
+      ($ defv)
+      (\_naExit exit -> exit (typeRep @a))
+      (\_naExit exit -> exit (typeRep @a))
 
 withDeviceDataType ::
   forall r.
@@ -165,10 +200,13 @@ withDeviceDataType ::
   (forall a. (Eq a, Storable a, EdhXchg a, Typeable a) => TypeRep a -> r) ->
   r
 withDeviceDataType !dto !naExit !exit = case edh'obj'store dto of
-  HostStore (Dynamic trDataType monoDataType) ->
-    case trDataType `eqTypeRep` typeRep @DeviceDataType of
-      Just HRefl -> device'data'type'holder monoDataType exit
+  HostStore (Dynamic trGDT monoDataType) -> case trGDT of
+    App trDataType a -> case trDataType `eqTypeRep` typeRep @DataType of
+      Just HRefl -> case monoDataType of
+        DeviceDt dt -> device'data'type'holder dt exit
+        _ -> naExit
       _ -> naExit
+    _ -> naExit
   _ -> naExit
 
 withDirectDataType ::
@@ -178,49 +216,36 @@ withDirectDataType ::
   (forall a. (Eq a, EdhXchg a, Typeable a) => a -> r) ->
   r
 withDirectDataType !dto !naExit !exit = case edh'obj'store dto of
-  HostStore (Dynamic trDataType monoDataType) ->
-    case trDataType `eqTypeRep` typeRep @DirectDataType of
-      Just HRefl -> direct'data'defv'holder monoDataType exit
+  HostStore (Dynamic trGDT monoDataType) -> case trGDT of
+    App trDataType a -> case trDataType `eqTypeRep` typeRep @DataType of
+      Just HRefl -> case monoDataType of
+        DirectDt dt -> direct'data'defv'holder dt exit
+        _ -> naExit
       _ -> naExit
+    _ -> naExit
   _ -> naExit
 
 withDataType ::
-  forall r. Object -> r -> (DeviceDataType -> r) -> (DirectDataType -> r) -> r
-withDataType !dto !naExit !devExit !dirExit = case edh'obj'store dto of
-  HostStore (Dynamic trDataType monoDataType) ->
-    case trDataType `eqTypeRep` typeRep @DeviceDataType of
-      Just HRefl -> devExit monoDataType
-      _ -> case trDataType `eqTypeRep` typeRep @DirectDataType of
-        Just HRefl -> dirExit monoDataType
+  forall r. Object -> r -> (forall a. (Typeable a) => DataType a -> r) -> r
+withDataType !dto !naExit !exit = case edh'obj'store dto of
+  HostStore (Dynamic trGDT monoDataType) -> case trGDT of
+    App trDataType a -> withTypeable a $
+      case trDataType `eqTypeRep` typeRep @DataType of
+        Just HRefl -> exit monoDataType
         _ -> naExit
+    _ -> naExit
   _ -> naExit
 
 dtypeEqProc :: EdhValue -> EdhHostProc
 dtypeEqProc !other !exit !ets = case edhUltimate other of
-  EdhObject !objOther ->
-    withDataType objOther exitNeg withDeviceOther withDirectOther
+  EdhObject !objOther -> withDataType objOther exitNeg $ \ !dtOther ->
+    withDataType this badSelf $ \ !dtSelf ->
+      exitEdh ets exit $ EdhBool $ dtOther `eqDataType` dtSelf
   _ -> exitNeg
   where
     this = edh'scope'this $ contextScope $ edh'context ets
 
-    withDeviceOther :: DeviceDataType -> STM ()
-    withDeviceOther dtOther =
-      withDataType
-        this
-        badThis
-        ( \ !dtThis ->
-            exitEdh ets exit $
-              EdhBool $ dtThis == dtOther
-        )
-        (const exitNeg)
-
-    withDirectOther :: DirectDataType -> STM ()
-    withDirectOther dtOther = withDataType this badThis (const exitNeg) $
-      \ !dtThis ->
-        exitEdh ets exit $
-          EdhBool $ dtThis == dtOther
-
-    badThis = throwEdh ets EvalError "bug: not a host value of DataType"
+    badSelf = throwEdh ets EvalError "bug: not a host value of DataType"
     exitNeg = exitEdh ets exit $ EdhBool False
 
 -- * Flat Array

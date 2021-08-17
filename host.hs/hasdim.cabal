@@ -163,6 +163,7 @@ library
     Dim.DbArts
     Dim.DiskBack
     Dim.Float
+    Dim.Fold
     Dim.InMem
     Dim.Table
     Dim.XCHG
