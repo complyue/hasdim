@@ -87,8 +87,10 @@ installDimBatteries !world = do
         sequence $
           [ (AttrByName nm,) <$> mkHostProc moduScope mc nm hp
             | (mc, nm, hp) <-
-                [ (EdhMethod, "fold", wrapHostProc foldOpProc)
-                -- (EdhMethod, "scan", wrapHostProc scanOpProc)
+                [ (EdhMethod, "fold", wrapHostProc foldOpProc),
+                  (EdhMethod, "foldl", wrapHostProc foldlOpProc),
+                  (EdhMethod, "foldr", wrapHostProc foldrOpProc)
+                  -- (EdhMethod, "scan", wrapHostProc scanOpProc)
                 ]
           ]
 
