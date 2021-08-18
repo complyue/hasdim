@@ -1579,12 +1579,12 @@ createColumnClass !defaultDt !clsOuterScope =
         read'column'length col $ \ !cl ->
           copy'column'slice col 0 cl 1 $ \(disp, col') _ets -> case disp of
             StayComposed ->
-              edhCloneHostObj ets objCol objCol (someColumn col') $
+              edhCloneHostObj ets objCol objCol col' $
                 \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
             ExtractAlone -> getColDtype objCol $ \ !dto ->
               edhCreateHostObj'
                 (edh'obj'class objCol)
-                (toDyn $ someColumn col')
+                (toDyn col')
                 [dto]
                 >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 

@@ -83,7 +83,7 @@ instance
             !len = max 0 $ min cl stop - start
         !csvNew <- newTMVar cs'
         !clvNew <- newTVar len
-        exitEdh ets exit (StayComposed, InMemDevCol csvNew clvNew)
+        exitEdh ets exit (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
 
   copy'column'slice (InMemDevCol csv clv) !start !stop !step !exit !ets =
     do
@@ -111,7 +111,7 @@ instance
                     exitEdh
                       ets
                       exit
-                      (StayComposed, InMemDevCol csvNew clvNew)
+                      (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
                 else do
                   let (q, r) = quotRem (stop - start) step
                       !len = if r == 0 then abs q else 1 + abs q
@@ -134,7 +134,7 @@ instance
                     exitEdh
                       ets
                       exit
-                      (StayComposed, InMemDevCol csvNew clvNew)
+                      (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
 
   derive'new'column (InMemDevCol csv clv) !sizer (!deriver, !exit) = do
     (!cs, !cl) <- atomically $ do
@@ -179,7 +179,7 @@ instance
             atomically $ do
               !csvNew <- newTMVar cs'
               !clvNew <- newTVar cl'
-              exitEdh ets exit (StayComposed, InMemDevCol csvNew clvNew)
+              exitEdh ets exit $ someColumn $ InMemDevCol csvNew clvNew
 
   extract'column'fancy (InMemDevCol csv _clv) !idxCol !exit !ets = do
     DeviceArray _cap (fp :: ForeignPtr a) <- readTMVar csv
@@ -202,7 +202,7 @@ instance
         atomically $ do
           !csvNew <- newTMVar cs'
           !clvNew <- newTVar idxl
-          exitEdh ets exit (StayComposed, InMemDevCol csvNew clvNew)
+          exitEdh ets exit $ someColumn $ InMemDevCol csvNew clvNew
 
 data InMemDirCol a = (Eq a, EdhXchg a, Typeable a) =>
   InMemDirCol
@@ -270,7 +270,7 @@ instance
             !len = max 0 $ min cl stop - start
         !csvNew <- newTMVar cs'
         !clvNew <- newTVar len
-        exitEdh ets exit (StayComposed, InMemDirCol csvNew clvNew)
+        exitEdh ets exit (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
 
   copy'column'slice (InMemDirCol csv clv) !start !stop !step !exit !ets =
     do
@@ -299,7 +299,7 @@ instance
                     exitEdh
                       ets
                       exit
-                      (StayComposed, InMemDirCol csvNew clvNew)
+                      (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
                 else do
                   let (q, r) = quotRem (stop - start) step
                       !len = if r == 0 then abs q else 1 + abs q
@@ -321,7 +321,7 @@ instance
                     exitEdh
                       ets
                       exit
-                      (StayComposed, InMemDirCol csvNew clvNew)
+                      (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
 
   derive'new'column (InMemDirCol csv clv) !sizer (!deriver, !exit) = do
     (!cs, !cl) <- atomically $ do
@@ -365,7 +365,7 @@ instance
             atomically $ do
               !csvNew <- newTMVar cs'
               !clvNew <- newTVar cl'
-              exitEdh ets exit (StayComposed, InMemDirCol csvNew clvNew)
+              exitEdh ets exit $ someColumn $ InMemDirCol csvNew clvNew
 
   extract'column'fancy (InMemDirCol csv _clv) !idxCol !exit !ets = do
     DirectArray !iov <- readTMVar csv
@@ -387,4 +387,4 @@ instance
         atomically $ do
           !csvNew <- newTMVar cs'
           !clvNew <- newTVar idxl
-          exitEdh ets exit (StayComposed, InMemDirCol csvNew clvNew)
+          exitEdh ets exit $ someColumn $ InMemDirCol csvNew clvNew

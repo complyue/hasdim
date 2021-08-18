@@ -280,7 +280,7 @@ class FlatArray f a where
   -- | convert to blob if possible
   array'as'blob :: forall r. f a -> ArrayLength -> r -> (B.ByteString -> r) -> r
 
-data DeviceArray a = (EdhXchg a, Typeable a, Storable a) =>
+data DeviceArray a = (Storable a, EdhXchg a, Typeable a) =>
   DeviceArray
   { device'array'cap :: !Int,
     device'array'ref :: !(ForeignPtr a)

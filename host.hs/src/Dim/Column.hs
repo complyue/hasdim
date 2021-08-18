@@ -41,7 +41,7 @@ class
 
   -- called when a new capacity is requested for the column
   grow'column'capacity ::
-    c a -> ArrayCapacity -> EdhTxExit (f a, ArrayCapacity) -> EdhTx
+    c a -> ArrayCapacity -> EdhTxExit (f a, ArrayLength) -> EdhTx
 
   -- called when a new length is marked for the column
   mark'column'length :: c a -> ArrayLength -> EdhTxExit () -> EdhTx
@@ -51,7 +51,7 @@ class
     c a ->
     Int -> -- start
     Int -> -- stop
-    EdhTxExit (InstanceDisposition, c a) ->
+    EdhTxExit (InstanceDisposition, SomeColumn) ->
     EdhTx
 
   -- called when copying-slicing is requested for the column
@@ -60,9 +60,10 @@ class
     Int -> -- start
     Int -> -- stop
     Int -> -- step
-    EdhTxExit (InstanceDisposition, c a) ->
+    EdhTxExit (InstanceDisposition, SomeColumn) ->
     EdhTx
 
+  -- generate another new column by custom deriver & receiver
   derive'new'column ::
     c a ->
     ((f a, ArrayLength, ArrayCapacity) -> ArrayCapacity) ->
@@ -80,7 +81,7 @@ class
     ManagedColumn c' f' YesNo =>
     c a ->
     c' YesNo ->
-    EdhTxExit (InstanceDisposition, c a) ->
+    EdhTxExit SomeColumn ->
     EdhTx
 
   -- extract elements by an index column
@@ -89,7 +90,7 @@ class
     ManagedColumn c' f' Int =>
     c a ->
     c' Int ->
-    EdhTxExit (InstanceDisposition, c a) ->
+    EdhTxExit SomeColumn ->
     EdhTx
 
 data SomeColumn
@@ -216,7 +217,7 @@ sliceColumn ::
   Int ->
   Int ->
   Int ->
-  EdhTxExit (Object, c a) ->
+  EdhTxExit (Object, SomeColumn) ->
   EdhTx
 sliceColumn !objCol !col !start !stop !step !exit =
   if stop >= start && step == 1
@@ -225,10 +226,10 @@ sliceColumn !objCol !col !start !stop !step !exit =
   where
     withSliced (disp, col') !ets = case disp of
       StayComposed -> edhCloneHostObj ets objCol objCol col' $
-        \ !objCol' -> exitEdh ets exit (objCol', col')
+        \ !objCol' -> exit (objCol', col') ets
       ExtractAlone -> getColDtype objCol $ \ !dto ->
         edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
-          >>= \ !objCol' -> exitEdh ets exit (objCol', col')
+          >>= \ !objCol' -> exit (objCol', col') ets
 
 extractColumnBool ::
   forall c f a c' f'.
@@ -236,13 +237,11 @@ extractColumnBool ::
   Object ->
   c a ->
   c' YesNo ->
-  EdhTxExit (Object, c a) ->
+  EdhTxExit (Object, SomeColumn) ->
   EdhTx
 extractColumnBool !objCol !col !colMask !exit =
-  extract'column'bool col colMask $ \(disp, col') !ets -> case disp of
-    StayComposed -> edhCloneHostObj ets objCol objCol col' $
-      \ !objCol' -> exitEdh ets exit (objCol', col')
-    ExtractAlone -> getColDtype objCol $ \ !dto ->
+  extract'column'bool col colMask $ \ !col' !ets ->
+    getColDtype objCol $ \ !dto ->
       edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
         >>= \ !objCol' -> exitEdh ets exit (objCol', col')
 
@@ -252,12 +251,10 @@ extractColumnFancy ::
   Object ->
   c a ->
   c' Int ->
-  EdhTxExit (Object, c a) ->
+  EdhTxExit (Object, SomeColumn) ->
   EdhTx
 extractColumnFancy !objCol !col !colIdxs !exit =
-  extract'column'fancy col colIdxs $ \(disp, col') !ets -> case disp of
-    StayComposed -> edhCloneHostObj ets objCol objCol col' $
-      \ !objCol' -> exitEdh ets exit (objCol', col')
-    ExtractAlone -> getColDtype objCol $ \ !dto ->
+  extract'column'fancy col colIdxs $ \ !col' !ets ->
+    getColDtype objCol $ \ !dto ->
       edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
         >>= \ !objCol' -> exitEdh ets exit (objCol', col')
