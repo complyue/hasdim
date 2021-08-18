@@ -39,7 +39,7 @@ data DeviceDataType a' = DeviceDataType
       forall r.
       r ->
       ( forall a.
-        (a ~ a', Num a, Storable a, EdhXchg a, Typeable a) =>
+        (a ~ a', Num a, Eq a, Storable a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -48,7 +48,7 @@ data DeviceDataType a' = DeviceDataType
       forall r.
       r ->
       ( forall a.
-        (a ~ a', RealFloat a, Storable a, EdhXchg a, Typeable a) =>
+        (a ~ a', RealFloat a, Eq a, Storable a, EdhXchg a, Typeable a) =>
         TypeRep a ->
         r
       ) ->
@@ -302,7 +302,7 @@ instance FlatArray DeviceArray a where
       B.fromForeignPtr (castForeignPtr fp) 0 (len * sizeOf (undefined :: a))
 
 data DirectArray a
-  = (EdhXchg a, Typeable a) => DirectArray !(MV.IOVector a)
+  = (Eq a, EdhXchg a, Typeable a) => DirectArray !(MV.IOVector a)
 
 instance FlatArray DirectArray a where
   array'capacity = directArrayCapacity
@@ -317,14 +317,15 @@ emptyDeviceArray = do
   !np <- newForeignPtr_ nullPtr
   return $ DeviceArray @a 0 np
 
-emptyDirectArray :: forall a. (EdhXchg a, Typeable a) => IO (DirectArray a)
+emptyDirectArray ::
+  forall a. (Eq a, EdhXchg a, Typeable a) => IO (DirectArray a)
 emptyDirectArray = do
   !iov <- MV.new 0
   return $ DirectArray @a iov
 
 newDeviceArray ::
   forall a.
-  (Storable a, Eq a, EdhXchg a, Typeable a) =>
+  (Eq a, Storable a, EdhXchg a, Typeable a) =>
   ArrayCapacity ->
   IO (ForeignPtr a, DeviceArray a)
 newDeviceArray !cap = do
@@ -335,10 +336,17 @@ newDeviceArray !cap = do
 newDirectArray ::
   forall a.
   (Eq a, EdhXchg a, Typeable a) =>
+  ArrayCapacity ->
+  IO (MV.IOVector a, DirectArray a)
+newDirectArray = newDirectArray' $ edhDefaultValue @a
+
+newDirectArray' ::
+  forall a.
+  (Eq a, EdhXchg a, Typeable a) =>
   a ->
   ArrayCapacity ->
   IO (MV.IOVector a, DirectArray a)
-newDirectArray !fill'val !cap = do
+newDirectArray' !fill'val !cap = do
   !iov <- MV.unsafeNew cap
   MV.set iov fill'val
   return (iov, DirectArray @a iov)

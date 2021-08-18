@@ -22,6 +22,8 @@ import Type.Reflection
 import Prelude
 
 class Typeable t => EdhXchg t where
+  edhDefaultValue :: t
+
   toEdh :: t -> EdhTxExit EdhValue -> EdhTx
 
   fromEdh' :: EdhValue -> EdhTx -> EdhTxExit t -> EdhTx
@@ -36,10 +38,12 @@ class Typeable t => EdhXchg t where
           <> badDesc
 
 instance EdhXchg EdhValue where
+  edhDefaultValue = edhNA
   toEdh !v !exit = exit v
   fromEdh' !v _naExit !exit = exit v
 
 instance EdhXchg D.Decimal where
+  edhDefaultValue = D.nan
   toEdh !v !exit = exit $ EdhDecimal v
   fromEdh' !v naExit !exit = case edhUltimate v of
     (EdhDecimal !d) -> exit d
@@ -52,16 +56,19 @@ yesOrNo :: Bool -> YesNo
 yesOrNo b = YesNo $ if b then 1 else 0
 
 instance {-# OVERLAPPABLE #-} EdhXchg YesNo where
+  edhDefaultValue = YesNo 0
   toEdh (YesNo !b) !exit = exit $ EdhBool $ b /= 0
   fromEdh' !v _naExit !exit =
     edhValueNullTx v $ \ !b -> exit $ YesNo $ if b then 0 else 1
 
 instance {-# OVERLAPPABLE #-} EdhXchg Text where
+  edhDefaultValue = ""
   toEdh !s !exit = exit $ EdhString s
   fromEdh' (EdhString !s) _naExit !exit = exit s
   fromEdh' !v _naExit !exit = edhValueReprTx v exit
 
 instance {-# OVERLAPPABLE #-} EdhXchg Char where
+  edhDefaultValue = '\0'
   toEdh !s !exit = exit $ EdhString $ T.singleton s
   fromEdh' !v naExit !exit = case edhUltimate v of
     EdhString !s -> case T.uncons s of
@@ -70,14 +77,17 @@ instance {-# OVERLAPPABLE #-} EdhXchg Char where
     _ -> naExit
 
 instance {-# OVERLAPPABLE #-} EdhXchg Double where
+  edhDefaultValue = 0 / 0
   toEdh !n !exit = exit $ EdhDecimal $ D.decimalFromRealFloat n
   fromEdh' = coerceEdhToFloat
 
 instance {-# OVERLAPPABLE #-} EdhXchg Float where
+  edhDefaultValue = 0 / 0
   toEdh !n !exit = exit $ EdhDecimal $ D.decimalFromRealFloat n
   fromEdh' = coerceEdhToFloat
 
 instance {-# OVERLAPPABLE #-} (Integral a, Typeable a) => EdhXchg a where
+  edhDefaultValue = 0
   toEdh !n !exit = exit $ EdhDecimal $ fromIntegral n
   fromEdh' = coerceEdhToIntegral
 

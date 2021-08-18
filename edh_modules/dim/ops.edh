@@ -1,5 +1,5 @@
 {##
- # Resemble Numpy vectorized operations, with simplified `ufunc`s
+ # Resemble Numpy vectorized operations, with folding operations
  #}
 
 
@@ -10,14 +10,14 @@ export {
   method sum( col ) fold( add, col )
   method nansum( col ) fold( add'valid, col )
 
-  method cumsum( col ) scan( add, col )
-  method nancumsum( col ) scan( add'valid, col )
+  method cumsum( col ) scanl( add, 0, col )
+  method nancumsum( col ) scanl( add'valid, 0, col )
 
 
   method prod( col ) fold( multiply, col )
   method nanprod( col ) fold( multiply'valid, col )
 
-  method cumprod( col ) scan( multiply, col )
-  method nancumprod( col ) scan( multiply'valid, col )
+  method cumprod( col ) scanl( multiply, 1, col )
+  method nancumprod( col ) scanl( multiply'valid, 1, col )
 
 }

@@ -17,14 +17,14 @@ import Foreign hiding (void)
 import Language.Edh.EHI
 import Prelude
 
-data InMemDevCol a = (EdhXchg a, Storable a, Typeable a) =>
+data InMemDevCol a = (Eq a, Storable a, EdhXchg a, Typeable a) =>
   InMemDevCol
   { im'devcol'storage :: !(TMVar (DeviceArray a)),
     im'devcol'length :: !(TVar Int)
   }
 
 instance
-  (EdhXchg a, Storable a, Typeable a) =>
+  (Eq a, Storable a, EdhXchg a, Typeable a) =>
   ManagedColumn InMemDevCol DeviceArray a
   where
   view'column'data (InMemDevCol csv clv) !exit !ets = do
@@ -136,6 +136,18 @@ instance
                       exit
                       (StayComposed, InMemDevCol csvNew clvNew)
 
+  derive'new'column (InMemDevCol csv clv) !sizer (!deriver, !exit) = do
+    (!cs, !cl) <- atomically $ do
+      !cs <- readTMVar csv
+      !cl <- readTVar clv
+      return (cs, cl)
+    let !cap' = sizer (cs, cl, deviceArrayCapacity cs)
+    (_, !cs') <- newDeviceArray cap'
+    !cl' <- deriver (cs, cl) (cs', cap')
+    !csv' <- newTMVarIO cs'
+    !clv' <- newTVarIO cl'
+    exit $ InMemDevCol csv' clv'
+
   extract'column'bool (InMemDevCol csv clv) !idxCol !exit !ets = do
     DeviceArray _cap (fp :: ForeignPtr a) <- readTMVar csv
     !cl <- readTVar clv
@@ -192,14 +204,14 @@ instance
           !clvNew <- newTVar idxl
           exitEdh ets exit (StayComposed, InMemDevCol csvNew clvNew)
 
-data InMemDirCol a = (EdhXchg a, Eq a, Typeable a) =>
+data InMemDirCol a = (Eq a, EdhXchg a, Typeable a) =>
   InMemDirCol
   { im'devdir'storage :: !(TMVar (DirectArray a)),
     im'devdir'length :: !(TVar Int)
   }
 
 instance
-  (EdhXchg a, Eq a, Typeable a) =>
+  (Eq a, EdhXchg a, Typeable a) =>
   ManagedColumn InMemDirCol DirectArray a
   where
   view'column'data (InMemDirCol csv clv) !exit !ets = do
@@ -310,6 +322,18 @@ instance
                       ets
                       exit
                       (StayComposed, InMemDirCol csvNew clvNew)
+
+  derive'new'column (InMemDirCol csv clv) !sizer (!deriver, !exit) = do
+    (!cs, !cl) <- atomically $ do
+      !cs <- readTMVar csv
+      !cl <- readTVar clv
+      return (cs, cl)
+    let !cap' = sizer (cs, cl, directArrayCapacity cs)
+    (_, !cs') <- newDirectArray @a cap'
+    !cl' <- deriver (cs, cl) (cs', cap')
+    !csv' <- newTMVarIO cs'
+    !clv' <- newTVarIO cl'
+    exit $ InMemDirCol csv' clv'
 
   extract'column'bool (InMemDirCol csv clv) !idxCol !exit !ets = do
     DirectArray !iov <- readTMVar csv

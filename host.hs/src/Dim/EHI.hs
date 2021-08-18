@@ -89,8 +89,9 @@ installDimBatteries !world = do
             | (nm, def) <-
                 [ ("fold", defineComputMethod foldComput),
                   ("foldl", defineComputMethod foldlComput),
-                  ("foldr", defineComputMethod foldrComput)
-                  -- ( "scan", defineComputMethod  scanComput)
+                  ("foldr", defineComputMethod foldrComput),
+                  ("scanl", defineComputMethod scanlComput),
+                  ("scanr", defineComputMethod scanrComput)
                 ]
           ]
 

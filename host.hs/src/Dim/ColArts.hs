@@ -174,7 +174,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
 
               vecOp =
                 view'column'data col $ \(cs, cl) -> edhContIO $ do
-                  (iov, csResult) <- newDirectArray @EdhValue edhNA cl
+                  (iov, csResult) <- newDirectArray @EdhValue cl
                   let go i
                         | i < 0 = atomically $ do
                           csvResult <- newTMVar csResult
@@ -207,7 +207,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
                             <> " vs "
                             <> T.pack (show cl')
                       else edhContIO $ do
-                        (iov, csResult) <- newDirectArray @EdhValue edhNA cl
+                        (iov, csResult) <- newDirectArray @EdhValue cl
                         let go i
                               | i < 0 = atomically $ do
                                 csvResult <- newTMVar csResult
@@ -940,7 +940,7 @@ dirColOpProc !op !other !exit !ets = runEdhTx ets $
         vecOp =
           view'column'data col $ \(cs, cl) ->
             fromEdh' @a other naExit $ \rhv -> edhContIO $ do
-              (iov, csResult) <- newDirectArray @a undefined cl
+              (iov, csResult) <- newDirectArray @a cl
               let go i
                     | i < 0 = return ()
                     | otherwise = do
@@ -966,7 +966,7 @@ dirColOpProc !op !other !exit !ets = runEdhTx ets $
                       <> " vs "
                       <> T.pack (show cl')
                 else edhContIO $ do
-                  (iov, csResult) <- newDirectArray @a undefined cl
+                  (iov, csResult) <- newDirectArray @a cl
                   let go i
                         | i < 0 = return ()
                         | otherwise = do
@@ -1112,7 +1112,7 @@ createColumnClass !defaultDt !clsOuterScope =
             direct'data'defv'holder dt $ \(fill'val :: a) ->
               runEdhTx etsCtor $
                 edhContIO $ do
-                  (_iov, !cs) <- newDirectArray @a fill'val ctorCap
+                  (_iov, !cs) <- newDirectArray' @a fill'val ctorCap
                   atomically $ do
                     !csv <- newTMVar cs
                     !clv <- newTVar ctorLen

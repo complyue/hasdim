@@ -4,6 +4,7 @@ module Dim.Fold where
 
 import Control.Concurrent.STM
 import Control.Monad
+import Data.Dynamic
 import qualified Data.Lossless.Decimal as D
 import Data.Maybe
 import Data.Typeable hiding (TypeRep, typeOf, typeRep)
@@ -152,39 +153,103 @@ foldrComput
           dtMismatch =
             throwEdhTx UsageError "bug: Column mismatch its dtype"
 
-{-
-
-scanOpProc ::
-  "col" !: Object ->
-  "identityVal" !: EdhValue ->
-  "associativeOp" !: (Text -> Dynamic) ->
-  EdhHostProc
-scanOpProc
-  (mandatoryArg -> !colThat)
-  (mandatoryArg -> !identVal)
-  (mandatoryArg -> !getOp)
-  !exit
-  !ets = withDerivedHostObject ets colThat $ \ !colThis (Column !col) -> do
-    let !dt = data'type'of'column col
-        !ident = edhUltimate identVal
-        exitWithNewClone !colResult =
-          edhCloneHostObj ets colThis colThat colResult $
-            \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
-    !cs <- view'column'data col
-    !cl <- read'column'length col
-    resolveDataOperator' ets (data'type'identifier dt) cs naExit $
-      \ !dtOp -> do
-        let !fa = unsafeSliceFlatArray cs 0 cl
-        let !dop = getOp (data'type'identifier dt)
-        case fromDynamic dop of
-          Just EdhNil -> naExit
-          _ -> flat'op'scan dtOp ets fa dop ident $ \ !bifa -> do
-            !bicsv <- newTVar bifa
-            !biclv <- newTVar cl
-            exitWithNewClone $ Column $ InMemColumn dt bicsv biclv
+scanlComput ::
+  "fop" @: HostValue FoldOp ->
+  "start" @: EdhValue ->
+  "colObj" @: Object ->
+  ComputEdh_
+scanlComput
+  (appliedArg -> HostValue (FoldOp !fop) _)
+  (appliedArg -> !startVal)
+  (appliedArg -> !colObj) = ComputEdh_ comput
     where
-      naExit = exitEdh ets exit edhNA
--}
+      comput :: EdhTxExit EdhValue -> EdhTx
+      comput !exit !ets = getColDtype colObj $ \ !dto ->
+        withDataType dto badColDt $ \(dt :: DataType a) -> do
+          let naExit =
+                throwEdhTx UsageError $
+                  "fold operation not applicable to dtype: "
+                    <> data'type'ident dt
+          runEdhTx ets $
+            left'fold fop dt dt naExit $ \ !op ->
+              withColumnOf @a colObj dtMismatch $ \colInst col ->
+                fromEdh startVal $ \ !start ->
+                  edhContIO $
+                    derive'new'column
+                      col
+                      (\(_cs, cl, _cap) -> cl)
+                      ( \(cs, cl) (cs', _cap) -> do
+                          let go i v
+                                | i >= cl = return cl
+                                | otherwise = do
+                                  e <- array'reader cs i
+                                  let v' = op v e
+                                  array'writer cs' i v'
+                                  go (i + 1) v'
+                          go 0 start,
+                        \col' ->
+                          atomically $ do
+                            !newColObj <-
+                              edhCreateHostObj'
+                                (edh'obj'class colInst)
+                                (toDyn $ someColumn col')
+                                [dto]
+                            exitEdh ets exit $ EdhObject newColObj
+                      )
+        where
+          badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
+            throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
+          dtMismatch =
+            throwEdhTx UsageError "bug: Column mismatch its dtype"
+
+scanrComput ::
+  "fop" @: HostValue FoldOp ->
+  "start" @: EdhValue ->
+  "colObj" @: Object ->
+  ComputEdh_
+scanrComput
+  (appliedArg -> HostValue (FoldOp !fop) _)
+  (appliedArg -> !startVal)
+  (appliedArg -> !colObj) = ComputEdh_ comput
+    where
+      comput :: EdhTxExit EdhValue -> EdhTx
+      comput !exit !ets = getColDtype colObj $ \ !dto ->
+        withDataType dto badColDt $ \(dt :: DataType a) -> do
+          let naExit =
+                throwEdhTx UsageError $
+                  "fold operation not applicable to dtype: "
+                    <> data'type'ident dt
+          runEdhTx ets $
+            left'fold fop dt dt naExit $ \ !op ->
+              withColumnOf @a colObj dtMismatch $ \colInst col ->
+                fromEdh startVal $ \ !start ->
+                  edhContIO $
+                    derive'new'column
+                      col
+                      (\(_cs, cl, _cap) -> cl)
+                      ( \(cs, cl) (cs', _cap) -> do
+                          let go i v
+                                | i < 0 = return cl
+                                | otherwise = do
+                                  e <- array'reader cs i
+                                  let v' = op e v
+                                  array'writer cs' i v'
+                                  go (i - 1) v'
+                          go (cl - 1) start,
+                        \col' ->
+                          atomically $ do
+                            !newColObj <-
+                              edhCreateHostObj'
+                                (edh'obj'class colInst)
+                                (toDyn $ someColumn col')
+                                [dto]
+                            exitEdh ets exit $ EdhObject newColObj
+                      )
+        where
+          badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
+            throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
+          dtMismatch =
+            throwEdhTx UsageError "bug: Column mismatch its dtype"
 
 -- * Implemented Folding Operations
 

@@ -63,6 +63,17 @@ class
     EdhTxExit (InstanceDisposition, c a) ->
     EdhTx
 
+  derive'new'column ::
+    c a ->
+    ((f a, ArrayLength, ArrayCapacity) -> ArrayCapacity) ->
+    ( forall c' f'.
+      ManagedColumn c' f' a =>
+      ( (f a, ArrayLength) -> (f' a, ArrayCapacity) -> IO ArrayLength,
+        c' a -> IO ()
+      )
+    ) ->
+    IO ()
+
   -- extract elements by a mask column of the same shape
   extract'column'bool ::
     forall c' f'.
