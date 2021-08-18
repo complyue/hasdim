@@ -1122,7 +1122,8 @@ createColumnClass !defaultDt !clsOuterScope =
                           SomeColumn (typeRep @DirectArray) $
                             InMemDirCol @a csv clv
         where
-          badDtype = throwEdh etsCtor UsageError "invalid dtype"
+          badDtype = edhSimpleDesc etsCtor (EdhObject dto) $ \ !badDesc ->
+            throwEdh etsCtor UsageError $ "invalid dtype: " <> badDesc
 
     col__init__ ::
       "capacity" !: Int ->
@@ -1214,7 +1215,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colReprProc :: EdhHostProc
     colReprProc !exit = withColumnSelf $ \ !objCol !col !ets ->
-      getColDtype objCol $ \ !dto -> runEdhTx ets $
+      getColDtype ets objCol $ \ !dto -> runEdhTx ets $
         edhValueReprTx (EdhObject dto) $
           \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
             let colRepr =
@@ -1230,7 +1231,7 @@ createColumnClass !defaultDt !clsOuterScope =
     colShowProc :: EdhHostProc
     colShowProc !exit =
       withColumnSelf $ \ !objCol !col !ets ->
-        getColDtype objCol $ \ !dto -> runEdhTx ets $
+        getColDtype ets objCol $ \ !dto -> runEdhTx ets $
           edhValueReprTx (EdhObject dto) $
             \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
               let colRepr =
@@ -1581,7 +1582,7 @@ createColumnClass !defaultDt !clsOuterScope =
             StayComposed ->
               edhCloneHostObj ets objCol objCol col' $
                 \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
-            ExtractAlone -> getColDtype objCol $ \ !dto ->
+            ExtractAlone -> getColDtype ets objCol $ \ !dto ->
               edhCreateHostObj'
                 (edh'obj'class objCol)
                 (toDyn col')
@@ -1589,7 +1590,7 @@ createColumnClass !defaultDt !clsOuterScope =
                 >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
     colDtypeProc :: EdhHostProc
-    colDtypeProc !exit !ets = getColDtype this $ exitEdh ets exit . EdhObject
+    colDtypeProc !exit !ets = getColDtype ets this $ exitEdh ets exit . EdhObject
       where
         scope = contextScope $ edh'context ets
         this = edh'scope'this scope

@@ -2,15 +2,7 @@ module Dim.DbArts where
 
 -- import           Debug.Trace
 
-{-
-
 import Control.Concurrent.STM
-  ( STM,
-    atomically,
-    newEmptyTMVarIO,
-    readTMVar,
-    throwSTM,
-  )
 import Data.Dynamic (toDyn)
 import qualified Data.Lossless.Decimal as D
 import Data.Text (Text)
@@ -19,8 +11,11 @@ import Dim.Column
 import Dim.DataType
 import Dim.DbArray
 import Dim.DiskBack
+import Dim.XCHG
+import Foreign
 import GHC.Conc (unsafeIOToSTM)
 import Language.Edh.EHI
+import Type.Reflection
 import Prelude
 
 createDbArrayClass :: Object -> Object -> Scope -> STM Object
@@ -31,24 +26,27 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
         sequence $
           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
             | (nm, vc, hp) <-
-                [ ("__len__", EdhMethod, wrapHostProc aryLen1dGetter),
-                  ("__mark__", EdhMethod, wrapHostProc aryLen1dSetter),
-                  ("([])", EdhMethod, wrapHostProc aryIdxReadProc),
-                  ("([=])", EdhMethod, wrapHostProc aryIdxWriteProc),
-                  ("__repr__", EdhMethod, wrapHostProc aryReprProc),
-                  ("__show__", EdhMethod, wrapHostProc aryShowProc),
-                  ("(@<-)", EdhMethod, wrapHostProc aryDeleAttrProc),
-                  ("asColumn", EdhMethod, wrapHostProc aryAsColProc)
+                [ ("__init__", EdhMethod, wrapHostProc col__init__)
+                -- ,
+                -- ("__len__", EdhMethod, wrapHostProc aryLen1dGetter),
+                -- ("__mark__", EdhMethod, wrapHostProc aryLen1dSetter),
+                -- ("([])", EdhMethod, wrapHostProc aryIdxReadProc),
+                -- ("([=])", EdhMethod, wrapHostProc aryIdxWriteProc),
+                -- ("__repr__", EdhMethod, wrapHostProc aryReprProc),
+                -- ("__show__", EdhMethod, wrapHostProc aryShowProc),
+                -- ("(@<-)", EdhMethod, wrapHostProc aryDeleAttrProc),
+                -- ("asColumn", EdhMethod, wrapHostProc aryAsColProc)
                 ]
           ]
             ++ [ (AttrByName nm,) <$> mkHostProperty clsScope nm getter setter
                  | (nm, getter, setter) <-
                      [ ("dir", aryDirGetter, Nothing),
-                       ("path", aryPathGetter, Nothing),
-                       ("dtype", aryDtypeGetter, Nothing),
-                       ("size", arySizeGetter, Nothing),
-                       ("shape", aryShapeGetter, Nothing),
-                       ("len1d", aryLen1dGetter, Just aryLen1dSetter)
+                       ("path", aryPathGetter, Nothing)
+                       --  ,
+                       --  ("dtype", aryDtypeGetter, Nothing),
+                       --  ("size", arySizeGetter, Nothing),
+                       --  ("shape", aryShapeGetter, Nothing),
+                       --  ("len1d", aryLen1dGetter, Just aryLen1dSetter)
                      ]
                ]
       iopdUpdate mths $ edh'scope'entity clsScope
@@ -67,59 +65,95 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
       (optionalArg -> !maybeShape)
       _ctorOtherArgs
       !ctorExit
-      !etsCtor =
-        castObjectStore dto >>= \case
-          Nothing -> throwEdh etsCtor UsageError "invalid dtype"
-          Just (_, !dt) -> case data'type'proxy dt of
-            DeviceDataType {} -> case maybeShape of
-              Nothing -> runEdhTx etsCtor $ edhContIO $ goMemMap dt Nothing
-              Just !shapeVal -> parseArrayShape etsCtor shapeVal $
-                \ !shape ->
-                  runEdhTx etsCtor $ edhContIO $ goMemMap dt $ Just shape
-            HostDataType {} ->
-              throwEdh etsCtor UsageError $
-                "can not mmap as host dtype: "
-                  <> data'type'identifier dt
+      !etsCtor = withDataType dto badDtype $ \case
+        DirectDt _ ->
+          throwEdh etsCtor UsageError "DbArray only works with device dtype"
+        DeviceDt dt -> device'data'type'holder dt $
+          \(_ :: TypeRep a) -> case maybeShape of
+            Nothing ->
+              runEdhTx etsCtor $ edhContIO $ goMemMap @a Nothing
+            Just !shapeVal -> parseArrayShape etsCtor shapeVal $
+              \ !shape ->
+                runEdhTx etsCtor $ edhContIO $ goMemMap @a $ Just shape
         where
-          goMemMap :: DataType -> Maybe ArrayShape -> IO ()
-          goMemMap !dt !mmapShape = do
+          badDtype = edhSimpleDesc etsCtor (EdhObject dto) $ \ !badDesc ->
+            throwEdh etsCtor UsageError $ "invalid dtype: " <> badDesc
+
+          goMemMap ::
+            forall a.
+            (Storable a, EdhXchg a, Typeable a) =>
+            Maybe ArrayShape ->
+            IO ()
+          goMemMap !mmapShape = do
             !asVar <- newEmptyTMVarIO
-            mmapDbArray asVar dataDir dataPath dt mmapShape
+            mmapDbArray @a asVar dataDir dataPath mmapShape
             atomically $
               readTMVar asVar >>= \case
                 Left !err -> throwSTM err
                 Right {} ->
                   ctorExit Nothing $
-                    HostStore $ toDyn $ DbArray dataDir dataPath dt asVar
+                    HostStore $ toDyn $ DbArray dataDir dataPath asVar
+
+    col__init__ ::
+      "dataDir" !: Text ->
+      "dataPath" !: Text ->
+      "dtype" ?: Object ->
+      "shape" ?: EdhValue ->
+      ArgsPack -> -- allow/ignore arbitrary ctor args for descendant classes
+      EdhHostProc
+    col__init__
+      _dataDir
+      _dataPath
+      (defaultArg defaultDt -> !dto)
+      _maybeShape
+      _ctorOtherArgs
+      !exit
+      !ets = do
+        supers <- readTVar $ edh'obj'supers that
+        extendsDt $ that : supers
+        exitEdh ets exit nil
+        where
+          scope = contextScope $ edh'context ets
+          this = edh'scope'this scope
+          that = edh'scope'that scope
+
+          extendsDt :: [Object] -> STM ()
+          extendsDt [] = return ()
+          extendsDt (o : rest) = do
+            modifyTVar' (edh'obj'supers o) (++ [dto])
+            if o == this
+              then return ()
+              else extendsDt rest
 
     aryDirGetter :: EdhHostProc
-    aryDirGetter !exit !ets = withThisHostObj ets $
-      \ !ary -> exitEdh ets exit $ EdhString $ db'array'dir ary
+    aryDirGetter !exit = withDbColumnSelf $ \_dbcObj (DbColumn !dba _offs) ->
+      exitEdhTx exit $ EdhString $ db'array'dir dba
 
     aryPathGetter :: EdhHostProc
-    aryPathGetter !exit !ets = withThisHostObj ets $
-      \ !ary -> exitEdh ets exit $ EdhString $ db'array'path ary
+    aryPathGetter !exit = withDbColumnSelf $ \_dbcObj (DbColumn !dba _offs) ->
+      exitEdhTx exit $ EdhString $ db'array'path dba
 
+{-
     aryDtypeGetter :: EdhHostProc
     aryDtypeGetter !exit !ets = withThisHostObj ets $ \ !ary ->
       exitEdh ets exit $ EdhString $ data'type'identifier $ db'array'dtype ary
 
     arySizeGetter :: EdhHostProc
-    arySizeGetter !exit !ets = withThisHostObj ets $ \(DbArray _ _ _ !das) ->
-      readTMVar das >>= \case
+    arySizeGetter !exit !ets = withThisHostObj ets $ \ !dba ->
+      readTMVar (db'array'store dba) >>= \case
         Right (!shape, _, _) ->
           exitEdh ets exit $ EdhDecimal $ fromIntegral $ dbArraySize shape
         Left !err -> throwSTM err
 
     aryShapeGetter :: EdhHostProc
-    aryShapeGetter !exit !ets = withThisHostObj ets $ \(DbArray _ _ _ !das) ->
-      readTMVar das >>= \case
+    aryShapeGetter !exit !ets = withThisHostObj ets $ \ !dba ->
+      readTMVar (db'array'store dba) >>= \case
         Right (!shape, _, _) -> exitEdh ets exit $ edhArrayShape shape
         Left !err -> throwSTM err
 
     aryLen1dGetter :: EdhHostProc
-    aryLen1dGetter !exit !ets = withThisHostObj ets $ \(DbArray _ _ _ !das) ->
-      readTMVar das >>= \case
+    aryLen1dGetter !exit !ets = withThisHostObj ets $ \ !dba ->
+      readTMVar (db'array'store dba) >>= \case
         Right (_, !hdrPtr, _) ->
           unsafeIOToSTM (readDbArrayLength hdrPtr)
             >>= exitEdh ets exit
@@ -137,8 +171,8 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
             "bad len1d value: "
               <> T.pack
                 (show newLen1dNum)
-        Just !newLen1d -> withThisHostObj ets $ \(DbArray _ _ _ !das) ->
-          readTMVar das >>= \case
+        Just !newLen1d -> withThisHostObj ets $ \ !dba ->
+          readTMVar (db'array'store dba) >>= \case
             Right (_, !hdrPtr, _) -> do
               unsafeIOToSTM (writeDbArrayLength hdrPtr $ fromInteger newLen1d)
               exitEdh ets exit $ EdhDecimal $ fromInteger newLen1d
@@ -148,7 +182,7 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
 
     aryReprProc :: EdhHostProc
     aryReprProc !exit !ets =
-      withThisHostObj ets $ \(DbArray !dir !path !dt !das) ->
+      withThisHostObj ets $ \(DbArray !dir !path !das) ->
         readTMVar das >>= \case
           Left !err -> throwSTM err
           Right (!shape, _, _) ->
@@ -166,7 +200,7 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
 
     aryShowProc :: EdhHostProc
     aryShowProc !exit !ets =
-      withThisHostObj ets $ \(DbArray _dir _path !dt !das) ->
+      withThisHostObj ets $ \(DbArray _dir _path !das) ->
         readTMVar das >>= \case
           Left !err -> throwSTM err
           Right (_shape, !hdr, !fa) -> do
@@ -232,7 +266,7 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
 
     aryIdxReadProc :: EdhValue -> EdhHostProc
     aryIdxReadProc !idxVal !exit !ets =
-      withThisHostObj ets $ \(DbArray _ _ !dt !das) ->
+      withThisHostObj ets $ \(DbArray _ _ !das) ->
         readTMVar das >>= \case
           Left !err -> throwSTM err
           Right (!shape, _, !fa) -> case edhUltimate idxVal of
@@ -249,7 +283,7 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
     aryIdxWriteProc !idxVal (optionalArg -> !maybeToVal) !exit !ets =
       case maybeToVal of
         Nothing -> throwEdh ets UsageError "you can not delete array content"
-        Just !dv -> withThisHostObj ets $ \(DbArray _ _ !dt !das) ->
+        Just !dv -> withThisHostObj ets $ \(DbArray _ _ !das) ->
           readTMVar das >>= \case
             Left !err -> throwSTM err
             Right (!shape, _, fa) -> case edhUltimate idxVal of

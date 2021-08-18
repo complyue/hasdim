@@ -198,11 +198,17 @@ withColumnSelf !colExit !ets = do
       Nothing -> withComposition rest
       Just (SomeColumn _ col) -> runEdhTx ets $ colExit o col
 
-getColDtype :: Object -> (Object -> STM ()) -> STM ()
-getColDtype !objCol !exit = readTVar (edh'obj'supers objCol) >>= findSuperDto
+getColDtype :: EdhThreadState -> Object -> (Object -> STM ()) -> STM ()
+getColDtype ets !objCol = getColDtype' objCol $
+  edhSimpleDesc ets (EdhObject objCol) $ \ !badDesc ->
+    throwEdh ets UsageError $ "not a Column with dtype: " <> badDesc
+
+getColDtype' :: Object -> STM () -> (Object -> STM ()) -> STM ()
+getColDtype' !objCol naExit !exit =
+  readTVar (edh'obj'supers objCol) >>= findSuperDto
   where
     findSuperDto :: [Object] -> STM ()
-    findSuperDto [] = error "bug: no dtype super for column"
+    findSuperDto [] = naExit
     -- this is right and avoids unnecessary checks in vastly usual cases
     findSuperDto [dto] = exit dto
     -- safe guard in case a Column instance has been further extended
@@ -227,7 +233,7 @@ sliceColumn !objCol !col !start !stop !step !exit =
     withSliced (disp, col') !ets = case disp of
       StayComposed -> edhCloneHostObj ets objCol objCol col' $
         \ !objCol' -> exit (objCol', col') ets
-      ExtractAlone -> getColDtype objCol $ \ !dto ->
+      ExtractAlone -> getColDtype ets objCol $ \ !dto ->
         edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
           >>= \ !objCol' -> exit (objCol', col') ets
 
@@ -241,7 +247,7 @@ extractColumnBool ::
   EdhTx
 extractColumnBool !objCol !col !colMask !exit =
   extract'column'bool col colMask $ \ !col' !ets ->
-    getColDtype objCol $ \ !dto ->
+    getColDtype ets objCol $ \ !dto ->
       edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
         >>= \ !objCol' -> exitEdh ets exit (objCol', col')
 
@@ -255,6 +261,6 @@ extractColumnFancy ::
   EdhTx
 extractColumnFancy !objCol !col !colIdxs !exit =
   extract'column'fancy col colIdxs $ \ !col' !ets ->
-    getColDtype objCol $ \ !dto ->
+    getColDtype ets objCol $ \ !dto ->
       edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
         >>= \ !objCol' -> exitEdh ets exit (objCol', col')

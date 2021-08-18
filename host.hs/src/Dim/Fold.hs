@@ -54,7 +54,7 @@ foldComput
   (appliedArg -> !colObj) = ComputEdh_ comput
     where
       comput :: EdhTxExit EdhValue -> EdhTx
-      comput !exit !ets = getColDtype colObj $
+      comput !exit !ets = getColDtype ets colObj $
         \ !dto -> withDataType dto badColDt $ \(dt :: DataType a) -> do
           let dtMismatch =
                 throwEdhTx UsageError "bug: Column mismatch its dtype"
@@ -91,7 +91,7 @@ foldlComput
   (appliedArg -> !colObj) = ComputEdh_ comput
     where
       comput :: EdhTxExit EdhValue -> EdhTx
-      comput !exit !ets = getColDtype colObj $ \ !dto ->
+      comput !exit !ets = getColDtype ets colObj $ \ !dto ->
         withDataType dto badColDt $ \(dt :: DataType a) -> do
           let naExit =
                 throwEdhTx UsageError $
@@ -127,7 +127,7 @@ foldrComput
   (appliedArg -> !colObj) = ComputEdh_ comput
     where
       comput :: EdhTxExit EdhValue -> EdhTx
-      comput !exit !ets = getColDtype colObj $
+      comput !exit !ets = getColDtype ets colObj $
         \ !dto ->
           withDataType dto badColDt $ \(dt :: DataType a) -> do
             let naExit =
@@ -164,7 +164,7 @@ scanlComput
   (appliedArg -> !colObj) = ComputEdh_ comput
     where
       comput :: EdhTxExit EdhValue -> EdhTx
-      comput !exit !ets = getColDtype colObj $ \ !dto ->
+      comput !exit !ets = getColDtype ets colObj $ \ !dto ->
         withDataType dto badColDt $ \(dt :: DataType a) -> do
           let naExit =
                 throwEdhTx UsageError $
@@ -213,7 +213,7 @@ scanrComput
   (appliedArg -> !colObj) = ComputEdh_ comput
     where
       comput :: EdhTxExit EdhValue -> EdhTx
-      comput !exit !ets = getColDtype colObj $ \ !dto ->
+      comput !exit !ets = getColDtype ets colObj $ \ !dto ->
         withDataType dto badColDt $ \(dt :: DataType a) -> do
           let naExit =
                 throwEdhTx UsageError $

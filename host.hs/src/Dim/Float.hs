@@ -50,9 +50,9 @@ piProc !defaultDt !colClass !cap (defaultArg defaultDt -> !dto) !exit !ets =
     notFloatDt dti = throwEdh ets UsageError $ "not a floating dtype: " <> dti
 
 floatOpProc ::
-  (forall a. Floating a => a -> a) -> "colObj" !: Object -> EdhHostProc
+  (forall a. Floating a => a -> a) -> "col" !: Object -> EdhHostProc
 floatOpProc !fop (mandatoryArg -> !colObj) !exit !ets =
-  getColDtype colObj $ \ !dto -> runEdhTx ets $ do
+  getColDtype ets colObj $ \ !dto -> runEdhTx ets $ do
     let badDtype = edhSimpleDescTx (EdhObject dto) $ \ !badDesc ->
           throwEdhTx UsageError $ "invalid dtype: " <> badDesc
     withDataType dto badDtype $ \case
