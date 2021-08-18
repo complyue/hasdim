@@ -64,6 +64,9 @@ data DeviceDataType a' = DeviceDataType
       r
   }
 
+instance Eq (DeviceDataType a) where
+  x == y = device'data'type'ident x == device'data'type'ident y
+
 -- | Lifted Haskell types directly operatable by the host language
 data DirectDataType a' = DirectDataType
   { direct'data'type'ident :: !DataTypeIdent,
@@ -95,6 +98,9 @@ data DirectDataType a' = DirectDataType
       r
   }
 
+instance Eq (DirectDataType a) where
+  x == y = direct'data'type'ident x == direct'data'type'ident y
+
 type DataTypeIdent = AttrName
 
 -- | A data type conveys the representation as well as its relevant type class
@@ -104,36 +110,35 @@ type DataTypeIdent = AttrName
 -- note: need separate data constructors along respective ADTs because GHC does
 --       not yet support impredicative polymorphism
 data DataType a
-  = Typeable a => DeviceDt !(DeviceDataType a)
-  | Typeable a => DirectDt !(DirectDataType a)
+  = (EdhXchg a, Typeable a) => DeviceDt !(DeviceDataType a)
+  | (EdhXchg a, Typeable a) => DirectDt !(DirectDataType a)
 
 data'type'ident :: DataType a -> DataTypeIdent
 data'type'ident (DeviceDt dt) = device'data'type'ident dt
 data'type'ident (DirectDt dt) = direct'data'type'ident dt
 
 instance Eq (DataType a) where
-  DeviceDt x == DeviceDt y =
-    device'data'type'holder x $ \x'tr -> device'data'type'holder y $ \y'tr ->
-      case x'tr `eqTypeRep` y'tr of
-        Just HRefl
-          | device'data'type'ident x == device'data'type'ident y -> True
-        _ -> False
-  DirectDt x == DirectDt y =
-    direct'data'defv'holder x $ \x'defv ->
-      direct'data'defv'holder y $ \y'defv ->
-        case typeOf x'defv `eqTypeRep` typeOf y'defv of
-          Just HRefl
-            | direct'data'type'ident x == direct'data'type'ident y
-                && x'defv == y'defv ->
-              True
-          _ -> False
-  _ == _ = False
+  x == y = data'type'ident x == data'type'ident y
 
-eqDataType ::
-  forall a b. (Typeable a, Typeable b) => DataType a -> DataType b -> Bool
-eqDataType x y = case eqT of
-  Nothing -> False
-  Just (Refl :: a :~: b) -> x == y
+-- | Heterogeneous data type comparison
+--
+-- Also witness the equality of their encapsulated type, as with a positive
+-- result
+eqDataType :: forall a b. DataType a -> DataType b -> Maybe (a :~: b)
+-- note: case-of pattern match is needed to bring the encapsulated type
+--       parameter into scope, we need their witness of the 'Typeable' instance
+--       so this function can be free of that constraint
+eqDataType x y = case x of
+  DeviceDt dt'x -> case y of
+    DeviceDt dt'y -> case eqT of
+      Just (Refl :: a :~: b) | dt'x == dt'y -> Just Refl
+      _ -> Nothing
+    _ -> Nothing
+  DirectDt dt'x -> case y of
+    DirectDt dt'y -> case eqT of
+      Just (Refl :: a :~: b) | dt'x == dt'y -> Just Refl
+      _ -> Nothing
+    _ -> Nothing
 
 {- HLINT ignore "Use const" -}
 
@@ -240,7 +245,7 @@ dtypeEqProc :: EdhValue -> EdhHostProc
 dtypeEqProc !other !exit !ets = case edhUltimate other of
   EdhObject !objOther -> withDataType objOther exitNeg $ \ !dtOther ->
     withDataType this badSelf $ \ !dtSelf ->
-      exitEdh ets exit $ EdhBool $ dtOther `eqDataType` dtSelf
+      exitEdh ets exit $ EdhBool $ isJust $ dtOther `eqDataType` dtSelf
   _ -> exitNeg
   where
     this = edh'scope'this $ contextScope $ edh'context ets

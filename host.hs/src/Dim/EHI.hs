@@ -97,13 +97,13 @@ installDimBatteries !world = do
       !moduArts1 <-
         sequence
           [ (AttrByName "add",) . EdhObject
-              <$> edhWrapHostValue' ets "add" addOp,
+              <$> edhWrapHostValue' ets "add" (FoldOp FoldingAdd),
             (AttrByName "add'valid",) . EdhObject
-              <$> edhWrapHostValue' ets "add'valid" addValidOp,
+              <$> edhWrapHostValue' ets "add'valid" (FoldOp FoldingAddV),
             (AttrByName "multiply",) . EdhObject
-              <$> edhWrapHostValue' ets "multiply" mulOp,
+              <$> edhWrapHostValue' ets "multiply" (FoldOp FoldingMul),
             (AttrByName "multiply'valid",) . EdhObject
-              <$> edhWrapHostValue' ets "multiply'valid" mulValidOp
+              <$> edhWrapHostValue' ets "multiply'valid" (FoldOp FoldingMulV)
           ]
 
       let !moduArts = moduArts0 ++ moduArts1

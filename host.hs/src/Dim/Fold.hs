@@ -4,7 +4,6 @@ module Dim.Fold where
 
 import Control.Concurrent.STM
 import Control.Monad
-import Data.Dynamic
 import qualified Data.Lossless.Decimal as D
 import Data.Maybe
 import Data.Typeable hiding (TypeRep, typeOf, typeRep)
@@ -18,12 +17,32 @@ import Prelude
 
 -- * Support of Folding
 
-newtype FoldOp
-  = FoldOp
-      ( forall r.
-        ( forall a. DataType a -> r -> ((a -> a -> a) -> r) -> r
-        )
-      )
+class Folding f where
+  self'fold ::
+    f ->
+    forall r. (forall a. DataType a -> r -> ((a -> a -> a) -> r) -> r)
+
+  left'fold ::
+    f ->
+    forall r a b.
+    DataType a ->
+    DataType b ->
+    r ->
+    ((b -> a -> b) -> r) ->
+    r
+
+  right'fold ::
+    f ->
+    forall r a b.
+    DataType a ->
+    DataType b ->
+    r ->
+    ((a -> b -> b) -> r) ->
+    r
+  right'fold f dt'a dt'b naExit exit =
+    left'fold f dt'a dt'b naExit $ exit . flip
+
+data FoldOp = forall f. (Folding f) => FoldOp f
 
 foldComput ::
   "fop" @: HostValue FoldOp ->
@@ -42,7 +61,7 @@ foldComput
                 throwEdhTx UsageError $
                   "operation not applicable to dtype: " <> data'type'ident dt
           runEdhTx ets $
-            fop dt naExit $ \ !op ->
+            self'fold fop dt naExit $ \ !op ->
               withColumnOf @a colObj dtMismatch $ \_ col ->
                 view'column'data col $ \(cs, cl) ->
                   if cl < 1
@@ -60,102 +79,74 @@ foldComput
           badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
             throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
 
-data FoldlOp b
-  = (EdhXchg b, Typeable b) =>
-    FoldlOp (forall r a. DataType a -> r -> ((b -> a -> b) -> r) -> r)
-
 foldlComput ::
-  "fop" @: Object ->
+  "fop" @: HostValue FoldOp ->
   "start" @: EdhValue ->
   "colObj" @: Object ->
   ComputEdh_
 foldlComput
-  (appliedArg -> !fopObj)
+  (appliedArg -> HostValue (FoldOp !fop) _)
   (appliedArg -> !startVal)
   (appliedArg -> !colObj) = ComputEdh_ comput
     where
       comput :: EdhTxExit EdhValue -> EdhTx
-      comput !exit !ets = case dynamicHostData fopObj of
-        Nothing -> badOp
-        Just (Dynamic trFOP monotypedFOP) -> case trFOP of
-          App trCtor (_ :: TypeRep b) ->
-            case trCtor `eqTypeRep` (typeRep @FoldlOp) of
-              Nothing -> badOp
-              Just HRefl -> case monotypedFOP of
-                FoldlOp fop -> getColDtype colObj $ \ !dto ->
-                  withDataType dto badColDt $ \(dt :: DataType a) -> do
-                    let naExit =
-                          throwEdhTx UsageError $
-                            "fold operation not applicable to dtype: "
-                              <> data'type'ident dt
-                    runEdhTx ets $
-                      fop dt naExit $ \ !op ->
-                        withColumnOf @a colObj dtMismatch $ \_ col ->
-                          view'column'data col $ \(cs, cl) ->
-                            fromEdh startVal $ \ !start -> edhContIO $ do
-                              let go i v
-                                    | i >= cl =
-                                      atomically $
-                                        runEdhTx ets $ toEdh @b v exit
-                                    | otherwise = do
-                                      e <- array'reader cs i
-                                      go (i + 1) $ op v e
-                              go 0 start
-          _ -> badOp
+      comput !exit !ets = getColDtype colObj $ \ !dto ->
+        withDataType dto badColDt $ \(dt :: DataType a) -> do
+          let naExit =
+                throwEdhTx UsageError $
+                  "fold operation not applicable to dtype: "
+                    <> data'type'ident dt
+          runEdhTx ets $
+            left'fold fop dt dt naExit $ \ !op ->
+              withColumnOf @a colObj dtMismatch $ \_ col ->
+                view'column'data col $ \(cs, cl) ->
+                  fromEdh startVal $ \ !start -> edhContIO $ do
+                    let go i v
+                          | i >= cl =
+                            atomically $
+                              runEdhTx ets $ toEdh @a v exit
+                          | otherwise = do
+                            e <- array'reader cs i
+                            go (i + 1) $ op v e
+                    go 0 start
         where
-          badOp = edhSimpleDesc ets (EdhObject fopObj) $ \ !badDesc ->
-            throwEdh ets UsageError $ "bad foldl operation: " <> badDesc
           badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
             throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
           dtMismatch =
             throwEdhTx UsageError "bug: Column mismatch its dtype"
 
-data FoldrOp b
-  = (EdhXchg b, Typeable b) =>
-    FoldrOp (forall r a. DataType a -> r -> ((a -> b -> b) -> r) -> r)
-
 foldrComput ::
-  "fop" @: Object ->
+  "fop" @: HostValue FoldOp ->
   "start" @: EdhValue ->
   "colObj" @: Object ->
   ComputEdh_
 foldrComput
-  (appliedArg -> !fopObj)
+  (appliedArg -> HostValue (FoldOp !fop) _)
   (appliedArg -> !startVal)
   (appliedArg -> !colObj) = ComputEdh_ comput
     where
       comput :: EdhTxExit EdhValue -> EdhTx
-      comput !exit !ets = case dynamicHostData fopObj of
-        Nothing -> badOp
-        Just (Dynamic trFOP monotypedFOP) -> case trFOP of
-          App trCtor (_ :: TypeRep b) ->
-            case trCtor `eqTypeRep` (typeRep @FoldrOp) of
-              Nothing -> badOp
-              Just HRefl -> case monotypedFOP of
-                FoldrOp fop -> getColDtype colObj $
-                  \ !dto ->
-                    withDataType dto badColDt $ \(dt :: DataType a) -> do
-                      let naExit =
-                            throwEdhTx UsageError $
-                              "fold operation not applicable to dtype: "
-                                <> data'type'ident dt
-                      runEdhTx ets $
-                        fop dt naExit $ \ !op ->
-                          withColumnOf @a colObj dtMismatch $ \_ col ->
-                            view'column'data col $ \(cs, cl) ->
-                              fromEdh startVal $ \ !start -> edhContIO $ do
-                                let go i v
-                                      | i < 0 =
-                                        atomically $
-                                          runEdhTx ets $ toEdh @b v exit
-                                      | otherwise = do
-                                        e <- array'reader cs i
-                                        go (i - 1) $ op e v
-                                go (cl - 1) start
-          _ -> badOp
+      comput !exit !ets = getColDtype colObj $
+        \ !dto ->
+          withDataType dto badColDt $ \(dt :: DataType a) -> do
+            let naExit =
+                  throwEdhTx UsageError $
+                    "fold operation not applicable to dtype: "
+                      <> data'type'ident dt
+            runEdhTx ets $
+              right'fold fop dt dt naExit $ \ !op ->
+                withColumnOf @a colObj dtMismatch $ \_ col ->
+                  view'column'data col $ \(cs, cl) ->
+                    fromEdh startVal $ \ !start -> edhContIO $ do
+                      let go i v
+                            | i < 0 =
+                              atomically $
+                                runEdhTx ets $ toEdh @a v exit
+                            | otherwise = do
+                              e <- array'reader cs i
+                              go (i - 1) $ op e v
+                      go (cl - 1) start
         where
-          badOp = edhSimpleDesc ets (EdhObject fopObj) $ \ !badDesc ->
-            throwEdh ets UsageError $ "bad foldr operation: " <> badDesc
           badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
             throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
           dtMismatch =
@@ -197,58 +188,86 @@ scanOpProc
 
 -- * Implemented Folding Operations
 
-addOp :: FoldOp
-addOp = FoldOp $ \(gdt :: DataType a) naExit exit -> case gdt of
-  DeviceDt dt -> device'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
-    exit (+)
-  DirectDt dt -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
-    exit (+)
+data FoldingAdd = FoldingAdd
 
-addValidOp :: FoldOp
-addValidOp = FoldOp $ \(gdt :: DataType a) naExit exit -> case gdt of
-  DeviceDt dt -> do
-    let usualNum = device'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
-          exit (+)
-    device'data'type'as'of'float dt usualNum $ \(_ :: TypeRep a) ->
-      exit $ \lhs rhs ->
-        if
-            | isNaN lhs -> rhs
-            | isNaN rhs -> lhs
-            | otherwise -> lhs + rhs
-  DirectDt dt -> case eqT of
-    Just (Refl :: a :~: D.Decimal) ->
-      exit $ \lhs rhs ->
-        if
-            | D.decimalIsNaN lhs -> rhs
-            | D.decimalIsNaN rhs -> lhs
-            | otherwise -> lhs + rhs
-    Nothing -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+instance Folding FoldingAdd where
+  self'fold _ (gdt :: DataType a) naExit exit = case gdt of
+    DeviceDt dt -> device'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+      exit (+)
+    DirectDt dt -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
       exit (+)
 
-mulOp :: FoldOp
-mulOp = FoldOp $ \(gdt :: DataType a) naExit exit -> case gdt of
-  DeviceDt dt -> device'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
-    exit (*)
-  DirectDt dt -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
-    exit (*)
+  left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) naExit exit =
+    case gdt'a `eqDataType` gdt'b of
+      Just Refl -> self'fold f gdt'a naExit exit
+      _ -> naExit -- heterogeneous folding not yet supported
 
-mulValidOp :: FoldOp
-mulValidOp = FoldOp $ \(gdt :: DataType a) naExit exit -> case gdt of
-  DeviceDt dt -> do
-    let usualNum = device'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
-          exit (*)
-    device'data'type'as'of'float dt usualNum $ \(_ :: TypeRep a) ->
-      exit $ \lhs rhs ->
-        if
-            | isNaN lhs -> rhs
-            | isNaN rhs -> lhs
-            | otherwise -> lhs + rhs
-  DirectDt dt -> case eqT of
-    Just (Refl :: a :~: D.Decimal) ->
-      exit $ \lhs rhs ->
-        if
-            | D.decimalIsNaN lhs -> rhs
-            | D.decimalIsNaN rhs -> lhs
-            | otherwise -> lhs + rhs
-    Nothing -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+data FoldingMul = FoldingMul
+
+instance Folding FoldingMul where
+  self'fold _ (gdt :: DataType a) naExit exit = case gdt of
+    DeviceDt dt -> device'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
       exit (*)
+    DirectDt dt -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+      exit (*)
+
+  left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) naExit exit =
+    case gdt'a `eqDataType` gdt'b of
+      Just Refl -> self'fold f gdt'a naExit exit
+      _ -> naExit -- heterogeneous folding not yet supported
+
+data FoldingAddV = FoldingAddV
+
+instance Folding FoldingAddV where
+  self'fold _ (gdt :: DataType a) naExit exit = case gdt of
+    DeviceDt dt -> do
+      let usualNum = device'data'type'as'of'num dt naExit $
+            \(_ :: TypeRep a) -> exit (+)
+      device'data'type'as'of'float dt usualNum $ \(_ :: TypeRep a) ->
+        exit $ \lhs rhs ->
+          if
+              | isNaN lhs -> rhs
+              | isNaN rhs -> lhs
+              | otherwise -> lhs + rhs
+    DirectDt dt -> case eqT of
+      Just (Refl :: a :~: D.Decimal) ->
+        exit $ \lhs rhs ->
+          if
+              | D.decimalIsNaN lhs -> rhs
+              | D.decimalIsNaN rhs -> lhs
+              | otherwise -> lhs + rhs
+      Nothing -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+        exit (+)
+
+  left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) naExit exit =
+    case gdt'a `eqDataType` gdt'b of
+      Just Refl -> self'fold f gdt'a naExit exit
+      _ -> naExit -- heterogeneous folding not yet supported
+
+data FoldingMulV = FoldingMulV
+
+instance Folding FoldingMulV where
+  self'fold _ (gdt :: DataType a) naExit exit = case gdt of
+    DeviceDt dt -> do
+      let usualNum = device'data'type'as'of'num dt naExit $
+            \(_ :: TypeRep a) -> exit (*)
+      device'data'type'as'of'float dt usualNum $ \(_ :: TypeRep a) ->
+        exit $ \lhs rhs ->
+          if
+              | isNaN lhs -> rhs
+              | isNaN rhs -> lhs
+              | otherwise -> lhs * rhs
+    DirectDt dt -> case eqT of
+      Just (Refl :: a :~: D.Decimal) ->
+        exit $ \lhs rhs ->
+          if
+              | D.decimalIsNaN lhs -> rhs
+              | D.decimalIsNaN rhs -> lhs
+              | otherwise -> lhs * rhs
+      Nothing -> direct'data'type'as'of'num dt naExit $ \(_ :: TypeRep a) ->
+        exit (*)
+
+  left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) naExit exit =
+    case gdt'a `eqDataType` gdt'b of
+      Just Refl -> self'fold f gdt'a naExit exit
+      _ -> naExit -- heterogeneous folding not yet supported
