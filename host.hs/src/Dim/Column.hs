@@ -40,7 +40,12 @@ class
   read'column'length :: c a -> EdhTxExit ArrayLength -> EdhTx
 
   -- called when a new capacity is requested for the column
-  grow'column'capacity ::
+  grow'column'capacity :: c a -> ArrayCapacity -> EdhTxExit () -> EdhTx
+  grow'column'capacity col cap exit =
+    grow'column'capacity' col cap $ const $ exitEdhTx exit ()
+
+  -- called when a new capacity is requested for the column
+  grow'column'capacity' ::
     c a -> ArrayCapacity -> EdhTxExit (f a, ArrayLength) -> EdhTx
 
   -- called when a new length is marked for the column
@@ -115,6 +120,39 @@ someColumn ::
   SomeColumn
 someColumn = SomeColumn (typeRep @f)
 
+withColumn ::
+  Object ->
+  (Object -> SomeColumn -> EdhTx) ->
+  EdhTx
+withColumn !colObj =
+  withColumn' colObj $
+    throwEdhTx UsageError "not a Column as expected"
+
+withColumn' ::
+  Object ->
+  EdhTx ->
+  (Object -> SomeColumn -> EdhTx) ->
+  EdhTx
+withColumn' !colObj naExit !colExit !ets = do
+  supers <- readTVar $ edh'obj'supers colObj
+  withComposition $ colObj : supers
+  where
+    withComposition :: [Object] -> STM ()
+    withComposition [] = runEdhTx ets naExit
+    withComposition (o : rest) = case fromDynamic =<< dynamicHostData o of
+      Nothing -> withComposition rest
+      Just col -> runEdhTx ets $ colExit o col
+
+withColumnSelf ::
+  (forall c f a. ManagedColumn c f a => Object -> c a -> EdhTx) ->
+  EdhTx
+withColumnSelf !colExit !ets = runEdhTx ets $
+  withColumn' that naExit $ \ !colInst (SomeColumn _ !col) ->
+    colExit colInst col
+  where
+    that = edh'scope'that $ contextScope $ edh'context ets
+    naExit = throwEdhTx UsageError "not an expected self Column"
+
 asColumnOf ::
   forall a r.
   (Typeable a) =>
@@ -181,22 +219,6 @@ withColumnSelfOf !colExit !ets =
     naExit =
       throwEdhTx UsageError $
         "not an expected self column of type " <> T.pack (show $ typeRep @a)
-
-withColumnSelf ::
-  (forall c f a. ManagedColumn c f a => Object -> c a -> EdhTx) ->
-  EdhTx
-withColumnSelf !colExit !ets = do
-  supers <- readTVar $ edh'obj'supers that
-  withComposition $ that : supers
-  where
-    that = edh'scope'that $ contextScope $ edh'context ets
-    naExit = throwEdh ets UsageError "not an expected self column"
-
-    withComposition :: [Object] -> STM ()
-    withComposition [] = naExit
-    withComposition (o : rest) = case fromDynamic =<< dynamicHostData o of
-      Nothing -> withComposition rest
-      Just (SomeColumn _ col) -> runEdhTx ets $ colExit o col
 
 getColumnDtype :: EdhThreadState -> Object -> (Object -> STM ()) -> STM ()
 getColumnDtype ets !objCol = getColumnDtype' objCol $

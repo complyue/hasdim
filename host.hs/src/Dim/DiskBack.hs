@@ -47,7 +47,7 @@ instance
         !dba'len <- fromIntegral <$> unsafeIOToSTM (readDbArrayLength hdr)
         exitEdh ets exit $ dba'len - dbc'offs
 
-  grow'column'capacity (DbColumn !dba !dbc'offs) !newCap !exit !ets =
+  grow'column'capacity' (DbColumn !dba !dbc'offs) !newCap !exit !ets =
     runEdhTx ets $
       edhContIO $
         bracket

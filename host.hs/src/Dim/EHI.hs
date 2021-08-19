@@ -128,14 +128,17 @@ installDimBatteries !world = do
         fromJust <$> iopdLookup (AttrByName "intp") dtypesModuStore >>= \case
           EdhObject !dto -> return dto
           _ -> error "bug: dtype not object"
+      !dtBox <-
+        fromJust <$> iopdLookup (AttrByName "box") dtypesModuStore >>= \case
+          EdhObject !dto -> return dto
+          _ -> error "bug: dtype not object"
       let !defaultRangeDataType = dtIntp
 
       let !moduScope = contextScope $ edh'context ets
 
-      !columnClass <- createColumnClass defaultDataType moduScope
-
-      -- !tableClass <- createTableClass columnClass moduScope
-      !dbArrayClass <- createDbArrayClass columnClass defaultDataType moduScope
+      !clsColumn <- createColumnClass defaultDataType moduScope
+      !tableClass <- createTableClass dtBox clsColumn moduScope
+      !dbArrayClass <- createDbArrayClass clsColumn defaultDataType moduScope
 
       !moduArts0 <-
         sequence $
@@ -143,19 +146,19 @@ installDimBatteries !world = do
             | (mc, nm, hp) <-
                 [ ( EdhMethod,
                     "arange",
-                    wrapHostProc $ arangeProc defaultRangeDataType columnClass
+                    wrapHostProc $ arangeProc defaultRangeDataType clsColumn
                   ),
                   ( EdhMethod,
                     "random",
-                    wrapHostProc $ randomProc defaultDataType columnClass
+                    wrapHostProc $ randomProc defaultDataType clsColumn
                   ),
                   ( EdhMethod,
                     "where",
-                    wrapHostProc $ whereProc columnClass dtIntp
+                    wrapHostProc $ whereProc clsColumn dtIntp
                   ),
                   ( EdhMethod,
                     "pi",
-                    wrapHostProc $ piProc defaultDataType columnClass
+                    wrapHostProc $ piProc defaultDataType clsColumn
                   ),
                   (EdhMethod, "exp", wrapHostProc $ floatOpProc exp),
                   (EdhMethod, "log", wrapHostProc $ floatOpProc log),
@@ -177,8 +180,8 @@ installDimBatteries !world = do
 
       let !moduArts =
             moduArts0
-              ++ [ (AttrByName "Column", EdhObject columnClass),
-                   --  (AttrByName "Table", EdhObject tableClass),
+              ++ [ (AttrByName "Column", EdhObject clsColumn),
+                   (AttrByName "Table", EdhObject tableClass),
                    (AttrByName "DbArray", EdhObject dbArrayClass)
                  ]
       iopdUpdate moduArts $ edh'scope'entity moduScope

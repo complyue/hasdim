@@ -35,7 +35,7 @@ instance
   read'column'length (InMemDevCol _csv clv) !exit !ets =
     exitEdh ets exit =<< readTVar clv
 
-  grow'column'capacity (InMemDevCol csv clv) !newCap !exit !ets =
+  grow'column'capacity' (InMemDevCol csv clv) !newCap !exit !ets =
     runEdhTx ets $
       edhContIO $
         bracketOnError
@@ -222,7 +222,7 @@ instance
   read'column'length (InMemDirCol _csv clv) !exit !ets =
     exitEdh ets exit =<< readTVar clv
 
-  grow'column'capacity (InMemDirCol csv clv) !newCap !exit !ets =
+  grow'column'capacity' (InMemDirCol csv clv) !newCap !exit !ets =
     runEdhTx ets $
       edhContIO $
         bracketOnError

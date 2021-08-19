@@ -391,7 +391,7 @@ withDbArraySelfOf !dbaExit !ets =
     that = edh'scope'that $ contextScope $ edh'context ets
     naExit =
       throwEdhTx UsageError $
-        "not an expected self column of type " <> T.pack (show $ typeRep @a)
+        "not an expected self DbArray of type " <> T.pack (show $ typeRep @a)
 
 withDbArraySelf ::
   ( forall a.
@@ -406,7 +406,7 @@ withDbArraySelf !dbaExit !ets = do
   withComposition $ that : supers
   where
     that = edh'scope'that $ contextScope $ edh'context ets
-    naExit = throwEdh ets UsageError "not an expected self column"
+    naExit = throwEdh ets UsageError "not an expected self DbArray"
 
     withComposition :: [Object] -> STM ()
     withComposition [] = naExit
@@ -420,13 +420,13 @@ withDbArraySelf !dbaExit !ets = do
         _ -> withComposition rest
 
 getDbArrayDtype :: EdhThreadState -> Object -> (Object -> STM ()) -> STM ()
-getDbArrayDtype ets !objCol = getDbArrayDtype' objCol $
-  edhSimpleDesc ets (EdhObject objCol) $ \ !badDesc ->
+getDbArrayDtype ets !objAry = getDbArrayDtype' objAry $
+  edhSimpleDesc ets (EdhObject objAry) $ \ !badDesc ->
     throwEdh ets UsageError $ "not a DbArray with dtype: " <> badDesc
 
 getDbArrayDtype' :: Object -> STM () -> (Object -> STM ()) -> STM ()
-getDbArrayDtype' !objCol naExit !exit =
-  readTVar (edh'obj'supers objCol) >>= findSuperDto
+getDbArrayDtype' !objAry naExit !exit =
+  readTVar (edh'obj'supers objAry) >>= findSuperDto
   where
     findSuperDto :: [Object] -> STM ()
     findSuperDto [] = naExit
