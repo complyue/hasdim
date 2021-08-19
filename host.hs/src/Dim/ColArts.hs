@@ -1215,7 +1215,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colReprProc :: EdhHostProc
     colReprProc !exit = withColumnSelf $ \ !objCol !col !ets ->
-      getColDtype ets objCol $ \ !dto -> runEdhTx ets $
+      getColumnDtype ets objCol $ \ !dto -> runEdhTx ets $
         edhValueReprTx (EdhObject dto) $
           \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
             let colRepr =
@@ -1231,7 +1231,7 @@ createColumnClass !defaultDt !clsOuterScope =
     colShowProc :: EdhHostProc
     colShowProc !exit =
       withColumnSelf $ \ !objCol !col !ets ->
-        getColDtype ets objCol $ \ !dto -> runEdhTx ets $
+        getColumnDtype ets objCol $ \ !dto -> runEdhTx ets $
           edhValueReprTx (EdhObject dto) $
             \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
               let colRepr =
@@ -1582,7 +1582,7 @@ createColumnClass !defaultDt !clsOuterScope =
             StayComposed ->
               edhCloneHostObj ets objCol objCol col' $
                 \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
-            ExtractAlone -> getColDtype ets objCol $ \ !dto ->
+            ExtractAlone -> getColumnDtype ets objCol $ \ !dto ->
               edhCreateHostObj'
                 (edh'obj'class objCol)
                 (toDyn col')
@@ -1590,7 +1590,7 @@ createColumnClass !defaultDt !clsOuterScope =
                 >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
     colDtypeProc :: EdhHostProc
-    colDtypeProc !exit !ets = getColDtype ets this $ exitEdh ets exit . EdhObject
+    colDtypeProc !exit !ets = getColumnDtype ets this $ exitEdh ets exit . EdhObject
       where
         scope = contextScope $ edh'context ets
         this = edh'scope'this scope

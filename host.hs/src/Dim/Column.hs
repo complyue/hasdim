@@ -198,13 +198,13 @@ withColumnSelf !colExit !ets = do
       Nothing -> withComposition rest
       Just (SomeColumn _ col) -> runEdhTx ets $ colExit o col
 
-getColDtype :: EdhThreadState -> Object -> (Object -> STM ()) -> STM ()
-getColDtype ets !objCol = getColDtype' objCol $
+getColumnDtype :: EdhThreadState -> Object -> (Object -> STM ()) -> STM ()
+getColumnDtype ets !objCol = getColumnDtype' objCol $
   edhSimpleDesc ets (EdhObject objCol) $ \ !badDesc ->
     throwEdh ets UsageError $ "not a Column with dtype: " <> badDesc
 
-getColDtype' :: Object -> STM () -> (Object -> STM ()) -> STM ()
-getColDtype' !objCol naExit !exit =
+getColumnDtype' :: Object -> STM () -> (Object -> STM ()) -> STM ()
+getColumnDtype' !objCol naExit !exit =
   readTVar (edh'obj'supers objCol) >>= findSuperDto
   where
     findSuperDto :: [Object] -> STM ()
@@ -233,7 +233,7 @@ sliceColumn !objCol !col !start !stop !step !exit =
     withSliced (disp, col') !ets = case disp of
       StayComposed -> edhCloneHostObj ets objCol objCol col' $
         \ !objCol' -> exit (objCol', col') ets
-      ExtractAlone -> getColDtype ets objCol $ \ !dto ->
+      ExtractAlone -> getColumnDtype ets objCol $ \ !dto ->
         edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
           >>= \ !objCol' -> exit (objCol', col') ets
 
@@ -247,7 +247,7 @@ extractColumnBool ::
   EdhTx
 extractColumnBool !objCol !col !colMask !exit =
   extract'column'bool col colMask $ \ !col' !ets ->
-    getColDtype ets objCol $ \ !dto ->
+    getColumnDtype ets objCol $ \ !dto ->
       edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
         >>= \ !objCol' -> exitEdh ets exit (objCol', col')
 
@@ -261,6 +261,6 @@ extractColumnFancy ::
   EdhTx
 extractColumnFancy !objCol !col !colIdxs !exit =
   extract'column'fancy col colIdxs $ \ !col' !ets ->
-    getColDtype ets objCol $ \ !dto ->
+    getColumnDtype ets objCol $ \ !dto ->
       edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
         >>= \ !objCol' -> exitEdh ets exit (objCol', col')

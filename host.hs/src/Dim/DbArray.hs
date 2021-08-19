@@ -7,6 +7,7 @@ import Control.Exception
 import Control.Monad
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Internal as B
+import Data.Dynamic
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Lossless.Decimal as D
@@ -181,7 +182,8 @@ dbArrayHeaderV0 !item'size !item'align =
     }
 
 -- | Disk backed array
-data DbArray a = DbArray
+data DbArray a = (Eq a, Storable a, EdhXchg a, Typeable a) =>
+  DbArray
   { -- | root dir for data files
     db'array'dir :: !Text,
     -- | data file path relative to root
@@ -195,7 +197,7 @@ data DbArray a = DbArray
 
 mmapDbArray ::
   forall a.
-  (Storable a, EdhXchg a, Typeable a) =>
+  (Eq a, Storable a, EdhXchg a, Typeable a) =>
   TMVar (Either SomeException (ArrayShape, Ptr DbArrayHeader, DeviceArray a)) ->
   Text ->
   Text ->
@@ -324,3 +326,112 @@ dbArrayShape !dba =
   readTMVar (db'array'store dba) >>= \case
     Left !err -> throwSTM err
     Right (!shape, _, _) -> return shape
+
+asDbArrayOf ::
+  forall a r.
+  (Typeable a) =>
+  Object ->
+  r ->
+  (DbArray a -> r) ->
+  r
+asDbArrayOf !obj !naExit !exit = case dynamicHostData obj of
+  Nothing -> naExit
+  Just (Dynamic trDBA dba) ->
+    case trDBA `eqTypeRep` typeRep @(DbArray a) of
+      Nothing -> naExit
+      Just HRefl -> exit dba
+
+asDbArrayOf' ::
+  forall a r.
+  (Typeable a) =>
+  EdhValue ->
+  r ->
+  (DbArray a -> r) ->
+  r
+asDbArrayOf' !val !naExit !exit = case edhUltimate val of
+  EdhObject !obj -> asDbArrayOf obj naExit exit
+  _ -> naExit
+
+withDbArrayOf ::
+  forall a.
+  Typeable a =>
+  Object ->
+  EdhTx ->
+  (Object -> DbArray a -> EdhTx) ->
+  EdhTx
+withDbArrayOf !obj naExit !dbaExit !ets = do
+  supers <- readTVar $ edh'obj'supers obj
+  withComposition $ obj : supers
+  where
+    withComposition :: [Object] -> STM ()
+    withComposition [] = runEdhTx ets naExit
+    withComposition (o : rest) =
+      asDbArrayOf @a o (withComposition rest) (runEdhTx ets . dbaExit o)
+
+withDbArrayOf' ::
+  forall a.
+  Typeable a =>
+  EdhValue ->
+  EdhTx ->
+  (Object -> DbArray a -> EdhTx) ->
+  EdhTx
+withDbArrayOf' !val naExit !dbaExit = case edhUltimate val of
+  EdhObject !obj -> do
+    withDbArrayOf obj naExit dbaExit
+  _ -> naExit
+
+withDbArraySelfOf ::
+  forall a.
+  Typeable a =>
+  (Object -> DbArray a -> EdhTx) ->
+  EdhTx
+withDbArraySelfOf !dbaExit !ets =
+  runEdhTx ets $ withDbArrayOf @a that naExit dbaExit
+  where
+    that = edh'scope'that $ contextScope $ edh'context ets
+    naExit =
+      throwEdhTx UsageError $
+        "not an expected self column of type " <> T.pack (show $ typeRep @a)
+
+withDbArraySelf ::
+  ( forall a.
+    (Eq a, Storable a, EdhXchg a, Typeable a) =>
+    Object ->
+    DbArray a ->
+    EdhTx
+  ) ->
+  EdhTx
+withDbArraySelf !dbaExit !ets = do
+  supers <- readTVar $ edh'obj'supers that
+  withComposition $ that : supers
+  where
+    that = edh'scope'that $ contextScope $ edh'context ets
+    naExit = throwEdh ets UsageError "not an expected self column"
+
+    withComposition :: [Object] -> STM ()
+    withComposition [] = naExit
+    withComposition (o : rest) = case dynamicHostData o of
+      Nothing -> withComposition rest
+      Just (Dynamic trDBA dba) -> case trDBA of
+        App trDBAC _trA -> case trDBAC `eqTypeRep` typeRep @DbArray of
+          Nothing -> withComposition rest
+          Just HRefl -> case dba of -- need this case to witness its instances
+            dba'@DbArray {} -> runEdhTx ets $ dbaExit o dba'
+        _ -> withComposition rest
+
+getDbArrayDtype :: EdhThreadState -> Object -> (Object -> STM ()) -> STM ()
+getDbArrayDtype ets !objCol = getDbArrayDtype' objCol $
+  edhSimpleDesc ets (EdhObject objCol) $ \ !badDesc ->
+    throwEdh ets UsageError $ "not a DbArray with dtype: " <> badDesc
+
+getDbArrayDtype' :: Object -> STM () -> (Object -> STM ()) -> STM ()
+getDbArrayDtype' !objCol naExit !exit =
+  readTVar (edh'obj'supers objCol) >>= findSuperDto
+  where
+    findSuperDto :: [Object] -> STM ()
+    findSuperDto [] = naExit
+    -- this is right and avoids unnecessary checks in vastly usual cases
+    findSuperDto [dto] = exit dto
+    -- safe guard in case a DbArray instance has been further extended
+    findSuperDto (maybeDto : rest) =
+      withDataType maybeDto (findSuperDto rest) (const $ exit maybeDto)

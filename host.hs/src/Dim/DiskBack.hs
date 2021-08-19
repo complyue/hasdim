@@ -15,7 +15,6 @@ import Dim.XCHG
 import Foreign hiding (void)
 import GHC.Conc (unsafeIOToSTM)
 import Language.Edh.EHI
-import Type.Reflection
 import Prelude
 
 data DbColumn a = (Eq a, Storable a, EdhXchg a, Typeable a) =>
@@ -251,89 +250,3 @@ instance
               !csvNew <- newTMVar cs'
               !clvNew <- newTVar idxl
               exitEdh ets exit $ someColumn $ InMemDevCol csvNew clvNew
-
-asDbColumnOf ::
-  forall a r.
-  (Typeable a) =>
-  Object ->
-  r ->
-  (DbColumn a -> r) ->
-  r
-asDbColumnOf !obj !naExit !exit = case dynamicHostData obj of
-  Nothing -> naExit
-  Just (Dynamic trDBC dbc) ->
-    case trDBC `eqTypeRep` typeRep @(DbColumn a) of
-      Nothing -> naExit
-      Just HRefl -> exit dbc
-
-asDbColumnOf' ::
-  forall a r.
-  (Typeable a) =>
-  EdhValue ->
-  r ->
-  (DbColumn a -> r) ->
-  r
-asDbColumnOf' !val !naExit !exit = case edhUltimate val of
-  EdhObject !obj -> asDbColumnOf obj naExit exit
-  _ -> naExit
-
-withDbColumnOf ::
-  forall a.
-  Typeable a =>
-  Object ->
-  EdhTx ->
-  (Object -> DbColumn a -> EdhTx) ->
-  EdhTx
-withDbColumnOf !obj naExit !dbcExit !ets = do
-  supers <- readTVar $ edh'obj'supers obj
-  withComposition $ obj : supers
-  where
-    withComposition :: [Object] -> STM ()
-    withComposition [] = runEdhTx ets naExit
-    withComposition (o : rest) =
-      asDbColumnOf @a o (withComposition rest) (runEdhTx ets . dbcExit o)
-
-withDbColumnOf' ::
-  forall a.
-  Typeable a =>
-  EdhValue ->
-  EdhTx ->
-  (Object -> DbColumn a -> EdhTx) ->
-  EdhTx
-withDbColumnOf' !val naExit !dbcExit = case edhUltimate val of
-  EdhObject !obj -> do
-    withDbColumnOf obj naExit dbcExit
-  _ -> naExit
-
-withDbColumnSelfOf ::
-  forall a.
-  Typeable a =>
-  (Object -> DbColumn a -> EdhTx) ->
-  EdhTx
-withDbColumnSelfOf !dbcExit !ets =
-  runEdhTx ets $ withDbColumnOf @a that naExit dbcExit
-  where
-    that = edh'scope'that $ contextScope $ edh'context ets
-    naExit =
-      throwEdhTx UsageError $
-        "not an expected self column of type " <> T.pack (show $ typeRep @a)
-
-withDbColumnSelf ::
-  (forall a. Object -> DbColumn a -> EdhTx) ->
-  EdhTx
-withDbColumnSelf !dbcExit !ets = do
-  supers <- readTVar $ edh'obj'supers that
-  withComposition $ that : supers
-  where
-    that = edh'scope'that $ contextScope $ edh'context ets
-    naExit = throwEdh ets UsageError "not an expected self column"
-
-    withComposition :: [Object] -> STM ()
-    withComposition [] = naExit
-    withComposition (o : rest) = case dynamicHostData o of
-      Nothing -> withComposition rest
-      Just (Dynamic trDBC dbc) -> case trDBC of
-        App trDBCC _ -> case trDBCC `eqTypeRep` typeRep @DbColumn of
-          Nothing -> withComposition rest
-          Just HRefl -> runEdhTx ets $ dbcExit o dbc
-        _ -> withComposition rest
