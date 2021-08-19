@@ -74,12 +74,20 @@ readTableRow tbl@(Table _cv !rcv !tcols) !i !exit !ets = do
 
 growTable :: ArrayCapacity -> Table -> EdhTxExit () -> EdhTx
 growTable !newRowCap tbl@(Table cv rcv _tcols) !exit =
-  withTblCols tbl $ \ !cols -> seqEdhTx (grow1 . snd <$> cols) $ \_ !ets -> do
+  withTblCols tbl $ \ !cols !ets -> do
+    !cap <- readTVar cv
     !rc <- readTVar rcv
+    -- if shrinking, update table capacity before updating any column
+    -- so if it's to fail halfway we are still safe
+    when (newRowCap < cap) $ writeTVar cv newRowCap
     -- update row count in case it's actually shrinked
     when (newRowCap < rc) $ writeTVar rcv newRowCap
-    writeTVar cv newRowCap
-    exitEdh ets exit ()
+    -- now shrink all columns
+    runEdhTx ets $
+      seqEdhTx (grow1 . snd <$> cols) $ \_ _ets -> do
+        -- update table capacity after all columns successfully updated
+        writeTVar cv newRowCap
+        exitEdh ets exit ()
   where
     grow1 :: SomeColumn -> EdhTxExit () -> EdhTx
     grow1 (SomeColumn _ !col) = grow'column'capacity col newRowCap
