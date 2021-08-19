@@ -30,9 +30,9 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
                   ("__len__", EdhMethod, wrapHostProc aryLen1dGetter),
                   ("__mark__", EdhMethod, wrapHostProc aryLen1dSetter),
                   ("__repr__", EdhMethod, wrapHostProc aryReprProc),
-                  -- ("__show__", EdhMethod, wrapHostProc aryShowProc),
-                  -- ("([])", EdhMethod, wrapHostProc aryIdxReadProc),
-                  -- ("([=])", EdhMethod, wrapHostProc aryIdxWriteProc),
+                  ("__show__", EdhMethod, wrapHostProc aryShowProc),
+                  ("([])", EdhMethod, wrapHostProc aryIdxReadProc),
+                  ("([=])", EdhMethod, wrapHostProc aryIdxWriteProc),
                   ("(@<-)", EdhMethod, wrapHostProc aryDeleAttrProc),
                   ("asColumn", EdhMethod, wrapHostProc aryAsColProc)
                 ]
@@ -205,36 +205,27 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
     aryReprProc !exit = withDbArraySelf $ \ !dbaObj !dba ->
       aryRepr dbaObj dba $ exit . EdhString
 
-    {-
+    aryShowProc :: EdhHostProc
+    aryShowProc !exit = withDbArraySelf $ \ !dbaObj !dba !ets ->
+      readTMVar (db'array'store dba) >>= \case
+        Left !err -> throwSTM err
+        Right (_, !hdrPtr, !fa) -> runEdhTx ets $
+          aryRepr dbaObj dba $ \ !dbaRepr -> edhContIO $ do
+            !len1d <- fromIntegral <$> readDbArrayLength hdrPtr
+            let exitWithDetails :: Text -> STM ()
+                exitWithDetails !details =
+                  exitEdh ets exit $ EdhString $ dbaRepr <> "\n" <> details
 
-        aryShowProc :: EdhHostProc
-        aryShowProc !exit !ets =
-          withThisHostObj ets $ \(DbArray _dir _path !das) ->
-            readTMVar das >>= \case
-              Left !err -> throwSTM err
-              Right (_shape, !hdr, !fa) -> do
-                !len <- unsafeIOToSTM $ readDbArrayLength hdr
-                showData (fromIntegral len) $ flat'array'read dt ets fa
-          where
-            !thisObj = edh'scope'this $ contextScope $ edh'context ets
-
-            exitWithDetails :: Text -> STM ()
-            exitWithDetails !details = edhValueRepr ets (EdhObject thisObj) $
-              \ !repr -> exitEdh ets exit $ EdhString $ repr <> "\n" <> details
-
-            showData :: Int -> (Int -> (EdhValue -> STM ()) -> STM ()) -> STM ()
-            showData !len !readElem = go 0 [] 0 ""
-              where
-                go :: Int -> [Text] -> Int -> Text -> STM ()
+                go :: Int -> [Text] -> Int -> Text -> IO ()
                 -- TODO don't generate all lines for large columns
                 go !i !cumLines !lineIdx !line
-                  | i >= len =
-                    exitWithDetails $
-                      if T.null line && null cumLines
-                        then "Zero-Length Array"
-                        else
-                          "# flat length = " <> T.pack (show len) <> "\n"
-                            <> if null cumLines
+                  | i >= len1d =
+                    atomically $
+                      exitWithDetails $
+                        if T.null line && null cumLines
+                          then "Zero-Length DbArray"
+                          else
+                            if null cumLines
                               then line
                               else
                                 let !fullLines =
@@ -250,63 +241,79 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
                                         T.unlines $
                                           reverse $
                                             take 10 fullLines
-                                              -- todo make this tunable
-                                              ++ ["# ... "]
+                                              ++ ["# ... "] -- todo make this tunable
                                               ++ drop (lineCnt - 10) fullLines
                                       else T.unlines $ reverse fullLines
-                go !i !cumLines !lineIdx !line = readElem i $ \ !elemVal ->
-                  edhValueRepr ets elemVal $ \ !elemRepr ->
-                    let !tentLine = line <> elemRepr <> ", "
-                     in if T.length tentLine > 79 -- todo make this tunable ?
-                          then
-                            go
-                              (i + 1)
-                              ( line :
-                                ( " # " -- todo make this tunable ?
-                                    <> T.pack (show lineIdx)
-                                    <> " ~ "
-                                    <> T.pack (show $ i - 1)
-                                ) :
-                                cumLines
-                              )
-                              i
-                              (elemRepr <> ", ")
-                          else go (i + 1) cumLines lineIdx tentLine
+                go !i !cumLines !lineIdx !line =
+                  array'reader fa i >>= \ !ev -> atomically $
+                    runEdhTx ets $
+                      toEdh ev $ \ !elemVal ->
+                        edhValueReprTx elemVal $ \ !elemRepr ->
+                          let !tentLine = line <> elemRepr <> ", "
+                           in edhContIO $
+                                if T.length tentLine > 79 -- todo make this tunable ?
+                                  then
+                                    go
+                                      (i + 1)
+                                      ( line :
+                                        ( " # " -- todo make this tunable ?
+                                            <> T.pack (show lineIdx)
+                                            <> " ~ "
+                                            <> T.pack (show $ i - 1)
+                                        ) :
+                                        cumLines
+                                      )
+                                      i
+                                      (elemRepr <> ", ")
+                                  else go (i + 1) cumLines lineIdx tentLine
+            go 0 [] 0 ""
 
-        aryIdxReadProc :: EdhValue -> EdhHostProc
-        aryIdxReadProc !idxVal !exit !ets =
-          withThisHostObj ets $ \(DbArray _ _ !das) ->
+    aryIdxReadProc :: EdhValue -> EdhHostProc
+    aryIdxReadProc !idxVal !exit = withDbArraySelf $
+      \_dbaObj (DbArray _ _ !das) !ets -> do
+        readTMVar das >>= \case
+          Left !err -> throwSTM err
+          Right (!shape, _, !fa) -> do
+            let exitAt :: Int -> STM ()
+                exitAt flatIdx = runEdhTx ets $
+                  edhContIO $ do
+                    -- TODO validate against len1d/cap of the array
+                    !rv <- array'reader fa flatIdx
+                    atomically $ runEdhTx ets $ toEdh rv exit
+            case edhUltimate idxVal of
+              -- TODO support slicing, of coz need to tell a slicing index from
+              --      an element index first
+              EdhArgsPack (ArgsPack !idxs _) ->
+                flatIndexInShape ets idxs shape exitAt
+              !idx ->
+                flatIndexInShape ets [idx] shape exitAt
+
+    aryIdxWriteProc :: EdhValue -> "toVal" ?: EdhValue -> EdhHostProc
+    aryIdxWriteProc !idxVal (optionalArg -> !maybeToVal) !exit =
+      withDbArraySelf $ \_dbaObj (DbArray _ _ !das) !ets ->
+        case maybeToVal of
+          Nothing ->
+            throwEdh ets UsageError "you can not delete DbArray content"
+          Just !v ->
             readTMVar das >>= \case
               Left !err -> throwSTM err
-              Right (!shape, _, !fa) -> case edhUltimate idxVal of
-                -- TODO support slicing, of coz need to tell a slicing index from
-                --      an element index first
-                EdhArgsPack (ArgsPack !idxs _) ->
-                  flatIndexInShape ets idxs shape $ \ !flatIdx ->
-                    flat'array'read dt ets fa flatIdx $ \ !rv ->
-                      exitEdh ets exit rv
-                !idx -> flatIndexInShape ets [idx] shape $ \ !flatIdx ->
-                  flat'array'read dt ets fa flatIdx $ \ !rv -> exitEdh ets exit rv
+              Right (!shape, _, fa) -> do
+                let writeAt :: Int -> STM ()
+                    writeAt flatIdx = runEdhTx ets $
+                      fromEdh v $ \ !hv -> edhContIO $ do
+                        array'writer fa flatIdx hv
+                        -- convert the host value back to Edh and return it
+                        -- truncations e.g. fractional number to floating point,
+                        -- will be visible
+                        atomically $ runEdhTx ets $ toEdh hv exit
 
-        aryIdxWriteProc :: EdhValue -> "toVal" ?: EdhValue -> EdhHostProc
-        aryIdxWriteProc !idxVal (optionalArg -> !maybeToVal) !exit !ets =
-          case maybeToVal of
-            Nothing -> throwEdh ets UsageError "you can not delete array content"
-            Just !dv -> withThisHostObj ets $ \(DbArray _ _ !das) ->
-              readTMVar das >>= \case
-                Left !err -> throwSTM err
-                Right (!shape, _, fa) -> case edhUltimate idxVal of
+                case edhUltimate idxVal of
                   -- TODO support slicing assign, of coz need to tell a slicing
                   --      index from an element index first
                   EdhArgsPack (ArgsPack !idxs _) ->
-                    flatIndexInShape ets idxs shape $ \ !flatIdx ->
-                      flat'array'write dt ets fa flatIdx dv $
-                        \ !rv -> exitEdh ets exit rv
-                  !idx -> flatIndexInShape ets [idx] shape $ \ !flatIdx ->
-                    flat'array'write dt ets fa flatIdx dv $
-                      \ !rv -> exitEdh ets exit rv
-
-    -}
+                    flatIndexInShape ets idxs shape writeAt
+                  !idx ->
+                    flatIndexInShape ets [idx] shape writeAt
 
     -- this is the super magic to intercept descendant object's attribute reads
     aryDeleAttrProc :: "attrKey" !: EdhValue -> EdhHostProc

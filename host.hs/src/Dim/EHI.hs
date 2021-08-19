@@ -16,8 +16,6 @@ where
 
 import Control.Concurrent.STM
 import Control.Monad.Reader
-import Data.Dynamic
-import qualified Data.Lossless.Decimal as D
 import Data.Maybe
 import Dim.ColArts
 import Dim.Column
@@ -137,7 +135,7 @@ installDimBatteries !world = do
       !columnClass <- createColumnClass defaultDataType moduScope
 
       -- !tableClass <- createTableClass columnClass moduScope
-      -- !dbArrayClass <- createDbArrayClass columnClass defaultDataType moduScope
+      !dbArrayClass <- createDbArrayClass columnClass defaultDataType moduScope
 
       !moduArts0 <-
         sequence $
@@ -179,9 +177,9 @@ installDimBatteries !world = do
 
       let !moduArts =
             moduArts0
-              ++ [ (AttrByName "Column", EdhObject columnClass)
-              --  (AttrByName "Table", EdhObject tableClass),
-              --  (AttrByName "DbArray", EdhObject dbArrayClass)
+              ++ [ (AttrByName "Column", EdhObject columnClass),
+                   --  (AttrByName "Table", EdhObject tableClass),
+                   (AttrByName "DbArray", EdhObject dbArrayClass)
                  ]
       iopdUpdate moduArts $ edh'scope'entity moduScope
       prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
