@@ -5,6 +5,7 @@ module Dim.ColArts where
 import Control.Concurrent.STM
 import Control.Monad
 import Data.Dynamic
+import Data.Lossless.Decimal as D
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -62,6 +63,12 @@ mkYesNoSuperDt !dti !outerScope = do
                 wrapHostProc $
                   colCmpProc dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
               ),
+              ("(&&)", EdhMethod, wrapHostProc $ devColOpProc @YesNo (.&.)),
+              ("(&&.)", EdhMethod, wrapHostProc $ devColOpProc @YesNo (.&.)),
+              ("(||)", EdhMethod, wrapHostProc $ devColOpProc @YesNo (.|.)),
+              ("(||.)", EdhMethod, wrapHostProc $ devColOpProc @YesNo (.|.)),
+              ("(&&=)", EdhMethod, wrapHostProc $ colInpProc @YesNo (.&.)),
+              ("(||=)", EdhMethod, wrapHostProc $ colInpProc @YesNo (.|.)),
               ("__eq__", EdhMethod, wrapHostProc dtypeEqProc)
             ]
       ]
@@ -69,7 +76,9 @@ mkYesNoSuperDt !dti !outerScope = do
   iopdUpdate clsArts $ edh'scope'entity clsScope
   return dtYesNo
   where
-    !dtd = HostStore $ toDyn $ mkIntDataType @YesNo dti
+    !dtd = HostStore $ toDyn dt
+    dt :: DataType YesNo
+    dt = mkIntDataType @YesNo dti
 
     dtypeAllocator :: EdhObjectAllocator
     dtypeAllocator !ctorExit _ets = ctorExit Nothing dtd
@@ -108,7 +117,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
 
       boxInpProc :: Bool -> AttrName -> EdhValue -> EdhHostProc
       boxInpProc !flipOperands !op !other !exit !ets = runEdhTx ets $
-        withColumnSelfOf @EdhValue $ \_objCol !col -> do
+        withColumnSelfOf @EdhValue exit $ \_objCol !col -> do
           let vecOp =
                 view'column'data col $ \(cs, cl) -> edhContIO $ do
                   let go i
@@ -160,7 +169,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
 
       boxApOpProc :: Bool -> AttrName -> EdhValue -> EdhHostProc
       boxApOpProc !flipOperands !op !other !exit !ets = runEdhTx ets $
-        withColumnSelfOf @EdhValue $ \ !objCol !col -> do
+        withColumnSelfOf @EdhValue exit $ \ !objCol !col -> do
           let exitWithResult ::
                 Typeable (InMemDirCol EdhValue) =>
                 InMemDirCol EdhValue ->
@@ -271,7 +280,9 @@ mkBoxSuperDt !dti !defv !outerScope = do
   iopdUpdate clsArts $ edh'scope'entity clsScope
   return dtBox
   where
-    !dtd = HostStore $ toDyn $ mkBoxDataType dti defv
+    !dtd = HostStore $ toDyn dt
+    dt :: DataType EdhValue
+    dt = mkBoxDataType dti defv (Just EdhDecimal)
 
     dtypeAllocator :: EdhObjectAllocator
     dtypeAllocator !ctorExit _ets = ctorExit Nothing dtd
@@ -281,9 +292,11 @@ mkRealFracSuperDt ::
   (RealFrac a, Random a, Eq a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
+  a ->
+  Maybe (D.Decimal -> a) ->
   Scope ->
   STM Object
-mkRealFracSuperDt !dtYesNo !dti !outerScope = do
+mkRealFracSuperDt !dtYesNo !dti !defv !maybeFromDec !outerScope = do
   !dtCls <- mkHostClass outerScope dti (allocEdhObj dtypeAllocator) [] $
     \ !clsScope -> do
       !clsMths <-
@@ -429,7 +442,9 @@ mkRealFracSuperDt !dtYesNo !dti !outerScope = do
           }
   return dtObj
   where
-    !dtd = HostStore $ toDyn $ mkRealFracDataType @a dti
+    !dtd = HostStore $ toDyn dt
+    dt :: DataType a
+    dt = mkRealFracDataType @a dti defv maybeFromDec
 
     dtypeAllocator :: EdhObjectAllocator
     dtypeAllocator !ctorExit _ets = ctorExit Nothing dtd
@@ -596,7 +611,9 @@ mkFloatSuperDt !dtYesNo !dti !outerScope = do
           }
   return dtObj
   where
-    !dtd = HostStore $ toDyn $ mkFloatDataType @a dti
+    !dtd = HostStore $ toDyn dt
+    dt :: DataType a
+    dt = mkFloatDataType @a dti
 
     dtypeAllocator :: EdhObjectAllocator
     dtypeAllocator !ctorExit _ets = ctorExit Nothing dtd
@@ -775,7 +792,9 @@ mkIntSuperDt !dtYesNo !dti !outerScope = do
           }
   return dtObj
   where
-    !dtd = HostStore $ toDyn $ mkIntDataType @a dti
+    !dtd = HostStore $ toDyn dt
+    dt :: DataType a
+    dt = mkIntDataType @a dti
 
     dtypeAllocator :: EdhObjectAllocator
     dtypeAllocator !ctorExit _ets = ctorExit Nothing dtd
@@ -795,7 +814,7 @@ colCmpProc ::
   EdhValue ->
   EdhHostProc
 colCmpProc !dtYesNo !cmp !other !exit !ets = runEdhTx ets $
-  withColumnSelfOf @a $ \ !objCol !col -> do
+  withColumnSelfOf @a exit $ \ !objCol !col -> do
     let exitWithResult ::
           Typeable (InMemDevCol YesNo) => InMemDevCol YesNo -> STM ()
         exitWithResult !colResult =
@@ -861,7 +880,7 @@ devColOpProc ::
   EdhValue ->
   EdhHostProc
 devColOpProc !op !other !exit !ets = runEdhTx ets $
-  withColumnSelfOf @a $ \ !objCol !col -> do
+  withColumnSelfOf @a exit $ \ !objCol !col -> do
     let exitWithNewClone ::
           forall c' f'.
           (ManagedColumn c' f' a, Typeable (c' a)) =>
@@ -927,7 +946,7 @@ dirColOpProc ::
   EdhValue ->
   EdhHostProc
 dirColOpProc !op !other !exit !ets = runEdhTx ets $
-  withColumnSelfOf @a $ \ !objCol !col -> do
+  withColumnSelfOf @a exit $ \ !objCol !col -> do
     let exitWithNewClone ::
           forall c' f'.
           (ManagedColumn c' f' a, Typeable (c' a)) =>
@@ -991,7 +1010,7 @@ colInpProc ::
   EdhValue ->
   EdhHostProc
 colInpProc !op !other !exit !ets = runEdhTx ets $
-  withColumnSelfOf @a $ \_objCol !col -> do
+  withColumnSelfOf @a exit $ \_objCol !col -> do
     let vecOp =
           view'column'data col $ \(cs, cl) ->
             fromEdh' @a other naExit $ \rhv -> edhContIO $ do
@@ -1088,12 +1107,16 @@ createColumnClass !defaultDt !clsOuterScope =
       !etsCtor
         | ctorCap < 0 =
           throwEdh etsCtor UsageError $
-            "column capacity should be a positive interger, not "
-              <> T.pack (show ctorCap)
+            "Column capacity can not be negative: " <> T.pack (show ctorCap)
         | ctorLen < 0 =
           throwEdh etsCtor UsageError $
-            "column length should be zero or a positive integer, not "
+            "Column length can not be negative: " <> T.pack (show ctorLen)
+        | ctorLen > ctorCap =
+          throwEdh etsCtor UsageError $
+            "Column length can not be larger than capacity: "
               <> T.pack (show ctorLen)
+              <> " vs "
+              <> T.pack (show ctorCap)
         | otherwise = withDataType dto badDtype $ \case
           DeviceDt dt ->
             device'data'type'holder dt $ \(_ :: TypeRep a) ->
@@ -1666,30 +1689,56 @@ arangeProc
                         (toDyn $ someColumn col)
                         [dto]
                         >>= exitEdh ets exit . EdhObject
-              DirectDt dt -> direct'data'type'as'of'num
-                dt
-                (notNumDt $ direct'data'type'ident dt)
-                $ \(_ :: TypeRep a) -> runEdhTx ets $
-                  edhContIO $ do
-                    (iov :: MV.IOVector a) <- MV.new len
-                    let fillRng :: Int -> Int -> IO ()
-                        fillRng !n !i =
-                          if i >= len
-                            then return ()
-                            else do
-                              MV.unsafeWrite iov i $ fromIntegral n
-                              fillRng (n + step) (i + 1)
-                    fillRng start 0
-                    atomically $ do
-                      let !cs = DirectArray iov
-                      !csv <- newTMVar cs
-                      !clv <- newTVar len
-                      let !col = InMemDirCol csv clv
-                      edhCreateHostObj'
-                        colClass
-                        (toDyn $ someColumn col)
-                        [dto]
-                        >>= exitEdh ets exit . EdhObject
+              DirectDt dt -> do
+                let tryFromDec :: STM ()
+                    tryFromDec = direct'data'type'from'num
+                      dt
+                      (notNumDt $ direct'data'type'ident dt)
+                      $ \ !fromDec -> runEdhTx ets $
+                        edhContIO $ do
+                          (iov :: MV.IOVector a) <- MV.new len
+                          let fillRng :: Int -> Int -> IO ()
+                              fillRng !n !i =
+                                if i >= len
+                                  then return ()
+                                  else do
+                                    MV.unsafeWrite iov i $
+                                      fromDec $ fromIntegral n
+                                    fillRng (n + step) (i + 1)
+                          fillRng start 0
+                          atomically $ do
+                            let !cs = DirectArray iov
+                            !csv <- newTMVar cs
+                            !clv <- newTVar len
+                            let !col = InMemDirCol csv clv
+                            edhCreateHostObj'
+                              colClass
+                              (toDyn $ someColumn col)
+                              [dto]
+                              >>= exitEdh ets exit . EdhObject
+
+                direct'data'type'as'of'num dt tryFromDec $
+                  \(_ :: TypeRep a) -> runEdhTx ets $
+                    edhContIO $ do
+                      (iov :: MV.IOVector a) <- MV.new len
+                      let fillRng :: Int -> Int -> IO ()
+                          fillRng !n !i =
+                            if i >= len
+                              then return ()
+                              else do
+                                MV.unsafeWrite iov i $ fromIntegral n
+                                fillRng (n + step) (i + 1)
+                      fillRng start 0
+                      atomically $ do
+                        let !cs = DirectArray iov
+                        !csv <- newTMVar cs
+                        !clv <- newTVar len
+                        let !col = InMemDirCol csv clv
+                        edhCreateHostObj'
+                          colClass
+                          (toDyn $ someColumn col)
+                          [dto]
+                          >>= exitEdh ets exit . EdhObject
 
 randomProc ::
   Object ->

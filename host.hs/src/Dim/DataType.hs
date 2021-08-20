@@ -8,6 +8,7 @@ module Dim.DataType where
 import Control.Monad
 import qualified Data.ByteString.Internal as B
 import Data.Dynamic
+import Data.Lossless.Decimal as D
 import Data.Maybe
 import Data.Typeable hiding (TypeRep, typeOf, typeRep)
 import qualified Data.Vector.Mutable as MV
@@ -95,6 +96,15 @@ data DirectDataType a' = DirectDataType
         TypeRep a ->
         r
       ) ->
+      r,
+    direct'data'type'from'num ::
+      forall r.
+      r ->
+      ( forall a.
+        (a ~ a', Eq a, EdhXchg a, Typeable a) =>
+        (D.Decimal -> a) ->
+        r
+      ) ->
       r
   }
 
@@ -175,28 +185,36 @@ mkBoxDataType ::
   (Eq a, EdhXchg a, Typeable a) =>
   DataTypeIdent ->
   a ->
+  Maybe (D.Decimal -> a) ->
   DataType a
-mkBoxDataType !dti !defv =
+mkBoxDataType !dti !defv !maybeFromDec =
   DirectDt $
     DirectDataType
       dti
       ($ defv)
       (\naExit _exit -> naExit)
       (\naExit _exit -> naExit)
+      $ case maybeFromDec of
+        Nothing -> \naExit _exit -> naExit
+        Just !fromDec -> \_naExit exit -> exit fromDec
 
 mkRealFracDataType ::
   forall a.
   (RealFrac a, Random a, Eq a, EdhXchg a, Typeable a) =>
   DataTypeIdent ->
   a ->
+  Maybe (D.Decimal -> a) ->
   DataType a
-mkRealFracDataType !dti !defv =
+mkRealFracDataType !dti !defv !maybeFromDec =
   DirectDt $
     DirectDataType
       dti
       ($ defv)
       (\_naExit exit -> exit (typeRep @a))
       (\_naExit exit -> exit (typeRep @a))
+      $ case maybeFromDec of
+        Nothing -> \naExit _exit -> naExit
+        Just !fromDec -> \_naExit exit -> exit fromDec
 
 withDeviceDataType ::
   forall r.
@@ -234,7 +252,7 @@ withDataType ::
   forall r. Object -> r -> (forall a. (Typeable a) => DataType a -> r) -> r
 withDataType !dto !naExit !exit = case edh'obj'store dto of
   HostStore (Dynamic trGDT monoDataType) -> case trGDT of
-    App trDataType a -> withTypeable a $
+    App trDataType trA -> withTypeable trA $
       case trDataType `eqTypeRep` typeRep @DataType of
         Just HRefl -> exit monoDataType
         _ -> naExit

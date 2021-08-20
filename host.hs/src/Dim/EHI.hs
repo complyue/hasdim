@@ -16,6 +16,7 @@ where
 
 import Control.Concurrent.STM
 import Control.Monad.Reader
+import Data.Lossless.Decimal as D
 import Data.Maybe
 import Dim.ColArts
 import Dim.Column
@@ -35,7 +36,8 @@ builtinDataTypes :: Scope -> STM [(DataTypeIdent, Object)]
 builtinDataTypes !moduScope = do
   yesno <- mkYesNoSuperDt "yesno" moduScope
   box <- mkBoxSuperDt "box" edhNA moduScope
-  decimal <- mkRealFracSuperDt @Decimal yesno "decimal" moduScope
+  decimal <-
+    mkRealFracSuperDt @Decimal yesno "decimal" D.nan (Just id) moduScope
   float64 <- mkFloatSuperDt @Double yesno "float64" moduScope
   float32 <- mkFloatSuperDt @Float yesno "float32" moduScope
   int64 <- mkIntSuperDt @Int64 yesno "int64" moduScope

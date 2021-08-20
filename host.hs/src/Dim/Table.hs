@@ -522,34 +522,28 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                   matchTab ((colObj, EdhObject colOther) : ms) rest colsOther
 
     tabReprProc :: EdhHostProc
-    tabReprProc !exit !ets =
-      withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>") $
-        \(Table !trCapV !trCntV !tcols) -> do
-          !trCap <- readTVar trCapV
-          !trCnt <- readTVar trCntV
-          (fmap colShortRepr <$> iopdToList tcols >>=) $
-            flip seqcontSTM $
-              \ !colReprs ->
-                exitEdh ets exit $
-                  EdhString $
-                    "Table( "
-                      <> T.pack (show trCap)
-                      <> ", "
-                      <> T.pack (show trCnt)
-                      <> ", "
-                      <> T.concat colReprs
-                      <> ")"
-      where
-        colShortRepr :: (AttrKey, Object) -> (Text -> STM ()) -> STM ()
-        -- TODO better repr here
-        colShortRepr (!colKey, !colObj) !exit' =
-          undefined
-    -- withColumn colObj $ \_colInst !col ->
-    --   exit' $
-    --     T.pack (show colKey)
-    --       <> "="
-    --       <> data'type'identifier (data'type'of'column col)
-    --       <> ", "
+    tabReprProc !exit = withThisTable $ \(Table !cv !rcv !tcols) !ets -> do
+      !cap <- readTVar cv
+      !rc <- readTVar rcv
+      !tcl <- iopdToList tcols
+      let badColDt = throwEdh ets EvalError "bug: Table Column missing dtype"
+          colShortRepr :: (AttrKey, Object) -> EdhTxExit Text -> EdhTx
+          colShortRepr (!colKey, !colObj) !exit' _ets =
+            getColumnDtype' colObj badColDt $ \ !dto ->
+              withDataType dto badColDt $ \ !dt ->
+                exitEdh ets exit' $
+                  attrKeyStr colKey <> "= " <> data'type'ident dt <> ", "
+      runEdhTx ets $
+        seqEdhTx (colShortRepr <$> tcl) $ \ !colReprs ->
+          exitEdhTx exit $
+            EdhString $
+              "Table( "
+                <> T.pack (show cap)
+                <> ", "
+                <> T.pack (show rc)
+                <> ", "
+                <> T.concat colReprs
+                <> ")"
 
     tabShowProc :: "columnWidth" ?: PackedArgs -> EdhHostProc
     tabShowProc

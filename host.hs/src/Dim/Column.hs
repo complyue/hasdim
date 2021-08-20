@@ -4,7 +4,6 @@ module Dim.Column where
 
 import Control.Concurrent.STM
 import Data.Dynamic
-import qualified Data.Text as T
 import Data.Typeable hiding (TypeRep, typeRep)
 import Dim.DataType
 import Dim.XCHG
@@ -200,15 +199,14 @@ withColumnOf' !val naExit !colExit = case edhUltimate val of
 withColumnSelfOf ::
   forall a.
   Typeable a =>
+  EdhTxExit EdhValue ->
   (forall c f. ManagedColumn c f a => Object -> c a -> EdhTx) ->
   EdhTx
-withColumnSelfOf !colExit !ets =
+withColumnSelfOf !exit !colExit !ets =
   runEdhTx ets $ withColumnOf @a that naExit colExit
   where
     that = edh'scope'that $ contextScope $ edh'context ets
-    naExit =
-      throwEdhTx UsageError $
-        "that is not a Column of type " <> T.pack (show $ typeRep @a)
+    naExit = exitEdhTx exit edhNA
 
 getColumnDtype :: EdhThreadState -> Object -> (Object -> STM ()) -> STM ()
 getColumnDtype ets !objCol = getColumnDtype' objCol $
