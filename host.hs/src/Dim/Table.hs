@@ -37,16 +37,13 @@ data Table = Table
     -- todo add column labels
   }
 
-withTableSelf :: (Object -> Table -> EdhTx) -> EdhTx
-withTableSelf !tblExit !ets = do
-  supers <- readTVar $ edh'obj'supers that
-  withComposition $ that : supers
+withTable :: Object -> EdhTx -> (Object -> Table -> EdhTx) -> EdhTx
+withTable !obj naExit !tblExit !ets = do
+  supers <- readTVar $ edh'obj'supers obj
+  withComposition $ obj : supers
   where
-    that = edh'scope'that $ contextScope $ edh'context ets
-    naExit = throwEdh ets UsageError "not an expected self Table"
-
     withComposition :: [Object] -> STM ()
-    withComposition [] = naExit
+    withComposition [] = runEdhTx ets naExit
     withComposition (o : rest) = case fromDynamic =<< dynamicHostData o of
       Nothing -> withComposition rest
       Just (tbl :: Table) -> runEdhTx ets $ tblExit o tbl
@@ -129,8 +126,8 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
             | (nm, vc, hp) <-
                 [ ("__cap__", EdhMethod, wrapHostProc tabCapProc),
-                  ("__grow__", EdhMethod, wrapHostProc tabGrowProc),
                   ("__len__", EdhMethod, wrapHostProc tabLenProc),
+                  ("__grow__", EdhMethod, wrapHostProc tabGrowProc),
                   ("__mark__", EdhMethod, wrapHostProc tabMarkRowCntProc),
                   ("([])", EdhMethod, wrapHostProc tabIdxReadProc),
                   ("([=])", EdhMethod, wrapHostProc tabIdxWriteProc),
@@ -268,25 +265,35 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                     [dtBox]
                 exitEdh ets exit colObj
 
+    withThisTable :: (Table -> EdhTx) -> EdhTx
+    withThisTable !tblExit !ets = case fromDynamic =<< dynamicHostData this of
+      Nothing -> throwEdh ets UsageError "bug: this not an expected Table"
+      Just (tbl :: Table) -> exitEdh ets tblExit tbl
+      where
+        this = edh'scope'this $ contextScope $ edh'context ets
+
+    tabColsGetterProc :: EdhHostProc
+    tabColsGetterProc !exit = withThisTable $ \(Table _ _ !tcols) !ets ->
+      odTransform EdhObject <$> iopdSnapshot tcols
+        >>= exitEdh ets exit . EdhArgsPack . ArgsPack []
+
     tabCapProc :: EdhHostProc
-    tabCapProc !exit !ets =
-      withThisHostObj ets $ \(Table !cv _rcv _tcols) -> do
-        !cap <- readTVar cv
-        exitEdh ets exit $ EdhDecimal $ fromIntegral cap
+    tabCapProc !exit = withThisTable $ \(Table !cv _rcv _tcols) !ets -> do
+      !cap <- readTVar cv
+      exitEdh ets exit $ EdhDecimal $ fromIntegral cap
 
     tabLenProc :: EdhHostProc
-    tabLenProc !exit !ets =
-      withThisHostObj ets $ \(Table _cv !rcv _tcols) -> do
-        !rc <- readTVar rcv
-        exitEdh ets exit $ EdhDecimal $ fromIntegral rc
+    tabLenProc !exit = withThisTable $ \(Table _cv !rcv _tcols) !ets -> do
+      !rc <- readTVar rcv
+      exitEdh ets exit $ EdhDecimal $ fromIntegral rc
 
     tabGrowProc :: "newCap" !: Int -> EdhHostProc
-    tabGrowProc (mandatoryArg -> !newCap) !exit = withTableSelf $
-      \_tblInst !tbl -> growTable newCap tbl $ exit . const nil
+    tabGrowProc (mandatoryArg -> !newCap) !exit = withThisTable $
+      \ !tbl -> growTable newCap tbl $ exit . const nil
 
     tabMarkRowCntProc :: "newCnt" !: Int -> EdhHostProc
-    tabMarkRowCntProc (mandatoryArg -> !newCnt) !exit = withTableSelf $
-      \_tblInst !tbl -> markTable newCnt tbl $ exit . const nil
+    tabMarkRowCntProc (mandatoryArg -> !newCnt) !exit = withThisTable $
+      \ !tbl -> markTable newCnt tbl $ exit . const nil
 
     tabIdxReadProc :: EdhValue -> EdhHostProc
     tabIdxReadProc !idxVal !exit !ets =
@@ -441,12 +448,6 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                 Nothing -> matchTab ms rest colsOther
                 Just !colOther ->
                   matchTab ((colObj, EdhObject colOther) : ms) rest colsOther
-
-    tabColsGetterProc :: EdhHostProc
-    tabColsGetterProc !exit !ets = withThisHostObj ets $ \(Table _ _ !tcols) ->
-      iopdSnapshot tcols >>= \ !tcols' ->
-        exitEdh ets exit $
-          EdhArgsPack $ ArgsPack [] $ odTransform EdhObject tcols'
 
     tabAttrReadProc :: EdhValue -> EdhHostProc
     tabAttrReadProc !keyVal !exit !ets =
