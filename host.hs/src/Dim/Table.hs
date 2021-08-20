@@ -129,10 +129,10 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                   ("__len__", EdhMethod, wrapHostProc tabLenProc),
                   ("__grow__", EdhMethod, wrapHostProc tabGrowProc),
                   ("__mark__", EdhMethod, wrapHostProc tabMarkRowCntProc),
-                  ("([])", EdhMethod, wrapHostProc tabIdxReadProc),
-                  ("([=])", EdhMethod, wrapHostProc tabIdxWriteProc),
                   ("(@)", EdhMethod, wrapHostProc tabAttrReadProc),
                   ("(@=)", EdhMethod, wrapHostProc tabAttrWriteProc),
+                  ("([])", EdhMethod, wrapHostProc tabIdxReadProc),
+                  ("([=])", EdhMethod, wrapHostProc tabIdxWriteProc),
                   ("__repr__", EdhMethod, wrapHostProc tabReprProc),
                   ("__show__", EdhMethod, wrapHostProc tabShowProc),
                   ("__desc__", EdhMethod, wrapHostProc tabDescProc)
@@ -189,7 +189,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                         then
                           throwEdhTx UsageError $
                             "Sequence " <> attrKeyStr colKey
-                              <> " is too short: "
+                              <> " is not long enough: "
                               <> T.pack (show $ MV.length vec)
                               <> " vs "
                               <> T.pack (show ctorCnt)
@@ -211,7 +211,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                       throwEdhTx UsageError $
                         "Column "
                           <> attrKeyStr colKey
-                          <> " is too short: "
+                          <> " is not long enough: "
                           <> T.pack (show cl)
                           <> "/"
                           <> T.pack (show $ array'capacity cs)
@@ -294,6 +294,78 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
     tabMarkRowCntProc :: "newCnt" !: Int -> EdhHostProc
     tabMarkRowCntProc (mandatoryArg -> !newCnt) !exit = withThisTable $
       \ !tbl -> markTable newCnt tbl $ exit . const nil
+
+    tabAttrReadProc :: EdhValue -> EdhHostProc
+    tabAttrReadProc !keyVal !exit = withThisTable $ \(Table _ _ !tcols) !ets ->
+      edhValueAsAttrKey ets keyVal $ \ !attrKey ->
+        iopdLookup attrKey tcols >>= \case
+          Nothing -> exitEdh ets exit edhNA
+          Just !tcol -> exitEdh ets exit $ EdhObject tcol
+
+    tabAttrWriteProc :: EdhValue -> "toVal" ?: EdhValue -> EdhHostProc
+    tabAttrWriteProc !attrKey (optionalArg -> !maybeAttrVal) !exit =
+      withThisTable $ \(Table !cv !rcv !tcols) !ets ->
+        edhValueAsAttrKey ets attrKey $ \ !colKey -> case maybeAttrVal of
+          Nothing -> do
+            iopdDelete colKey tcols
+            exitEdh ets exit nil
+          Just !attrVal -> do
+            !cap <- readTVar cv
+            !rc <- readTVar rcv
+            let badColSrc = edhSimpleDescTx attrVal $ \ !badDesc ->
+                  throwEdhTx UsageError $
+                    "not assignable to a table column: " <> badDesc
+            runEdhTx ets $ case edhUltimate attrVal of
+              EdhObject !obj -> do
+                let tryDt = withDataType obj trySeq $ \ !dt ->
+                      createInMemColumn dt cap rc $ \ !col _ets -> do
+                        !colObj <- edhCreateHostObj' clsColumn (toDyn col) [obj]
+                        iopdInsert colKey colObj tcols
+                        exitEdh ets exit $ EdhObject colObj
+
+                    trySeq = case fromDynamic =<< dynamicHostData obj of
+                      Nothing -> badColSrc
+                      Just (vec :: MV.IOVector EdhValue) ->
+                        if MV.length vec < rc
+                          then
+                            throwEdhTx UsageError $
+                              "Sequence " <> attrKeyStr colKey
+                                <> " is not long enough: "
+                                <> T.pack (show $ MV.length vec)
+                                <> " vs "
+                                <> T.pack (show rc)
+                          else \_ets -> do
+                            -- todo should we copy the mutable IO vector?
+                            !csv <- newTMVar $ DirectArray vec
+                            !clv <- newTVar rc
+                            !colObj <-
+                              edhCreateHostObj'
+                                clsColumn
+                                (toDyn $ someColumn $ InMemDirCol csv clv)
+                                [dtBox]
+                            iopdInsert colKey colObj tcols
+                            exitEdh ets exit $ EdhObject colObj
+
+                withColumn' obj tryDt $ \_colInst (SomeColumn _ !col) ->
+                  view'column'data col $ \(!cs, !cl) ->
+                    if array'capacity cs < cap || cl < rc
+                      then
+                        throwEdhTx UsageError $
+                          "Column "
+                            <> attrKeyStr colKey
+                            <> " is not long enough: "
+                            <> T.pack (show cl)
+                            <> "/"
+                            <> T.pack (show $ array'capacity cs)
+                            <> " vs "
+                            <> T.pack (show rc)
+                            <> "/"
+                            <> T.pack (show cap)
+                      else -- todo leave a longer column w/o truncating it?
+                      mark'column'length col rc $ \() _ets -> do
+                        iopdInsert colKey obj tcols
+                        exitEdh ets exit $ EdhObject obj
+              _ -> badColSrc
 
     tabIdxReadProc :: EdhValue -> EdhHostProc
     tabIdxReadProc !idxVal !exit !ets =
@@ -448,62 +520,6 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                 Nothing -> matchTab ms rest colsOther
                 Just !colOther ->
                   matchTab ((colObj, EdhObject colOther) : ms) rest colsOther
-
-    tabAttrReadProc :: EdhValue -> EdhHostProc
-    tabAttrReadProc !keyVal !exit !ets =
-      withThisHostObj ets $ \(Table _ _ !tcols) ->
-        edhValueAsAttrKey ets keyVal $ \ !attrKey ->
-          iopdLookup attrKey tcols >>= \case
-            Nothing -> exitEdh ets exit edhNA
-            Just !tcol -> exitEdh ets exit $ EdhObject tcol
-
-    tabAttrWriteProc :: EdhValue -> "toVal" ?: EdhValue -> EdhHostProc
-    tabAttrWriteProc !attrKey (optionalArg -> !maybeAttrVal) !exit !ets =
-      edhValueAsAttrKey ets attrKey $ \ !key ->
-        withThisHostObj ets $ \(Table !trCapV !trCntV !tcols) -> do
-          !trCap <- readTVar trCapV
-          !trCnt <- readTVar trCntV
-          case maybeAttrVal of
-            Nothing -> iopdDelete key tcols
-            Just !attrVal -> case edhUltimate attrVal of
-              EdhObject !obj ->
-                undefined
-              -- withColumn obj $ \_colInst !col -> do
-              -- castObjectStore obj >>= \case
-              --   Just (_, col'@(Column !col)) -> do
-              --     !cc <- columnCapacity col'
-              --     !cl <- read'column'length col
-              --     if cl < trCnt || cc < trCap
-              --       then
-              --         throwEdh ets UsageError $
-              --           "column not long enough: "
-              --             <> T.pack (show cl)
-              --             <> "/"
-              --             <> T.pack (show cc)
-              --             <> " vs "
-              --             <> T.pack (show trCnt)
-              --             <> "/"
-              --             <> T.pack (show trCap)
-              --       else runEdhTx ets $
-              --         mark'column'length col trCnt $ do
-              --           iopdInsert key obj tcols
-              --           exitEdh ets exit attrVal
-              --   Nothing ->
-              --     castObjectStore obj >>= \case
-              --       Just (_, !dt) ->
-              --         runEdhTx ets $
-              --           createInMemColumn dt trCap trCnt $ \ !col -> do
-              --             !newColObj <-
-              --               edhCreateHostObj clsColumn col
-              --             iopdInsert key newColObj tcols
-              --             exitEdh ets exit $ EdhObject newColObj
-              --       Nothing -> badColSrc attrVal
-              _ -> badColSrc attrVal
-      where
-        badColSrc !badVal = edhValueDesc ets badVal $ \ !badValDesc ->
-          throwEdh ets UsageError $
-            "can only set a column or a dtype to a table, not "
-              <> badValDesc
 
     tabReprProc :: EdhHostProc
     tabReprProc !exit !ets =
