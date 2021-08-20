@@ -267,8 +267,8 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
 
     withThisTable :: (Table -> EdhTx) -> EdhTx
     withThisTable !tblExit !ets = case fromDynamic =<< dynamicHostData this of
-      Nothing -> throwEdh ets UsageError "bug: this not an expected Table"
-      Just (tbl :: Table) -> exitEdh ets tblExit tbl
+      Nothing -> throwEdh ets UsageError "bug: this is not a Table"
+      Just !tbl -> exitEdh ets tblExit tbl
       where
         this = edh'scope'this $ contextScope $ edh'context ets
 

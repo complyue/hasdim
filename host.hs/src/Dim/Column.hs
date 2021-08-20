@@ -143,16 +143,6 @@ withColumn' !colObj naExit !colExit !ets = do
       Nothing -> withComposition rest
       Just col -> runEdhTx ets $ colExit o col
 
-withColumnSelf ::
-  (forall c f a. ManagedColumn c f a => Object -> c a -> EdhTx) ->
-  EdhTx
-withColumnSelf !colExit !ets = runEdhTx ets $
-  withColumn' that naExit $ \ !colInst (SomeColumn _ !col) ->
-    colExit colInst col
-  where
-    that = edh'scope'that $ contextScope $ edh'context ets
-    naExit = throwEdhTx UsageError "not an expected self Column"
-
 asColumnOf ::
   forall a r.
   (Typeable a) =>
@@ -218,7 +208,7 @@ withColumnSelfOf !colExit !ets =
     that = edh'scope'that $ contextScope $ edh'context ets
     naExit =
       throwEdhTx UsageError $
-        "not an expected self column of type " <> T.pack (show $ typeRep @a)
+        "that is not a Column of type " <> T.pack (show $ typeRep @a)
 
 getColumnDtype :: EdhThreadState -> Object -> (Object -> STM ()) -> STM ()
 getColumnDtype ets !objCol = getColumnDtype' objCol $

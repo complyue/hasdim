@@ -1154,13 +1154,21 @@ createColumnClass !defaultDt !clsOuterScope =
               then return ()
               else extendsDt rest
 
+    withThisColumn ::
+      (forall c f a. ManagedColumn c f a => Object -> c a -> EdhTx) -> EdhTx
+    withThisColumn !exit !ets = case fromDynamic =<< dynamicHostData this of
+      Nothing -> throwEdh ets EvalError "bug: this is not a Column"
+      Just (SomeColumn _ !col) -> exitEdh ets (exit this) col
+      where
+        this = edh'scope'this $ contextScope $ edh'context ets
+
     colCapProc :: EdhHostProc
-    colCapProc !exit = withColumnSelf $ \_objCol !col ->
+    colCapProc !exit = withThisColumn $ \_this !col ->
       view'column'data col $ \(cs, _cl) ->
         exitEdhTx exit $ EdhDecimal $ fromIntegral $ array'capacity cs
 
     colLenProc :: EdhHostProc
-    colLenProc !exit = withColumnSelf $ \_objCol !col ->
+    colLenProc !exit = withThisColumn $ \_this !col ->
       read'column'length col $ \ !len ->
         exitEdhTx exit $ EdhDecimal $ fromIntegral len
 
@@ -1171,7 +1179,7 @@ createColumnClass !defaultDt !clsOuterScope =
           then
             throwEdhTx UsageError $
               "invalid newCap: " <> T.pack (show newCap)
-          else withColumnSelf $ \_objCol !col ->
+          else withThisColumn $ \_this !col ->
             grow'column'capacity col newCap $
               const $
                 exitEdhTx exit $
@@ -1179,20 +1187,20 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colMarkLenProc :: "newLen" !: Int -> EdhHostProc
     colMarkLenProc (mandatoryArg -> !newLen) !exit !ets = runEdhTx ets $
-      withColumnSelf $ \_objCol !col ->
+      withThisColumn $ \_this !col ->
         mark'column'length col newLen $
           const $
             exitEdhTx exit $
               EdhObject $ edh'scope'that $ contextScope $ edh'context ets
 
     colBlobProc :: EdhHostProc
-    colBlobProc !exit = withColumnSelf $ \_ !col -> view'column'data col $
+    colBlobProc !exit = withThisColumn $ \_ !col -> view'column'data col $
       \(cs, cl) -> array'as'blob cs cl (exitEdhTx exit edhNA) $ \ !bytes ->
         exitEdhTx exit $ EdhBlob bytes
 
     colJsonProc :: EdhHostProc
     colJsonProc !exit !ets = runEdhTx ets $
-      withColumnSelf $ \_objCol !col ->
+      withThisColumn $ \_this !col ->
         view'column'data col $ \(!cs, !cl) ->
           if cl < 1
             then exitEdhTx exit $ EdhString "[]"
@@ -1214,8 +1222,8 @@ createColumnClass !defaultDt !clsOuterScope =
               go (cl - 1) []
 
     colReprProc :: EdhHostProc
-    colReprProc !exit = withColumnSelf $ \ !objCol !col !ets ->
-      getColumnDtype ets objCol $ \ !dto -> runEdhTx ets $
+    colReprProc !exit = withThisColumn $ \ !this !col !ets ->
+      getColumnDtype ets this $ \ !dto -> runEdhTx ets $
         edhValueReprTx (EdhObject dto) $
           \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
             let colRepr =
@@ -1230,8 +1238,8 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colShowProc :: EdhHostProc
     colShowProc !exit =
-      withColumnSelf $ \ !objCol !col !ets ->
-        getColumnDtype ets objCol $ \ !dto -> runEdhTx ets $
+      withThisColumn $ \ !this !col !ets ->
+        getColumnDtype ets this $ \ !dto -> runEdhTx ets $
           edhValueReprTx (EdhObject dto) $
             \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
               let colRepr =
@@ -1309,7 +1317,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colIdxReadProc :: EdhValue -> EdhHostProc
     colIdxReadProc !idxVal !exit !ets = runEdhTx ets $
-      withColumnSelf $ \ !objCol !col -> do
+      withThisColumn $ \ !this !col -> do
         let withBoolIdx ::
               forall c f.
               ManagedColumn c f YesNo =>
@@ -1317,7 +1325,7 @@ createColumnClass !defaultDt !clsOuterScope =
               c YesNo ->
               EdhTx
             withBoolIdx _ !idxCol =
-              extractColumnBool objCol col idxCol $ \(!newColObj, _newCol) ->
+              extractColumnBool this col idxCol $ \(!newColObj, _newCol) ->
                 exitEdhTx exit $ EdhObject newColObj
 
             withIntpIdx ::
@@ -1327,7 +1335,7 @@ createColumnClass !defaultDt !clsOuterScope =
               c Int ->
               EdhTx
             withIntpIdx _ !idxCol =
-              extractColumnFancy objCol col idxCol $ \(!newColObj, _newCol) ->
+              extractColumnFancy this col idxCol $ \(!newColObj, _newCol) ->
                 exitEdhTx exit $ EdhObject newColObj
 
             withEdhIdx :: EdhTx
@@ -1349,7 +1357,7 @@ createColumnClass !defaultDt !clsOuterScope =
                       edhRegulateSlice ets cl (start, stop, step) $
                         \(!iStart, !iStop, !iStep) ->
                           runEdhTx ets $
-                            sliceColumn objCol col iStart iStop iStep $
+                            sliceColumn this col iStart iStop iStep $
                               \(!newColObj, _newCol) ->
                                 exitEdhTx exit $ EdhObject newColObj
 
@@ -1362,7 +1370,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
     colIdxWriteProc !idxVal !other !exit !ets = runEdhTx ets $
-      withColumnSelf $ \_objCol (col :: _c a) ->
+      withThisColumn $ \_this (col :: _c a) ->
         view'column'data col $ \(!cs, !cl) -> do
           let withScalarRHS :: EdhTx
               withScalarRHS = fromEdh @a other $ \ !rhv -> do
@@ -1576,21 +1584,22 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colCopyProc :: EdhHostProc
     colCopyProc !exit !ets = runEdhTx ets $
-      withColumnSelf $ \ !objCol !col ->
+      withThisColumn $ \ !this !col ->
         read'column'length col $ \ !cl ->
           copy'column'slice col 0 cl 1 $ \(disp, col') _ets -> case disp of
             StayComposed ->
-              edhCloneHostObj ets objCol objCol col' $
+              edhCloneHostObj ets this this col' $
                 \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
-            ExtractAlone -> getColumnDtype ets objCol $ \ !dto ->
+            ExtractAlone -> getColumnDtype ets this $ \ !dto ->
               edhCreateHostObj'
-                (edh'obj'class objCol)
+                (edh'obj'class this)
                 (toDyn col')
                 [dto]
                 >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
     colDtypeProc :: EdhHostProc
-    colDtypeProc !exit !ets = getColumnDtype ets this $ exitEdh ets exit . EdhObject
+    colDtypeProc !exit !ets =
+      getColumnDtype ets this $ exitEdh ets exit . EdhObject
       where
         scope = contextScope $ edh'context ets
         this = edh'scope'this scope
