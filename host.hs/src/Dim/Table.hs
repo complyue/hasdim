@@ -9,15 +9,11 @@ import Data.Lossless.Decimal as D
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector.Mutable as MV
-import Dim.ColArts
 import Dim.Column
 import Dim.DataType
 import Dim.InMem
 import Dim.XCHG
-import GHC.Conc (unsafeIOToSTM)
-import Language.Edh.Batteries
 import Language.Edh.EHI
-import Type.Reflection
 import Prelude
 
 {- HLINT ignore "Redundant <$>" -}
@@ -119,39 +115,39 @@ markTable !newCnt tbl@(Table cv rcv _tcols) !exit = withTblCols tbl $
 
 createTableClass :: Object -> Object -> Scope -> STM Object
 createTableClass !dtBox !clsColumn !clsOuterScope =
-  mkHostClass clsOuterScope "Table" (allocEdhObj tableAllocator) [] $
+  mkHostClass clsOuterScope "Table" (allocEdhObj tblAllocator) [] $
     \ !clsScope -> do
       !mths <-
         sequence $
           [ (AttrByName nm,) <$> mkHostProc clsScope vc nm hp
             | (nm, vc, hp) <-
-                [ ("__cap__", EdhMethod, wrapHostProc tabCapProc),
-                  ("__len__", EdhMethod, wrapHostProc tabLenProc),
-                  ("__grow__", EdhMethod, wrapHostProc tabGrowProc),
-                  ("__mark__", EdhMethod, wrapHostProc tabMarkRowCntProc),
-                  ("(@)", EdhMethod, wrapHostProc tabAttrReadProc),
-                  ("(@=)", EdhMethod, wrapHostProc tabAttrWriteProc),
-                  ("([])", EdhMethod, wrapHostProc tabIdxReadProc),
-                  ("([=])", EdhMethod, wrapHostProc tabIdxWriteProc),
-                  ("__repr__", EdhMethod, wrapHostProc tabReprProc),
-                  ("__show__", EdhMethod, wrapHostProc tabShowProc),
-                  ("__desc__", EdhMethod, wrapHostProc tabDescProc)
+                [ ("__cap__", EdhMethod, wrapHostProc tblCapProc),
+                  ("__len__", EdhMethod, wrapHostProc tblLenProc),
+                  ("__grow__", EdhMethod, wrapHostProc tblGrowProc),
+                  ("__mark__", EdhMethod, wrapHostProc tblMarkRowCntProc),
+                  ("(@)", EdhMethod, wrapHostProc tblAttrReadProc),
+                  ("(@=)", EdhMethod, wrapHostProc tblAttrWriteProc),
+                  ("([])", EdhMethod, wrapHostProc tblIdxReadProc),
+                  ("([=])", EdhMethod, wrapHostProc tblIdxWriteProc),
+                  ("__repr__", EdhMethod, wrapHostProc tblReprProc),
+                  ("__show__", EdhMethod, wrapHostProc tblShowProc),
+                  ("__desc__", EdhMethod, wrapHostProc tblDescProc)
                 ]
           ]
             ++ [ (AttrByName nm,) <$> mkHostProperty clsScope nm getter setter
                  | (nm, getter, setter) <-
-                     [ ("columns", tabColsGetterProc, Nothing)
+                     [ ("columns", tblColsGetterProc, Nothing)
                      ]
                ]
       iopdUpdate mths $ edh'scope'entity clsScope
   where
-    tableAllocator ::
+    tblAllocator ::
       "capacity" !: Int ->
       "row'count" ?: Int ->
       "columns" !: KeywordArgs ->
       ArgsPack -> -- allow/ignore arbitrary ctor args for descendant classes
       EdhObjectAllocator
-    tableAllocator
+    tblAllocator
       (mandatoryArg -> !ctorCap)
       (defaultArg ctorCap -> !ctorCnt)
       (mandatoryArg -> KeywordArgs !colSpecs)
@@ -272,38 +268,38 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
       where
         this = edh'scope'this $ contextScope $ edh'context ets
 
-    tabColsGetterProc :: EdhHostProc
-    tabColsGetterProc !exit = withThisTable $ \(Table _ _ !tcols) !ets ->
+    tblColsGetterProc :: EdhHostProc
+    tblColsGetterProc !exit = withThisTable $ \(Table _ _ !tcols) !ets ->
       odTransform EdhObject <$> iopdSnapshot tcols
         >>= exitEdh ets exit . EdhArgsPack . ArgsPack []
 
-    tabCapProc :: EdhHostProc
-    tabCapProc !exit = withThisTable $ \(Table !cv _rcv _tcols) !ets -> do
+    tblCapProc :: EdhHostProc
+    tblCapProc !exit = withThisTable $ \(Table !cv _rcv _tcols) !ets -> do
       !cap <- readTVar cv
       exitEdh ets exit $ EdhDecimal $ fromIntegral cap
 
-    tabLenProc :: EdhHostProc
-    tabLenProc !exit = withThisTable $ \(Table _cv !rcv _tcols) !ets -> do
+    tblLenProc :: EdhHostProc
+    tblLenProc !exit = withThisTable $ \(Table _cv !rcv _tcols) !ets -> do
       !rc <- readTVar rcv
       exitEdh ets exit $ EdhDecimal $ fromIntegral rc
 
-    tabGrowProc :: "newCap" !: Int -> EdhHostProc
-    tabGrowProc (mandatoryArg -> !newCap) !exit = withThisTable $
+    tblGrowProc :: "newCap" !: Int -> EdhHostProc
+    tblGrowProc (mandatoryArg -> !newCap) !exit = withThisTable $
       \ !tbl -> growTable newCap tbl $ exit . const nil
 
-    tabMarkRowCntProc :: "newCnt" !: Int -> EdhHostProc
-    tabMarkRowCntProc (mandatoryArg -> !newCnt) !exit = withThisTable $
+    tblMarkRowCntProc :: "newCnt" !: Int -> EdhHostProc
+    tblMarkRowCntProc (mandatoryArg -> !newCnt) !exit = withThisTable $
       \ !tbl -> markTable newCnt tbl $ exit . const nil
 
-    tabAttrReadProc :: EdhValue -> EdhHostProc
-    tabAttrReadProc !keyVal !exit = withThisTable $ \(Table _ _ !tcols) !ets ->
+    tblAttrReadProc :: EdhValue -> EdhHostProc
+    tblAttrReadProc !keyVal !exit = withThisTable $ \(Table _ _ !tcols) !ets ->
       edhValueAsAttrKey ets keyVal $ \ !attrKey ->
         iopdLookup attrKey tcols >>= \case
           Nothing -> exitEdh ets exit edhNA
           Just !tcol -> exitEdh ets exit $ EdhObject tcol
 
-    tabAttrWriteProc :: EdhValue -> "toVal" ?: EdhValue -> EdhHostProc
-    tabAttrWriteProc !attrKey (optionalArg -> !maybeAttrVal) !exit =
+    tblAttrWriteProc :: EdhValue -> "toVal" ?: EdhValue -> EdhHostProc
+    tblAttrWriteProc !attrKey (optionalArg -> !maybeAttrVal) !exit =
       withThisTable $ \(Table !cv !rcv !tcols) !ets ->
         edhValueAsAttrKey ets attrKey $ \ !colKey -> case maybeAttrVal of
           Nothing -> do
@@ -367,10 +363,10 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                         exitEdh ets exit $ EdhObject obj
               _ -> badColSrc
 
-    tabIdxReadProc :: EdhValue -> EdhHostProc
-    tabIdxReadProc !idxVal !exit !ets =
+    tblIdxReadProc :: EdhValue -> EdhHostProc
+    tblIdxReadProc !idxVal !exit !ets =
       undefined
-    -- withThisHostObj ets $ \tab@(Table _trCapV !trCntV !tcols) ->
+    -- withThisHostObj ets $ \tbl@(Table _trCapV !trCntV !tcols) ->
     --   castObjectStore' idxVal >>= \case
     --     Just (_, idxCol'@(Column !idxCol)) ->
     --       case data'type'identifier $ data'type'of'column idxCol of
@@ -423,7 +419,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
     --     Nothing -> parseEdhIndex ets idxVal $ \case
     --       Left !err -> throwEdh ets UsageError err
     --       Right (EdhIndex !i) ->
-    --         readTableRow ets tab i $ exitEdh ets exit . EdhArgsPack
+    --         readTableRow ets tbl i $ exitEdh ets exit . EdhArgsPack
     --       Right EdhAny -> exitEdh ets exit $ EdhObject thatTab
     --       Right EdhAll -> exitEdh ets exit $ EdhObject thatTab
     --       Right (EdhSlice !start !stop !step) -> do
@@ -454,8 +450,8 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
     --   !thisTab = edh'scope'this $ contextScope $ edh'context ets
     --   !thatTab = edh'scope'that $ contextScope $ edh'context ets
 
-    tabIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
-    tabIdxWriteProc !idxVal !toVal !exit !ets =
+    tblIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
+    tblIdxWriteProc !idxVal !toVal !exit !ets =
       withThisHostObj ets $ \(Table _trCapV !trCntV !tcols) ->
         readTVar trCntV
           >>= \ !trCnt -> iopdToList tcols >>= matchColTgts trCnt assignCols
@@ -480,7 +476,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
           !toVal' ->
             castObjectStore' toVal' >>= \case
               -- assign with another table
-              Just (_tabOther, Table _trCapV !trCntVOther !tcolsOther) -> do
+              Just (_tblOther, Table _trCapV !trCntVOther !tcolsOther) -> do
                 !trcOther <- readTVar trCntVOther
                 if trc /= trcOther
                   then
@@ -521,8 +517,8 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                 Just !colOther ->
                   matchTab ((colObj, EdhObject colOther) : ms) rest colsOther
 
-    tabReprProc :: EdhHostProc
-    tabReprProc !exit = withThisTable $ \(Table !cv !rcv !tcols) !ets -> do
+    tblReprProc :: EdhHostProc
+    tblReprProc !exit = withThisTable $ \(Table !cv !rcv !tcols) !ets -> do
       !cap <- readTVar cv
       !rc <- readTVar rcv
       !tcl <- iopdToList tcols
@@ -545,136 +541,128 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                 <> T.concat colReprs
                 <> ")"
 
-    tabShowProc :: "columnWidth" ?: PackedArgs -> EdhHostProc
-    tabShowProc
+    tblShowProc :: "columnWidth" ?: PackedArgs -> EdhHostProc
+    tblShowProc
       ( defaultArg (PackedArgs (ArgsPack [] odEmpty)) ->
           PackedArgs (ArgsPack !posWidth !kwWidth)
         )
-      !exit
-      !ets =
-        withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>") $
-          \(Table _trCapV !trCntV !tcols) ->
-            prepareCols tcols $ \ !colSpecs -> do
-              !tcc <- iopdSize tcols
-              !trc <- readTVar trCntV
+      !exit = withThisTable $ \tbl@(Table _cv !rcv !tcols) !ets -> do
+        !rowCnt <- readTVar rcv
+        !colCnt <- iopdSize tcols
+        !posColWidth <- newTVar posWidth
+        let specifiedColWidth :: AttrKey -> (Int -> STM ()) -> STM ()
+            specifiedColWidth !colKey !cwExit = case odLookup colKey kwWidth of
+              Just !cwv -> parseColWidth cwv
+              Nothing ->
+                readTVar posColWidth >>= \case
+                  [] -> cwExit 10
+                  [cwv] -> parseColWidth cwv
+                  (cwv : rest) -> do
+                    writeTVar posColWidth rest
+                    parseColWidth cwv
+              where
+                parseColWidth :: EdhValue -> STM ()
+                parseColWidth !cwVal = case edhUltimate cwVal of
+                  EdhDecimal !d -> case D.decimalToInteger d of
+                    Just !i | i > 0 && i < 2000 -> cwExit $ fromInteger i
+                    _ -> edhValueDesc ets cwVal $ \ !cwDesc ->
+                      throwEdh ets UsageError $
+                        "invalid columnWidth: " <> cwDesc
+                  _ -> edhValueDesc ets cwVal $ \ !cwDesc ->
+                    throwEdh ets UsageError $
+                      "invalid columnWidth: " <> cwDesc
+
+            prepareCols ::
+              [AttrKey] ->
+              EdhTxExit [(Text, Int, Int -> (Text -> IO ()) -> IO ())] ->
+              [(Object, SomeColumn)] ->
+              EdhTx
+            prepareCols !colKeys !colsExit !cols _ets =
+              prepareSpecs [] $ zip colKeys cols
+              where
+                prepareSpecs ::
+                  [(Text, Int, Int -> (Text -> IO ()) -> IO ())] ->
+                  [(AttrKey, (Object, SomeColumn))] ->
+                  STM ()
+                prepareSpecs specs [] =
+                  runEdhTx ets $ colsExit $! reverse specs
+                prepareSpecs
+                  specs
+                  ((!colKey, (_colObj, SomeColumn _ !col)) : rest) =
+                    specifiedColWidth colKey $ \ !colWidth -> runEdhTx ets $
+                      view'column'data col $ \(!cs, _cl) _ets -> do
+                        let readCell !rowIdx !cellExit = do
+                              !hvCell <- array'reader cs rowIdx
+                              atomically $
+                                runEdhTx ets $
+                                  toEdh hvCell $
+                                    \ !vCell -> edhValueStrTx vCell $
+                                      \ !reprCell ->
+                                        edhContIO $ cellExit reprCell
+                        prepareSpecs
+                          ((attrKeyStr colKey, colWidth, readCell) : specs)
+                          rest
+
+        !colKeys <- iopdKeys tcols
+        runEdhTx ets $
+          withTblCols tbl $
+            prepareCols colKeys $ \ !colSpecs -> do
               let !titleLine =
                     T.concat $
-                      (<$> colSpecs) $ \(!title, !colWidth, _cellRdr) ->
-                        centerBriefAlign (colWidth + 1) $ title
+                      (<$> colSpecs) $ \(!title, !colWidth, _readCell) ->
+                        centerBriefAlign (colWidth + 1) title
                   !totalWidth = T.length titleLine
-              let rowLine :: Int -> (Text -> STM ()) -> STM ()
+              let rowLine :: Int -> (Text -> IO ()) -> IO ()
                   rowLine !i !rowLineExit = readCells "|" colSpecs
                     where
                       readCells !line [] = rowLineExit line
-                      readCells !line ((_title, !colWidth, !cellRdr) : rest) =
-                        cellRdr i $ \ !cellVal ->
-                          edhValueStr ets cellVal $
-                            \ !cellStr ->
-                              readCells
-                                ( line
-                                    <> centerBriefAlign (colWidth + 1) cellStr
-                                )
-                                rest
-                  rowLines :: [Int] -> ([Text] -> STM ()) -> STM ()
+                      readCells !line ((_title, !colWidth, !readCell) : rest) =
+                        readCell i $ \ !cellStr ->
+                          readCells
+                            ( line
+                                <> centerBriefAlign (colWidth + 1) cellStr
+                            )
+                            rest
+                  rowLines :: [Int] -> ([Text] -> IO ()) -> IO ()
                   rowLines !rowIdxs !rowLinesExit = go [] rowIdxs
                     where
                       go !rls [] = rowLinesExit $ reverse rls
                       go !rls (rowIdx : rest) =
                         rowLine rowIdx $ \ !line -> go (line : rls) rest
-                  dataLines :: ([Text] -> STM ()) -> STM ()
+                  dataLines :: ([Text] -> IO ()) -> IO ()
                   dataLines !dataLinesExit =
-                    if trc <= 20
+                    if rowCnt <= 20
                       then -- TODO make this tunable
-                        rowLines [0 .. trc - 1] dataLinesExit
+                        rowLines [0 .. rowCnt - 1] dataLinesExit
                       else rowLines [0 .. 10] $ \ !headLines ->
-                        rowLines [trc - 11 .. trc - 1] $ \ !tailLines ->
+                        rowLines [rowCnt - 11 .. rowCnt - 1] $ \ !tailLines ->
                           dataLinesExit $ headLines <> ["..."] <> tailLines
-              dataLines $ \ !dls ->
-                exitEdh ets exit $
-                  EdhString $
-                    T.replicate (totalWidth + 1) "-"
-                      <> "\n|"
-                      <> centerBriefAlign
-                        totalWidth
-                        ( "table of "
-                            <> T.pack (show tcc)
-                            <> " columns * "
-                            <> T.pack (show trc)
-                            <> " rows"
-                        )
-                      <> "\n|"
-                      <> T.replicate (totalWidth - 1) "-"
-                      <> "|\n|"
-                      <> titleLine
-                      <> "\n|"
-                      <> T.replicate (totalWidth - 1) "-"
-                      <> "|\n"
-                      <> T.unlines dls
-                      <> T.replicate (totalWidth + 1) "-"
-        where
-          prepareCols ::
-            IOPD AttrKey Object ->
-            ( [ ( Text,
-                  Int,
-                  Int -> (EdhValue -> STM ()) -> STM ()
-                )
-              ] ->
-              STM ()
-            ) ->
-            STM ()
-          prepareCols !tcols !colsExit =
-            iopdToList tcols >>= prepareSpecs [] posWidth kwWidth
-            where
-              prepareSpecs ::
-                [(Text, Int, Int -> (EdhValue -> STM ()) -> STM ())] ->
-                [EdhValue] ->
-                KwArgs ->
-                [(AttrKey, Object)] ->
-                STM ()
-              prepareSpecs !specs _ _ [] = colsExit $! reverse specs
-              prepareSpecs !specs !pos'w !kw'w ((!colKey, !colObj) : rest) =
-                undefined
-              -- withColumn colObj $ \_colInst !col -> do
-              -- !cs <- view'column'data col
-              -- let !title = attrKeyStr colKey
-              --     !cellRdr = flat'array'read (data'type'of'column col) ets cs
-              -- case odTakeOut colKey kw'w of
-              --   (Just !cwVal, !kw'w') -> parseColWidth cwVal $ \ !colWidth ->
-              --     prepareSpecs
-              --       ((title, colWidth, cellRdr) : specs)
-              --       pos'w
-              --       kw'w'
-              --       rest
-              --   (Nothing, !kw'w') -> case pos'w of
-              --     [] ->
-              --       prepareSpecs
-              --         ((title, 10, cellRdr) : specs)
-              --         pos'w
-              --         kw'w'
-              --         rest
-              --     [!cwVal] -> parseColWidth cwVal $ \ !colWidth ->
-              --       prepareSpecs
-              --         ((title, colWidth, cellRdr) : specs)
-              --         pos'w
-              --         kw'w'
-              --         rest
-              --     cwVal : pos'w' -> parseColWidth cwVal $ \ !colWidth ->
-              --       prepareSpecs
-              --         ((title, colWidth, cellRdr) : specs)
-              --         pos'w'
-              --         kw'w'
-              --         rest
-              parseColWidth :: EdhValue -> (Int -> STM ()) -> STM ()
-              parseColWidth !cwVal !cwExit = case edhUltimate cwVal of
-                EdhDecimal !d -> case D.decimalToInteger d of
-                  Just !i | i > 0 && i < 2000 -> cwExit $ fromInteger i
-                  _ -> edhValueDesc ets cwVal $ \ !cwDesc ->
-                    throwEdh ets UsageError $ "invalid columnWidth: " <> cwDesc
-                _ -> edhValueDesc ets cwVal $ \ !cwDesc ->
-                  throwEdh ets UsageError $ "invalid columnWidth: " <> cwDesc
+              edhContIO $
+                dataLines $ \ !dls ->
+                  atomically $
+                    exitEdh ets exit $
+                      EdhString $
+                        T.replicate (totalWidth + 1) "-"
+                          <> "\n|"
+                          <> centerBriefAlign
+                            totalWidth
+                            ( "Table "
+                                <> T.pack (show colCnt)
+                                <> " × "
+                                <> T.pack (show rowCnt)
+                            )
+                          <> "\n|"
+                          <> T.replicate (totalWidth - 1) "-"
+                          <> "|\n|"
+                          <> titleLine
+                          <> "\n|"
+                          <> T.replicate (totalWidth - 1) "-"
+                          <> "|\n"
+                          <> T.unlines dls
+                          <> T.replicate (totalWidth + 1) "-"
 
-    tabDescProc :: RestKwArgs -> EdhHostProc
-    tabDescProc !kwargs !exit = withThisTable $
+    tblDescProc :: RestKwArgs -> EdhHostProc
+    tblDescProc !kwargs !exit = withThisTable $
       \(Table _cv !rcv !tcols) !ets -> do
         !rowCnt <- readTVar rcv
         !colCnt <- iopdSize tcols
