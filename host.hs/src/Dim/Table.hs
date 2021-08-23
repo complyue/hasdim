@@ -674,30 +674,27 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                   throwEdh ets UsageError $ "invalid columnWidth: " <> cwDesc
 
     tabDescProc :: RestKwArgs -> EdhHostProc
-    tabDescProc !kwargs !exit !ets =
-      withThisHostObj' ets (exitEdh ets exit $ EdhString "<bogus-Table>") $
-        \(Table _trCapV !trCntV !tcols) ->
-          (fmap tcDesc <$> iopdToList tcols >>=) $
-            flip seqcontSTM $
-              \ !tcDescLines -> do
-                !trc <- readTVar trCntV
-                exitEdh ets exit $
-                  EdhString $
-                    " * table row count: "
-                      <> T.pack (show trc)
-                      <> "\n"
-                      <> T.unlines tcDescLines
-      where
-        tcDesc :: (AttrKey, Object) -> (Text -> STM ()) -> STM ()
-        tcDesc (!colKey, !colObj) !exit' =
-          runEdhTx ets $
-            descProc (LitExpr $ ValueLiteral $ EdhObject colObj) kwargs $
-              \ !colDescVal _ets -> edhValueStr ets colDescVal $ \ !colDesc ->
-                exit' $
-                  " * table column "
+    tabDescProc !kwargs !exit = withThisTable $
+      \(Table _cv !rcv !tcols) !ets -> do
+        !rowCnt <- readTVar rcv
+        !colCnt <- iopdSize tcols
+        !cols <- iopdToList tcols
+        let tcDesc :: (AttrKey, Object) -> EdhTxExit Text -> EdhTx
+            tcDesc (!colKey, !colObj) !exit' =
+              edhObjDescTx' colObj kwargs $ \ !colDesc ->
+                exitEdhTx exit' $
+                  " ** Table Column: "
                     <> T.pack (show colKey)
                     <> " :\n"
                     <> colDesc
+        runEdhTx ets $
+          seqEdhTx (tcDesc <$> cols) $ \ !tcDescLines ->
+            exitEdhTx exit $
+              EdhString $
+                " * Table of " <> T.pack (show colCnt) <> " column(s) × "
+                  <> T.pack (show rowCnt)
+                  <> " row(s) \n"
+                  <> T.unlines tcDescLines
 
 centerBriefAlign :: Int -> Text -> Text
 centerBriefAlign !dispWidth !txt
