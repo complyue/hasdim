@@ -3,7 +3,9 @@ module Dim.Column where
 -- import           Debug.Trace
 
 import Control.Concurrent.STM
+import Control.Monad
 import Data.Dynamic
+import qualified Data.Text as T
 import Data.Typeable hiding (TypeRep, typeRep)
 import Dim.DataType
 import Dim.XCHG
@@ -119,19 +121,20 @@ someColumn ::
   SomeColumn
 someColumn = SomeColumn (typeRep @f)
 
-withColumn ::
-  Object ->
-  (Object -> SomeColumn -> EdhTx) ->
-  EdhTx
+withColumn :: Object -> (Object -> SomeColumn -> EdhTx) -> EdhTx
 withColumn !colObj =
   withColumn' colObj $
     throwEdhTx UsageError "not a Column as expected"
 
-withColumn' ::
-  Object ->
-  EdhTx ->
-  (Object -> SomeColumn -> EdhTx) ->
-  EdhTx
+withColumnSelf :: (Object -> SomeColumn -> EdhTx) -> EdhTx
+withColumnSelf !colExit !ets =
+  runEdhTx ets $ withColumn' that naExit colExit
+  where
+    that = edh'scope'that $ contextScope $ edh'context ets
+    naExit =
+      throwEdhTx UsageError "this is not a Column as expected"
+
+withColumn' :: Object -> EdhTx -> (Object -> SomeColumn -> EdhTx) -> EdhTx
 withColumn' !colObj naExit !colExit !ets = do
   supers <- readTVar $ edh'obj'supers colObj
   withComposition $ colObj : supers
@@ -274,3 +277,215 @@ extractColumnFancy !objCol !col !colIdxs !exit =
     getColumnDtype ets objCol $ \ !dto ->
       edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
         >>= \ !objCol' -> exitEdh ets exit (objCol', col')
+
+idxAssignColumn :: SomeColumn -> EdhValue -> EdhValue -> EdhTx -> EdhTx
+idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal !doneAssign !ets =
+  runEdhTx ets $
+    view'column'data col $ \(!cs, !cl) -> do
+      let withScalarRHS :: EdhTx
+          withScalarRHS = fromEdh @a tgtVal $ \ !rhv -> do
+            let byBoolIdx ::
+                  forall c f.
+                  ManagedColumn c f YesNo =>
+                  Object ->
+                  c YesNo ->
+                  EdhTx
+                byBoolIdx _ !idxCol =
+                  view'column'data idxCol $ \(idxa, idxl) ->
+                    if idxl /= cl
+                      then
+                        throwEdhTx UsageError $
+                          "bool index shape mismatch - "
+                            <> T.pack (show idxl)
+                            <> " vs "
+                            <> T.pack (show cl)
+                      else edhContIO $ do
+                        let go :: Int -> IO ()
+                            go i
+                              | i >= idxl = return ()
+                              | otherwise = do
+                                YesNo yn <- array'reader idxa i
+                                when (yn /= 0) $ array'writer cs i rhv
+                                go (i + 1)
+                        go 0
+                        atomically $ runEdhTx ets doneAssign
+
+                byIntpIdx ::
+                  forall c f.
+                  ManagedColumn c f Int =>
+                  Object ->
+                  c Int ->
+                  EdhTx
+                byIntpIdx _ !idxCol = view'column'data idxCol $
+                  \(idxa, idxl) -> edhContIO $ do
+                    let go :: Int -> IO ()
+                        go i
+                          | i >= idxl = return ()
+                          | otherwise = do
+                            idxi <- array'reader idxa i
+                            array'writer cs idxi rhv
+                            go (i + 1)
+                    go 0
+                    atomically $ runEdhTx ets doneAssign
+
+                byEdhIdx :: EdhTx
+                byEdhIdx _ets = parseEdhIndex ets idxVal $ \case
+                  Left !err -> throwEdh ets UsageError err
+                  Right !idx -> runEdhTx ets $ do
+                    let fillAll :: EdhTx
+                        fillAll = edhContIO $ do
+                          let go :: Int -> IO ()
+                              go i
+                                | i >= cl = return ()
+                                | otherwise = do
+                                  array'writer cs i rhv
+                                  go (i + 1)
+                          go 0
+                          atomically $ runEdhTx ets doneAssign
+                    case idx of
+                      EdhIndex !i -> edhContIO $ do
+                        array'writer cs i rhv
+                        atomically $ runEdhTx ets doneAssign
+                      EdhAny -> fillAll
+                      EdhAll -> fillAll
+                      EdhSlice !start !stop !step -> \_ets ->
+                        edhRegulateSlice ets cl (start, stop, step) $
+                          \(!iStart, !iStop, !iStep) -> runEdhTx ets $
+                            edhContIO $ do
+                              let go :: Int -> IO ()
+                                  go i
+                                    | i >= iStop = return ()
+                                    | otherwise = do
+                                      array'writer cs i rhv
+                                      go (i + iStep)
+                              go iStart
+                              atomically $ runEdhTx ets doneAssign
+
+            withColumnOf' @YesNo
+              idxVal
+              (withColumnOf' @Int idxVal byEdhIdx byIntpIdx)
+              byBoolIdx
+
+      withColumnOf' @a tgtVal withScalarRHS $ \_rhsColInst !rhsCol ->
+        view'column'data rhsCol $ \(cs'rhs, cl'rhs) -> do
+          let byBoolIdx ::
+                forall c f.
+                ManagedColumn c f YesNo =>
+                Object ->
+                c YesNo ->
+                EdhTx
+              byBoolIdx _ !idxCol =
+                if cl'rhs /= cl
+                  then
+                    throwEdhTx UsageError $
+                      "rhs column shape mismatch - "
+                        <> T.pack (show cl'rhs)
+                        <> " vs "
+                        <> T.pack (show cl)
+                  else view'column'data idxCol $ \(idxa, idxl) ->
+                    if idxl /= cl
+                      then
+                        throwEdhTx UsageError $
+                          "bool index shape mismatch - "
+                            <> T.pack (show idxl)
+                            <> " vs "
+                            <> T.pack (show cl)
+                      else edhContIO $ do
+                        let go :: Int -> IO ()
+                            go i
+                              | i >= idxl = return ()
+                              | otherwise = do
+                                YesNo yn <- array'reader idxa i
+                                when (yn /= 0) $
+                                  array'reader cs'rhs i
+                                    >>= array'writer cs i
+                                go (i + 1)
+                        go 0
+                        atomically $ runEdhTx ets doneAssign
+
+              byIntpIdx ::
+                forall c f.
+                ManagedColumn c f Int =>
+                Object ->
+                c Int ->
+                EdhTx
+              byIntpIdx _ !idxCol = view'column'data idxCol $
+                \(idxa, idxl) ->
+                  if cl'rhs /= idxl
+                    then
+                      throwEdhTx UsageError $
+                        "rhs column shape mismatch fancy index - "
+                          <> T.pack (show cl'rhs)
+                          <> " vs "
+                          <> T.pack (show idxl)
+                    else edhContIO $ do
+                      let go :: Int -> IO ()
+                          go i
+                            | i >= idxl = return ()
+                            | otherwise = do
+                              idxi <- array'reader idxa i
+                              array'reader cs'rhs i
+                                >>= array'writer cs idxi
+                              go (i + 1)
+                      go 0
+                      atomically $ runEdhTx ets doneAssign
+
+              byEdhIdx :: EdhTx
+              byEdhIdx _ets = parseEdhIndex ets idxVal $ \case
+                Left !err -> throwEdh ets UsageError err
+                Right !idx -> runEdhTx ets $ case idx of
+                  EdhIndex _i ->
+                    throwEdhTx
+                      UsageError
+                      "can not index-assign a rhs column by scalar index"
+                  EdhAny ->
+                    throwEdhTx
+                      UsageError
+                      "can not index-assign a rhs column by Any index"
+                  EdhAll ->
+                    if cl'rhs /= cl
+                      then
+                        throwEdhTx UsageError $
+                          "rhs column shape mismatch - "
+                            <> T.pack (show cl'rhs)
+                            <> " vs "
+                            <> T.pack (show cl)
+                      else edhContIO $ do
+                        let go :: Int -> IO ()
+                            go i
+                              | i >= cl = return ()
+                              | otherwise = do
+                                array'reader cs'rhs i
+                                  >>= array'writer cs i
+                                go (i + 1)
+                        go 0
+                        atomically $ runEdhTx ets doneAssign
+                  EdhSlice !start !stop !step -> \_ets ->
+                    edhRegulateSlice ets cl (start, stop, step) $
+                      \(!iStart, !iStop, !iStep) ->
+                        if cl'rhs < ((iStop - iStart) `quot` iStep)
+                          then
+                            throwEdh ets UsageError $
+                              "rhs column shape mismatch slicing index - "
+                                <> T.pack (show cl'rhs)
+                                <> " vs "
+                                <> T.pack
+                                  ( show iStart <> ":" <> show iStop <> ":"
+                                      <> show iStep
+                                  )
+                          else runEdhTx ets $
+                            edhContIO $ do
+                              let go :: Int -> Int -> IO ()
+                                  go i n
+                                    | i >= iStop = return ()
+                                    | otherwise = do
+                                      array'reader cs'rhs n
+                                        >>= array'writer cs i
+                                      go (i + iStep) (n + 1)
+                              go 0 0
+                              atomically $ runEdhTx ets doneAssign
+
+          withColumnOf' @YesNo
+            idxVal
+            (withColumnOf' @Int idxVal byEdhIdx byIntpIdx)
+            byBoolIdx

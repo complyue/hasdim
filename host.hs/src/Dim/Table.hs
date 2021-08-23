@@ -44,28 +44,33 @@ withTable !obj naExit !tblExit !ets = do
       Nothing -> withComposition rest
       Just (tbl :: Table) -> runEdhTx ets $ tblExit o tbl
 
-withTblCols :: Table -> EdhTxExit [(Object, SomeColumn)] -> EdhTx
+withTblCols :: Table -> EdhTxExit [(AttrKey, Object, SomeColumn)] -> EdhTx
 withTblCols (Table _cv _rcv !tcols) !exit !ets = do
-  !colObjs <- iopdValues tcols
+  !colObjs <- iopdToList tcols
   runEdhTx ets $ seqEdhTx (extractCol <$> colObjs) exit
   where
-    extractCol :: Object -> EdhTxExit (Object, SomeColumn) -> EdhTx
-    extractCol co !exit' = withColumn' co naExit $ curry $ exitEdhTx exit'
+    extractCol ::
+      (AttrKey, Object) -> EdhTxExit (AttrKey, Object, SomeColumn) -> EdhTx
+    extractCol (!colKey, !colObj) !exit' = withColumn' colObj naExit $
+      \ !colInst !col -> exitEdhTx exit' (colKey, colInst, col)
+
     naExit = throwEdhTx EvalError "bug: non-Column object in Table"
 
 readTableRow :: Table -> Int -> (KwArgs -> EdhTx) -> EdhTx
-readTableRow tbl@(Table _cv !rcv !tcols) !i !exit !ets = do
+readTableRow tbl@(Table _cv !rcv _tcols) !i !exit !ets = do
   !rc <- readTVar rcv
-  !ks <- iopdKeys tcols
   edhRegulateIndex ets rc i $ \ !rowIdx -> runEdhTx ets $
     withTblCols tbl $ \ !cols -> do
-      let readCell :: SomeColumn -> EdhTxExit EdhValue -> EdhTx
-          readCell (SomeColumn _ col) !cellExit = view'column'data col $
-            \(cs, _cl) -> edhContIO $ do
+      let readCell ::
+            (AttrKey, Object, SomeColumn) ->
+            EdhTxExit (AttrKey, EdhValue) ->
+            EdhTx
+          readCell (colKey, _colInst, SomeColumn _ col) !cellExit =
+            view'column'data col $ \(cs, _cl) -> edhContIO $ do
               !hv <- array'reader cs rowIdx
-              atomically $ runEdhTx ets $ toEdh hv cellExit
-      seqEdhTx (readCell . snd <$> cols) $ \ !vs ->
-        exitEdhTx exit $ odFromList $ zip ks vs
+              atomically $ runEdhTx ets $ toEdh hv $ cellExit . (colKey,)
+      seqEdhTx (readCell <$> cols) $
+        exitEdhTx exit . odFromList
 
 growTable :: ArrayCapacity -> Table -> EdhTxExit () -> EdhTx
 growTable !newCap tbl@(Table cv rcv _tcols) !exit
@@ -82,13 +87,13 @@ growTable !newCap tbl@(Table cv rcv _tcols) !exit
     when (newCap < rc) $ writeTVar rcv newCap
     -- now shrink all columns
     runEdhTx ets $
-      seqEdhTx (grow1 . snd <$> cols) $ \_ _ets -> do
+      seqEdhTx (grow1 <$> cols) $ \_ _ets -> do
         -- update table capacity after all columns successfully updated
         writeTVar cv newCap
         exitEdh ets exit ()
   where
-    grow1 :: SomeColumn -> EdhTxExit () -> EdhTx
-    grow1 (SomeColumn _ !col) = grow'column'capacity col newCap
+    grow1 :: (AttrKey, Object, SomeColumn) -> EdhTxExit () -> EdhTx
+    grow1 (_, _, SomeColumn _ !col) = grow'column'capacity col newCap
 
 markTable :: ArrayLength -> Table -> EdhTxExit () -> EdhTx
 markTable !newCnt tbl@(Table cv rcv _tcols) !exit = withTblCols tbl $
@@ -105,13 +110,13 @@ markTable !newCnt tbl@(Table cv rcv _tcols) !exit = withTblCols tbl $
         when (newCnt < rc) $ writeTVar rcv newCnt
         -- now mark all columns
         runEdhTx ets $
-          seqEdhTx (mark1 . snd <$> cols) $ \_ _ets -> do
+          seqEdhTx (mark1 <$> cols) $ \_ _ets -> do
             -- update table row count after all columns successfully updated
             writeTVar rcv newCnt
             exitEdh ets exit ()
   where
-    mark1 :: SomeColumn -> EdhTxExit () -> EdhTx
-    mark1 (SomeColumn _ !col) = mark'column'length col newCnt
+    mark1 :: (AttrKey, Object, SomeColumn) -> EdhTxExit () -> EdhTx
+    mark1 (_, _, SomeColumn _ !col) = mark'column'length col newCnt
 
 createTableClass :: Object -> Object -> Scope -> STM Object
 createTableClass !dtBox !clsColumn !clsOuterScope =
@@ -451,71 +456,63 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
     --   !thatTab = edh'scope'that $ contextScope $ edh'context ets
 
     tblIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
-    tblIdxWriteProc !idxVal !toVal !exit !ets =
-      withThisHostObj ets $ \(Table _trCapV !trCntV !tcols) ->
-        readTVar trCntV
-          >>= \ !trCnt -> iopdToList tcols >>= matchColTgts trCnt assignCols
-      where
-        assignCols :: [(Object, EdhValue)] -> STM ()
-        assignCols [] = exitEdh ets exit toVal
-        assignCols ((!colObj, !tgtVal) : rest) =
-          undefined
-        -- castTableColumn colObj >>= \ !col ->
-        --   runEdhTx ets $
-        --     idxAssignColumn col idxVal tgtVal $ \_ _ets ->
-        --       assignCols rest
+    tblIdxWriteProc !idxVal !toVal !exit = withThisTable $
+      \ !tbl -> withTblCols tbl $ \ !tcols !ets -> do
+        let assignCols :: EdhTxExit [(SomeColumn, EdhValue)]
+            assignCols [] = exitEdhTx exit toVal
+            assignCols ((!col, !tgtVal) : rest) =
+              idxAssignColumn col idxVal tgtVal $ assignCols rest
 
-        matchColTgts ::
-          Int ->
-          ([(Object, EdhValue)] -> STM ()) ->
-          [(AttrKey, Object)] ->
-          STM ()
-        matchColTgts !trc !mcExit !cols = case edhUltimate toVal of
-          -- assign with an apk
-          EdhArgsPack (ArgsPack !tgts !kwtgts) -> matchApk [] cols tgts kwtgts
-          !toVal' ->
-            castObjectStore' toVal' >>= \case
-              -- assign with another table
-              Just (_tblOther, Table _trCapV !trCntVOther !tcolsOther) -> do
-                !trcOther <- readTVar trCntVOther
-                if trc /= trcOther
-                  then
-                    throwEdh ets UsageError $
-                      "table row count mismatch: "
-                        <> T.pack (show trc)
-                        <> " vs "
-                        <> T.pack (show trcOther)
-                  else iopdSnapshot tcolsOther >>= matchTab [] cols
-              -- assign with a scalar
-              Nothing -> mcExit $ (,toVal) . snd <$> cols
-          where
-            matchApk ::
-              [(Object, EdhValue)] ->
-              [(AttrKey, Object)] ->
-              [EdhValue] ->
-              KwArgs ->
-              STM ()
-            matchApk !ms [] _ _ = mcExit $! reverse ms
-            matchApk !ms ((!colKey, !colObj) : rest) !tgts !kwtgts =
-              case odLookup colKey kwtgts of
-                Just !tgtVal ->
-                  matchApk ((colObj, tgtVal) : ms) rest tgts kwtgts
-                Nothing -> case tgts of
-                  [] -> matchApk ms rest [] kwtgts
-                  tgtVal : tgts' ->
-                    matchApk ((colObj, tgtVal) : ms) rest tgts' kwtgts
+            matchColTgts ::
+              [(AttrKey, Object, SomeColumn)] ->
+              EdhTx
+            matchColTgts !cols = case edhUltimate toVal of
+              -- assign with an apk
+              EdhArgsPack (ArgsPack !tgts !kwtgts) ->
+                matchApk [] cols tgts kwtgts
+              EdhObject !obj ->
+                withTable obj broadcastMatch $
+                  \_ (Table _ _ !tcolsOther) _ets -> do
+                    -- todo validate shape match here?
+                    !colsOther <- iopdSnapshot tcolsOther
+                    runEdhTx ets $ matchTbl [] cols colsOther
+              _ -> broadcastMatch
+              where
+                broadcastMatch :: EdhTx
+                broadcastMatch =
+                  assignCols $ (\(_, _, !col) -> (col, toVal)) <$> cols
 
-            matchTab ::
-              [(Object, EdhValue)] ->
-              [(AttrKey, Object)] ->
-              OrderedDict AttrKey Object ->
-              STM ()
-            matchTab !ms [] _ = mcExit $! reverse ms
-            matchTab !ms ((!colKey, !colObj) : rest) !colsOther =
-              case odLookup colKey colsOther of
-                Nothing -> matchTab ms rest colsOther
-                Just !colOther ->
-                  matchTab ((colObj, EdhObject colOther) : ms) rest colsOther
+                matchApk ::
+                  [(SomeColumn, EdhValue)] ->
+                  [(AttrKey, Object, SomeColumn)] ->
+                  [EdhValue] ->
+                  KwArgs ->
+                  EdhTx
+                matchApk ms [] _ _ = assignCols $! reverse ms
+                matchApk ms ((!colKey, _colInst, !col) : rest) !tgts !kwtgts =
+                  case odLookup colKey kwtgts of
+                    Just !tgtVal ->
+                      matchApk ((col, tgtVal) : ms) rest tgts kwtgts
+                    Nothing -> case tgts of
+                      [] -> matchApk ms rest [] kwtgts
+                      tgtVal : tgts' ->
+                        matchApk ((col, tgtVal) : ms) rest tgts' kwtgts
+
+                matchTbl ::
+                  [(SomeColumn, EdhValue)] ->
+                  [(AttrKey, Object, SomeColumn)] ->
+                  OrderedDict AttrKey Object ->
+                  EdhTx
+                matchTbl ms [] _ = assignCols $! reverse ms
+                matchTbl ms ((!colKey, _colInst, !col) : rest) !colsOther =
+                  case odLookup colKey colsOther of
+                    Nothing -> matchTbl ms rest colsOther
+                    Just !colOther ->
+                      matchTbl
+                        ((col, EdhObject colOther) : ms)
+                        rest
+                        colsOther
+        runEdhTx ets $ matchColTgts tcols
 
     tblReprProc :: EdhHostProc
     tblReprProc !exit = withThisTable $ \(Table !cv !rcv !tcols) !ets -> do
@@ -573,22 +570,21 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                       "invalid columnWidth: " <> cwDesc
 
             prepareCols ::
-              [AttrKey] ->
               EdhTxExit [(Text, Int, Int -> (Text -> IO ()) -> IO ())] ->
-              [(Object, SomeColumn)] ->
+              [(AttrKey, Object, SomeColumn)] ->
               EdhTx
-            prepareCols !colKeys !colsExit !cols _ets =
-              prepareSpecs [] $ zip colKeys cols
+            prepareCols !colsExit !cols _ets =
+              prepareSpecs [] cols
               where
                 prepareSpecs ::
                   [(Text, Int, Int -> (Text -> IO ()) -> IO ())] ->
-                  [(AttrKey, (Object, SomeColumn))] ->
+                  [(AttrKey, Object, SomeColumn)] ->
                   STM ()
                 prepareSpecs specs [] =
                   runEdhTx ets $ colsExit $! reverse specs
                 prepareSpecs
                   specs
-                  ((!colKey, (_colObj, SomeColumn _ !col)) : rest) =
+                  ((!colKey, _colObj, SomeColumn _ !col) : rest) =
                     specifiedColWidth colKey $ \ !colWidth -> runEdhTx ets $
                       view'column'data col $ \(!cs, _cl) _ets -> do
                         let readCell !rowIdx !cellExit = do
@@ -603,10 +599,9 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                           ((attrKeyStr colKey, colWidth, readCell) : specs)
                           rest
 
-        !colKeys <- iopdKeys tcols
         runEdhTx ets $
           withTblCols tbl $
-            prepareCols colKeys $ \ !colSpecs -> do
+            prepareCols $ \ !colSpecs -> do
               let !titleLine =
                     T.concat $
                       (<$> colSpecs) $ \(!title, !colWidth, _readCell) ->
