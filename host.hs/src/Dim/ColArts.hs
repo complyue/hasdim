@@ -1177,21 +1177,20 @@ createColumnClass !defaultDt !clsOuterScope =
               then return ()
               else extendsDt rest
 
-    withThisColumn ::
-      (forall c f a. ManagedColumn c f a => Object -> c a -> EdhTx) -> EdhTx
+    withThisColumn :: (Object -> SomeColumn -> EdhTx) -> EdhTx
     withThisColumn !exit !ets = case fromDynamic =<< dynamicHostData this of
       Nothing -> throwEdh ets EvalError "bug: this is not a Column"
-      Just (SomeColumn _ !col) -> exitEdh ets (exit this) col
+      Just !col -> exitEdh ets (exit this) col
       where
         this = edh'scope'this $ contextScope $ edh'context ets
 
     colCapProc :: EdhHostProc
-    colCapProc !exit = withThisColumn $ \_this !col ->
+    colCapProc !exit = withThisColumn $ \_this (SomeColumn _ !col) ->
       view'column'data col $ \(cs, _cl) ->
         exitEdhTx exit $ EdhDecimal $ fromIntegral $ array'capacity cs
 
     colLenProc :: EdhHostProc
-    colLenProc !exit = withThisColumn $ \_this !col ->
+    colLenProc !exit = withThisColumn $ \_this (SomeColumn _ !col) ->
       read'column'length col $ \ !len ->
         exitEdhTx exit $ EdhDecimal $ fromIntegral len
 
@@ -1202,7 +1201,7 @@ createColumnClass !defaultDt !clsOuterScope =
           then
             throwEdhTx UsageError $
               "invalid newCap: " <> T.pack (show newCap)
-          else withThisColumn $ \_this !col ->
+          else withThisColumn $ \_this (SomeColumn _ !col) ->
             grow'column'capacity col newCap $
               const $
                 exitEdhTx exit $
@@ -1210,20 +1209,21 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colMarkLenProc :: "newLen" !: Int -> EdhHostProc
     colMarkLenProc (mandatoryArg -> !newLen) !exit !ets = runEdhTx ets $
-      withThisColumn $ \_this !col ->
+      withThisColumn $ \_this (SomeColumn _ !col) ->
         mark'column'length col newLen $
           const $
             exitEdhTx exit $
               EdhObject $ edh'scope'that $ contextScope $ edh'context ets
 
     colBlobProc :: EdhHostProc
-    colBlobProc !exit = withThisColumn $ \_ !col -> view'column'data col $
-      \(cs, cl) -> array'as'blob cs cl (exitEdhTx exit edhNA) $ \ !bytes ->
-        exitEdhTx exit $ EdhBlob bytes
+    colBlobProc !exit = withThisColumn $ \_this (SomeColumn _ !col) ->
+      view'column'data col $
+        \(cs, cl) -> array'as'blob cs cl (exitEdhTx exit edhNA) $ \ !bytes ->
+          exitEdhTx exit $ EdhBlob bytes
 
     colJsonProc :: EdhHostProc
     colJsonProc !exit !ets = runEdhTx ets $
-      withThisColumn $ \_this !col ->
+      withThisColumn $ \_this (SomeColumn _ !col) ->
         view'column'data col $ \(!cs, !cl) ->
           if cl < 1
             then exitEdhTx exit $ EdhString "[]"
@@ -1245,7 +1245,7 @@ createColumnClass !defaultDt !clsOuterScope =
               go (cl - 1) []
 
     colReprProc :: EdhHostProc
-    colReprProc !exit = withThisColumn $ \ !this !col !ets ->
+    colReprProc !exit = withThisColumn $ \ !this (SomeColumn _ !col) !ets ->
       getColumnDtype ets this $ \ !dto -> runEdhTx ets $
         edhValueReprTx (EdhObject dto) $
           \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
@@ -1261,7 +1261,7 @@ createColumnClass !defaultDt !clsOuterScope =
 
     colShowProc :: EdhHostProc
     colShowProc !exit =
-      withThisColumn $ \ !this !col !ets ->
+      withThisColumn $ \ !this (SomeColumn _ !col) !ets ->
         getColumnDtype ets this $ \ !dto -> runEdhTx ets $
           edhValueReprTx (EdhObject dto) $
             \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
@@ -1339,65 +1339,66 @@ createColumnClass !defaultDt !clsOuterScope =
             <> "   like pandas describe(), is yet to be implemented."
 
     colIdxReadProc :: EdhValue -> EdhHostProc
-    colIdxReadProc !idxVal !exit !ets = runEdhTx ets $
-      withThisColumn $ \ !this !col -> do
-        let withBoolIdx ::
-              forall c f.
-              ManagedColumn c f YesNo =>
-              Object ->
-              c YesNo ->
-              EdhTx
-            withBoolIdx _ !idxCol =
-              extractColumnBool this col idxCol $ \(!newColObj, _newCol) ->
-                exitEdhTx exit $ EdhObject newColObj
+    colIdxReadProc !idxVal !exit = withThisColumn $ \ !this !col -> do
+      let withBoolIdx ::
+            forall c f.
+            ManagedColumn c f YesNo =>
+            Object ->
+            c YesNo ->
+            EdhTx
+          withBoolIdx _ !idxCol =
+            extractColumnBool this col idxCol $ \(!newColObj, _newCol) ->
+              exitEdhTx exit $ EdhObject newColObj
 
-            withIntpIdx ::
-              forall c f.
-              ManagedColumn c f Int =>
-              Object ->
-              c Int ->
-              EdhTx
-            withIntpIdx _ !idxCol =
-              extractColumnFancy this col idxCol $ \(!newColObj, _newCol) ->
-                exitEdhTx exit $ EdhObject newColObj
+          withIntpIdx ::
+            forall c f.
+            ManagedColumn c f Int =>
+            Object ->
+            c Int ->
+            EdhTx
+          withIntpIdx _ !idxCol =
+            extractColumnFancy this col idxCol $ \(!newColObj, _newCol) ->
+              exitEdhTx exit $ EdhObject newColObj
 
-            withEdhIdx :: EdhTx
-            withEdhIdx _ets = parseEdhIndex ets idxVal $ \case
-              Left !err -> throwEdh ets UsageError err
-              Right !idx -> runEdhTx ets $
-                view'column'data col $
-                  \(!cs, !cl) -> case idx of
-                    EdhIndex !i ->
-                      edhContIO $
-                        array'reader cs i >>= \ !ev ->
-                          atomically $
-                            runEdhTx ets $
-                              toEdh ev $ \ !elemVal ->
-                                exitEdhTx exit elemVal
-                    EdhAny -> exitEdhTx exit $ EdhObject that
-                    EdhAll -> exitEdhTx exit $ EdhObject that
-                    EdhSlice !start !stop !step -> \_ets ->
-                      edhRegulateSlice ets cl (start, stop, step) $
-                        \(!iStart, !iStop, !iStep) ->
+          withEdhIdx :: EdhTx
+          withEdhIdx !ets = parseEdhIndex ets idxVal $ \case
+            Left !err -> throwEdh ets UsageError err
+            Right !idx -> case idx of
+              EdhIndex !i -> runEdhTx ets $ case col of
+                SomeColumn _ col' -> view'column'data col' $
+                  \(!cs, _cl) ->
+                    edhContIO $
+                      array'reader cs i >>= \ !ev ->
+                        atomically $
                           runEdhTx ets $
-                            sliceColumn this col iStart iStop iStep $
-                              \(!newColObj, _newCol) ->
-                                exitEdhTx exit $ EdhObject newColObj
+                            toEdh ev $ \ !elemVal ->
+                              exitEdhTx exit elemVal
+              EdhAny -> exitEdh ets exit $ EdhObject that
+              EdhAll -> exitEdh ets exit $ EdhObject that
+              EdhSlice !start !stop !step -> runEdhTx ets $ case col of
+                SomeColumn _ col' -> view'column'data col' $
+                  \(_cs, !cl) _ets ->
+                    edhRegulateSlice ets cl (start, stop, step) $
+                      \(!iStart, !iStop, !iStep) ->
+                        runEdhTx ets $
+                          sliceColumn this col iStart iStop iStep $
+                            \(!newColObj, _newCol) ->
+                              exitEdhTx exit $ EdhObject newColObj
+            where
+              that = edh'scope'that $ contextScope $ edh'context ets
 
-        withColumnOf' @YesNo
-          idxVal
-          (withColumnOf' @Int idxVal withEdhIdx withIntpIdx)
-          withBoolIdx
-      where
-        that = edh'scope'that $ contextScope $ edh'context ets
+      withColumnOf' @YesNo
+        idxVal
+        (withColumnOf' @Int idxVal withEdhIdx withIntpIdx)
+        withBoolIdx
 
     colIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
-    colIdxWriteProc !idxVal !other !exit = withColumnSelf $ \_colInst !col ->
+    colIdxWriteProc !idxVal !other !exit = withThisColumn $ \_this !col ->
       idxAssignColumn col idxVal other $ exitEdhTx exit other
 
     colCopyProc :: "capacity" ?: Int -> EdhHostProc
     colCopyProc (optionalArg -> !maybeCap) !exit !ets = runEdhTx ets $
-      withThisColumn $ \ !this !col ->
+      withThisColumn $ \ !this (SomeColumn _ !col) ->
         read'column'length col $ \ !cl ->
           copy'column'slice
             col

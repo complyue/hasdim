@@ -230,50 +230,48 @@ getColumnDtype' !objCol naExit !exit =
       withDataType maybeDto (findSuperDto rest) (const $ exit maybeDto)
 
 sliceColumn ::
-  forall c f a.
-  ManagedColumn c f a =>
   Object ->
-  c a ->
+  SomeColumn ->
   Int ->
   Int ->
   Int ->
   EdhTxExit (Object, SomeColumn) ->
   EdhTx
-sliceColumn !objCol !col !start !stop !step !exit =
+sliceColumn !objCol (SomeColumn _ !col) !start !stop !step !exit =
   if stop >= start && step == 1
     then view'column'slice col start stop withSliced
     else copy'column'slice col stop start stop step withSliced
   where
     withSliced (disp, col') !ets = case disp of
       StayComposed -> edhCloneHostObj ets objCol objCol col' $
-        \ !objCol' -> exit (objCol', col') ets
+        \ !objCol' -> runEdhTx ets $ exit (objCol', col')
       ExtractAlone -> getColumnDtype ets objCol $ \ !dto ->
         edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
-          >>= \ !objCol' -> exit (objCol', col') ets
+          >>= \ !objCol' -> runEdhTx ets $ exit (objCol', col')
 
 extractColumnBool ::
-  forall c f a c' f'.
-  (ManagedColumn c f a, ManagedColumn c' f' YesNo) =>
+  forall c' f'.
+  (ManagedColumn c' f' YesNo) =>
   Object ->
-  c a ->
+  SomeColumn ->
   c' YesNo ->
   EdhTxExit (Object, SomeColumn) ->
   EdhTx
-extractColumnBool !objCol !col !colMask !exit =
+extractColumnBool !objCol (SomeColumn _ !col) !colMask !exit =
   extract'column'bool col colMask $ \ !col' !ets ->
     getColumnDtype ets objCol $ \ !dto ->
       edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
         >>= \ !objCol' -> exitEdh ets exit (objCol', col')
 
 extractColumnFancy ::
-  forall c f a c' f'.
-  (ManagedColumn c f a, ManagedColumn c' f' Int) =>
+  forall c' f'.
+  (ManagedColumn c' f' Int) =>
   Object ->
-  c a ->
+  SomeColumn ->
   c' Int ->
   EdhTxExit (Object, SomeColumn) ->
   EdhTx
-extractColumnFancy !objCol !col !colIdxs !exit =
+extractColumnFancy !objCol (SomeColumn _ !col) !colIdxs !exit =
   extract'column'fancy col colIdxs $ \ !col' !ets ->
     getColumnDtype ets objCol $ \ !dto ->
       edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
