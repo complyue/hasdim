@@ -4,16 +4,18 @@
 
 import * 'dim/dtypes'
 
-import (
-  Table, Column,
-  arange, random, where,
-  pi,
-  exp, log, sqrt,
-  sin, cos, tan, asin, acos, atan,
-  sinh, cosh, tanh, asinh, acosh, atanh,
-  DbArray,
-  **
-) 'dim/RT'
+# import (
+#   Table, Column,
+#   arange, random, where,
+#   pi,
+#   exp, log, sqrt,
+#   sin, cos, tan, asin, acos, atan,
+#   sinh, cosh, tanh, asinh, acosh, atanh,
+#   DbArray,
+#   **
+# ) 'dim/RT'
+
+import * 'dim/RT'
 
 import * 'dim/primitive/ops'
 
@@ -22,7 +24,8 @@ import * './ops'
 
 export {
 
-  method copy( col ) col.copy()
+  method copy( col, **kwargs, ) col.copy( **kwargs )
+
 
   method empty( size= 0, ***apk ) {
     return Column( capacity= size, ***apk )

@@ -45,8 +45,12 @@ executable hasdim
     StandaloneDeriving
     TupleSections
     TypeApplications
+    AllowAmbiguousTypes
+    TypeFamilies
     TypeOperators
     ViewPatterns
+    MultiParamTypeClasses
+    FunctionalDependencies
 
   ghc-options:        -Wall -threaded -rtsopts
   build-depends:
@@ -85,8 +89,12 @@ executable rundim
     StandaloneDeriving
     TupleSections
     TypeApplications
+    AllowAmbiguousTypes
+    TypeFamilies
     TypeOperators
     ViewPatterns
+    MultiParamTypeClasses
+    FunctionalDependencies
 
   ghc-options:        -Wall -threaded -rtsopts
   build-depends:
@@ -125,8 +133,12 @@ executable rundimm
     StandaloneDeriving
     TupleSections
     TypeApplications
+    AllowAmbiguousTypes
+    TypeFamilies
     TypeOperators
     ViewPatterns
+    MultiParamTypeClasses
+    FunctionalDependencies
 
   ghc-options:        -Wall -threaded -rtsopts
   build-depends:
@@ -151,6 +163,7 @@ library
     Dim.DbArts
     Dim.DiskBack
     Dim.Float
+    Dim.Fold
     Dim.InMem
     Dim.Table
     Dim.XCHG
@@ -177,8 +190,12 @@ library
     StandaloneDeriving
     TupleSections
     TypeApplications
+    AllowAmbiguousTypes
+    TypeFamilies
     TypeOperators
     ViewPatterns
+    MultiParamTypeClasses
+    FunctionalDependencies
 
   ghc-options:        -Wall
   build-depends:

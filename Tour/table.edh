@@ -16,67 +16,70 @@ class MyTable { extends Table
 }
 
 # %%
-tab = MyTable( name= 'My Demo Table',
+tbl = MyTable( name= 'My Demo Table',
   capacity= 10, columns= (
-    rowidx=arange( 10 ), rownum= '#' + arange( 1:11, dtype=box ),
-    sq=arange( 10, dtype=f8 ) **2, rowdesc=() =< ( # this round bracket
+    rowidx= arange( 10 ),
+    rownum= '#' + arange( 1..10, dtype= box ),
+    sq= arange( 10, dtype= f8 ) **2,
+    rowdesc= () =< ( # this round bracket
       # intends for its content indented by Edh formatter
-      for i from range( 10 ) do 'Square of ' ++ i ++ ' is ' ++ i**2
+      for i from 0:10 do 'Square of ' ++ i ++ ' is ' ++ i**2
     ),
   ), row'count= 8,
 )
 
 # %%
-tab | ( columnWidth=( 6, rowdesc=20, ) ) | show
+tbl @| ( columnWidth=( 6, rowdesc=20, ) ) @| show
+
 
 # %%
-tab[ 2 ]
+tbl[ 2 ]
 
 # %%
-tab[ 2:7:2 ] | show
+tbl[ 2:7:2 ] | show
 
 # %%
-tab.sq > 5 && tab.sq < 20 | where | show
+tbl.sq > 5 && tbl.sq < 20 | where | show
 
 # %%
-tab[ tab.sq > 5 && tab.sq < 20 ] | show
+tbl[ tbl.sq > 5 && tbl.sq < 20 ] | show
 
 # %%
-tab[ where $ tab.sq > 5 && tab.sq < 20 ] | show
+tbl[ where $ tbl.sq > 5 && tbl.sq < 20 ] | show
 
 # %%
-tab.rowdesc|show
+tbl.rowdesc|show
 
 # %%
-mark( tab, 7 )
-tab|show
+mark( tbl, 7 )
+tbl|show
 
 # %%
-tab.sq|desc
+tbl.sq|desc
 
 # %%
-tab.data1 = 3 ** arange( 20, dtype=f4 )
-tab.data1 | show
+tbl.data1 = 3 ** arange( 20, dtype=f4 )
+tbl.data1 | show
 
 # %%
-tab.data2 = float64
-tab.data2[] = 55
-tab.data2 | show
+tbl.data2 = float64
+tbl.data2[] = 55
+tbl.data2 | show
 
 # %%
-tab|show
+tbl|show
 
 # %%
-tab.columns
+tbl.columns
 
 # %%
-tab[ 2:5 ] = 77
-tab|show
+tbl[ 2:5 ] = 77
+tbl|show
 
 # %%
-tab[ 2:5 ] =( sq=33 )
-tab|show
+tbl[ 2:5 ] =( sq=33 )
+tbl|show
 
 # %%
-tab[ 2:5 ] =( rownum= '#' + arange( 99:96, dtype=box ) )
-tab|show
+tbl[ 2:5 ] =( rownum= '#' + arange( 99:96, dtype=box ) )
+tbl|show

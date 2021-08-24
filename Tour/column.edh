@@ -1,21 +1,47 @@
 # %%
 hd = { import * 'dim' }
-effect import * 'dim/effects'
+
+# %%
+c = arange(5)
+c' = c.copy()
+
+assert$ c.dtype is c'.dtype
+
+# %%
+show$ where( c > 1 )
+
+# %%
+show$ pi(3)
+
+# %%
+show$ exp( ones(3) )
 
 
+# %%
+r = random( 3, 3..5 )
+
+# %%
+show$ default'filled = empty(5)
+# %%
+show$ zero'filled = zeros(5)
+# %%
+show$ one'filled = ones(5)
+
+
+# %%
 class MyColumn { extends Column
   method __init__( name as this.name, ***_ ) pass
-  method __repr__(** kwargs ) {
+  method __repr__( **kwargs ) {
     '# ' ++ this.name ++ ' #\n'
-    ++ super.__repr__(** kwargs )
+    ++ super.__repr__( **kwargs )
   }
-  method __show__(** kwargs ) {
+  method __show__( **kwargs ) {
     '# ' ++ this.name ++ ' #\n'
-    ++ super.__show__(** kwargs )
+    ++ super.__show__( **kwargs )
   }
-  method __desc__(** kwargs ) {
+  method __desc__( **kwargs ) {
     '# ' ++ this.name ++ ' #\n'
-    ++ super.__desc__(** kwargs )
+    ++ super.__desc__( **kwargs )
   }
 }
 

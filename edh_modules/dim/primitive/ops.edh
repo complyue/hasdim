@@ -14,39 +14,56 @@ then error( 'Missing host module: ' ++ __name__ )
 # host artifacts, and is meant to be leveraged by IDE tools (such as els)
 # with source code analysis capabilities, to aid the developers
 
-class HostOpWrapped pass
+{## Wrapped host value encapsulates some `Folding` instance
+
+self/left/right foldings are separately supported according to specific dtype of the target column
+ #}
+class FoldOp pass
+
 
 export {
 
-  {## Higher Order Procedures
-   # - Simplified `ufunc`s
+  {## Folding Procedures
+   # - With folding operations instead of Numpy `ufunc`s
    #} {;
 
     {##
-     # Reduce a series (column) to a scalar value, with monoidal semantics
+     # Reduce a series (column) to a scalar value
      #}
-    method fold( col, identityVal, associativeOp, ) pass
+    method fold( foldingOp, col, ) pass
 
     {##
-     # Scan a series (column) to a result series, with monoidal semantics
+     # Reduce a series (column) to a scalar value, left-to-right
      #}
-    method scan( col, identityVal, associativeOp, ) pass
+    method foldl( foldingOp, start, col, ) pass
+
+    {##
+     # Reduce a series (column) to a scalar value, right-to-left
+     #}
+    method foldr( foldingOp, start, col, ) pass
+
+    {##
+     # Scan a series (column) to a result series, left-to-right
+     #}
+    method scanl( foldingOp, start, col, ) pass
+
+    {##
+     # Scan a series (column) to a result series, right-to-left
+     #}
+    method scanr( foldingOp, start, col, ) pass
 
   }
 
 
-  {## Wrapped Host Data Operations
-   # - Element-wise host operations those sensible to dtype
-
-The wrapped host function will take "data type identifier" as first argument, and evaluates to dtype specific signature expected by the corresponding `FlatOp` struct.
-
+  {## Folding Operations
+   # - Those dtype aware
    #} {;
 
-    add = HostOpWrapped()
-    add'valid = HostOpWrapped()
+    add = FoldOp()
+    add'valid = FoldOp()
 
-    multiply = HostOpWrapped()
-    multiply'valid = HostOpWrapped()
+    multiply = FoldOp()
+    multiply'valid = FoldOp()
 
   }
 
