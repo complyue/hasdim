@@ -105,14 +105,14 @@ mkBoxSuperDt !dti !defv !outerScope = do
           then
             evalInfix
               op
-              (LitExpr $ ValueLiteral lhv)
               (LitExpr $ ValueLiteral rhv)
+              (LitExpr $ ValueLiteral lhv)
               exit
           else
             evalInfix
               op
-              (LitExpr $ ValueLiteral rhv)
               (LitExpr $ ValueLiteral lhv)
+              (LitExpr $ ValueLiteral rhv)
               exit
 
       boxInpProc :: Bool -> AttrName -> EdhValue -> EdhHostProc
