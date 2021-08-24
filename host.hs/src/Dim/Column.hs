@@ -5,7 +5,10 @@ module Dim.Column where
 import Control.Concurrent.STM
 import Control.Monad
 import Data.Dynamic
+import Data.String
+import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
 import Data.Typeable hiding (TypeRep, typeRep)
 import Dim.DataType
 import Dim.XCHG
@@ -488,3 +491,118 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal !doneAssign !ets =
             idxVal
             (withColumnOf' @Int idxVal byEdhIdx byIntpIdx)
             byBoolIdx
+
+-- * implementation details for pretty showing of column data
+
+data Text2Show = Text2Show
+  { text'to'show :: TL.Text,
+    text'len :: Int64
+  }
+
+-- todo forbid '\n' '\r', handle '\t', handle wide chars, etc.
+
+text2Show :: Text -> Text2Show
+text2Show t = Text2Show t' (TL.length t')
+  where
+    t' = TL.fromStrict t
+
+instance IsString Text2Show where
+  fromString s = Text2Show t $ TL.length t
+    where
+      t = fromString s
+
+instance Semigroup Text2Show where
+  (Text2Show x't x'l) <> (Text2Show y't y'l) =
+    Text2Show (x't <> y't) (x'l + y'l)
+
+instance Monoid Text2Show where
+  mempty = Text2Show "" 0
+
+data Line2Show = Line2Show
+  { line'to'show :: Text2Show,
+    first'elem'idx :: Int,
+    last'elem'idx :: Int
+  }
+
+showColContent ::
+  ArrayLength -> (Int -> (Text -> IO ()) -> IO ()) -> (Text -> IO ()) -> IO ()
+showColContent !cl !readElem !exit = tryHeadLines [] 0 0 "" 0
+  where
+    -- todo make these tunable
+    lineWidth = 79
+    maxHeadLines = 10
+
+    tryHeadLines :: [Line2Show] -> Int -> Int -> Text2Show -> Int -> IO ()
+    tryHeadLines cumLines nLines i line lineFirstElemIdx
+      -- got all elements
+      | i >= cl =
+        if nLines <= 0
+          then exit $ TL.toStrict $ text'to'show line
+          else do
+            let cumLines' =
+                  if text'len line > 0
+                    then Line2Show line lineFirstElemIdx (cl - 1) : cumLines
+                    else cumLines
+                headLines = concat $ fancyLine <$> reverse cumLines'
+            exit $ TL.toStrict $ TL.unlines headLines
+
+      -- more elements to show
+      | nLines >= maxHeadLines = do
+        showTailLines (reverse cumLines) (lineFirstElemIdx - 1)
+
+      -- one more element to add
+      | otherwise = readElem i $ \ !elemTxt -> do
+        let elemFrag = text2Show elemTxt <> ", "
+            line' = line <> elemFrag
+        if text'len line' > lineWidth
+          then
+            tryHeadLines
+              ( Line2Show line lineFirstElemIdx (i - 1) :
+                cumLines
+              )
+              (nLines + 1)
+              (i + 1)
+              elemFrag
+              i
+          else tryHeadLines cumLines nLines (i + 1) line' lineFirstElemIdx
+
+    showTailLines :: [Line2Show] -> Int -> IO ()
+    showTailLines hls headIdxShown = go [] 0 (cl - 1) "" (cl - 1)
+      where
+        go :: [Line2Show] -> Int -> Int -> Text2Show -> Int -> IO ()
+        go cumLines nLines i line lineLastElemIdx
+          -- not that many elements, we can show its entirty
+          | i <= headIdxShown = do
+            let cumLines' = Line2Show line (i + 1) lineLastElemIdx : cumLines
+                headLines = concat $ fancyLine <$> hls
+                tailLines = concat $ fancyLine <$> cumLines'
+            exit $ TL.toStrict $ TL.unlines $ headLines ++ tailLines
+
+          -- more elements then we'd show
+          | nLines >= maxHeadLines = do
+            let headLines = concat $ fancyLine <$> hls
+                tailLines = concat $ fancyLine <$> cumLines
+            exit $
+              TL.toStrict $ TL.unlines $ headLines ++ [" ... "] ++ tailLines
+
+          -- one more element to add
+          | otherwise = readElem i $ \ !elemTxt -> do
+            let elemFrag = text2Show elemTxt <> ", "
+                line' = elemFrag <> line
+            if text'len line' > lineWidth
+              then
+                go
+                  ( Line2Show line (i + 1) lineLastElemIdx :
+                    cumLines
+                  )
+                  (nLines + 1)
+                  (i - 1)
+                  elemFrag
+                  i
+              else go cumLines nLines (i - 1) line' lineLastElemIdx
+
+    fancyLine :: Line2Show -> [TL.Text]
+    fancyLine (Line2Show (Text2Show txt _) firstIdx lastIdx) =
+      [ "# " <> TL.pack (show firstIdx) <> " ~ " <> TL.pack (show lastIdx),
+        txt
+      ]

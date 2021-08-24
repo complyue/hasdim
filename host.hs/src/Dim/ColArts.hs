@@ -1265,7 +1265,7 @@ createColumnClass !defaultDt !clsOuterScope =
         getColumnDtype ets this $ \ !dto -> runEdhTx ets $
           edhValueReprTx (EdhObject dto) $
             \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
-              let colRepr =
+              let !colRepr =
                     "Column( capacity= "
                       <> T.pack (show $ array'capacity cs)
                       <> ", length= "
@@ -1273,61 +1273,17 @@ createColumnClass !defaultDt !clsOuterScope =
                       <> ", dtype= "
                       <> dtRepr
                       <> " )"
-                  exitWithDetails :: Text -> STM ()
-                  exitWithDetails !details =
-                    exitEdh ets exit $ EdhString $ colRepr <> "\n" <> details
-
-                  go :: Int -> [Text] -> Int -> Text -> IO ()
-                  -- TODO don't generate all lines for large columns
-                  go !i !cumLines !lineIdx !line
-                    | i >= cl =
-                      atomically $
-                        exitWithDetails $
-                          if T.null line && null cumLines
-                            then "Zero-Length Column"
-                            else
-                              if null cumLines
-                                then line
-                                else
-                                  let !fullLines =
-                                        line :
-                                        " # " -- todo make this tunable ?
-                                          <> T.pack (show lineIdx)
-                                          <> " ~ "
-                                          <> T.pack (show $ i - 1) :
-                                        cumLines
-                                      !lineCnt = length fullLines
-                                   in if lineCnt > 20
-                                        then
-                                          T.unlines $
-                                            reverse $
-                                              take 10 fullLines
-                                                ++ ["# ... "] -- todo make this tunable
-                                                ++ drop (lineCnt - 10) fullLines
-                                        else T.unlines $ reverse fullLines
-                  go !i !cumLines !lineIdx !line =
-                    array'reader cs i >>= \ !ev -> atomically $
+                  readElem i !elemExit = do
+                    !hv <- array'reader cs i
+                    atomically $
                       runEdhTx ets $
-                        toEdh ev $ \ !elemVal ->
-                          edhValueReprTx elemVal $ \ !elemRepr ->
-                            let !tentLine = line <> elemRepr <> ", "
-                             in edhContIO $
-                                  if T.length tentLine > 79 -- todo make this tunable ?
-                                    then
-                                      go
-                                        (i + 1)
-                                        ( line :
-                                          ( " # " -- todo make this tunable ?
-                                              <> T.pack (show lineIdx)
-                                              <> " ~ "
-                                              <> T.pack (show $ i - 1)
-                                          ) :
-                                          cumLines
-                                        )
-                                        i
-                                        (elemRepr <> ", ")
-                                    else go (i + 1) cumLines lineIdx tentLine
-              edhContIO $ go 0 [] 0 ""
+                        toEdh hv $
+                          \ !v -> edhValueStrTx v $ edhContIO . elemExit
+              edhContIO $
+                showColContent cl readElem $ \ !contentLines ->
+                  atomically $
+                    exitEdh ets exit $
+                      EdhString $ colRepr <> "\n" <> contentLines
 
     -- TODO impl. this following:
     --      https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Series.describe.html

@@ -212,61 +212,16 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
         Right (_, !hdrPtr, !fa) -> runEdhTx ets $
           aryRepr dbaObj dba $ \ !dbaRepr -> edhContIO $ do
             !len1d <- fromIntegral <$> readDbArrayLength hdrPtr
-            let exitWithDetails :: Text -> STM ()
-                exitWithDetails !details =
-                  exitEdh ets exit $ EdhString $ dbaRepr <> "\n" <> details
-
-                go :: Int -> [Text] -> Int -> Text -> IO ()
-                -- TODO don't generate all lines for large columns
-                go !i !cumLines !lineIdx !line
-                  | i >= len1d =
-                    atomically $
-                      exitWithDetails $
-                        if T.null line && null cumLines
-                          then "Zero-Length DbArray"
-                          else
-                            if null cumLines
-                              then line
-                              else
-                                let !fullLines =
-                                      line :
-                                      " # " -- todo make this tunable ?
-                                        <> T.pack (show lineIdx)
-                                        <> " ~ "
-                                        <> T.pack (show $ i - 1) :
-                                      cumLines
-                                    !lineCnt = length fullLines
-                                 in if lineCnt > 20
-                                      then
-                                        T.unlines $
-                                          reverse $
-                                            take 10 fullLines
-                                              ++ ["# ... "] -- todo make this tunable
-                                              ++ drop (lineCnt - 10) fullLines
-                                      else T.unlines $ reverse fullLines
-                go !i !cumLines !lineIdx !line =
-                  array'reader fa i >>= \ !ev -> atomically $
+            let readElem i !elemExit = do
+                  !hv <- array'reader fa i
+                  atomically $
                     runEdhTx ets $
-                      toEdh ev $ \ !elemVal ->
-                        edhValueReprTx elemVal $ \ !elemRepr ->
-                          let !tentLine = line <> elemRepr <> ", "
-                           in edhContIO $
-                                if T.length tentLine > 79 -- todo make this tunable ?
-                                  then
-                                    go
-                                      (i + 1)
-                                      ( line :
-                                        ( " # " -- todo make this tunable ?
-                                            <> T.pack (show lineIdx)
-                                            <> " ~ "
-                                            <> T.pack (show $ i - 1)
-                                        ) :
-                                        cumLines
-                                      )
-                                      i
-                                      (elemRepr <> ", ")
-                                  else go (i + 1) cumLines lineIdx tentLine
-            go 0 [] 0 ""
+                      toEdh hv $
+                        \ !v -> edhValueStrTx v $ edhContIO . elemExit
+            showColContent len1d readElem $ \ !contentLines ->
+              atomically $
+                exitEdh ets exit $
+                  EdhString $ dbaRepr <> "\n" <> contentLines
 
     aryIdxReadProc :: EdhValue -> EdhHostProc
     aryIdxReadProc !idxVal !exit = withDbArraySelf $
