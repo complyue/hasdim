@@ -1332,11 +1332,23 @@ createColumnClass !defaultDt !clsOuterScope =
     -- TODO impl. this following:
     --      https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Series.describe.html
     colDescProc :: EdhHostProc
-    colDescProc !exit =
-      exitEdhTx exit $
-        EdhString $
-          " * Statistical Description of Column data,\n"
-            <> "   like pandas describe(), is yet to be implemented."
+    colDescProc !exit = withThisColumn $ \ !this (SomeColumn _ !col) !ets ->
+      getColumnDtype ets this $ \ !dto -> runEdhTx ets $
+        edhValueReprTx (EdhObject dto) $
+          \ !dtRepr -> view'column'data col $ \(!cs, !cl) -> do
+            let colRepr =
+                  "Column( capacity= "
+                    <> T.pack (show $ array'capacity cs)
+                    <> ", length= "
+                    <> T.pack (show cl)
+                    <> ", dtype= "
+                    <> dtRepr
+                    <> " )"
+            exitEdhTx exit $
+              EdhString $
+                " 🚧 Statistical Description of Column data,\n"
+                  <> " 🏗  like Pandas' describe(), is yet to be implemented.\n"
+                  <> colRepr
 
     colIdxReadProc :: EdhValue -> EdhHostProc
     colIdxReadProc !idxVal !exit = withThisColumn $ \ !this !col -> do
