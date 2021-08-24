@@ -232,6 +232,21 @@ getColumnDtype' !objCol naExit !exit =
     findSuperDto (maybeDto : rest) =
       withDataType maybeDto (findSuperDto rest) (const $ exit maybeDto)
 
+data ColumnOf a = forall c f. ManagedColumn c f a => ColumnOf (c a) !Object
+
+instance Typeable a => ScriptArgAdapter (ColumnOf a) where
+  adaptEdhArg !v !exit = case edhUltimate v of
+    EdhObject o -> withColumnOf @a o badVal $ \_colInst !col ->
+      exit $ ColumnOf @a col o
+    _ -> badVal
+    where
+      badVal = edhValueDescTx v $ \ !badDesc ->
+        throwEdhTx UsageError $
+          T.pack (show $ typeRep @a) <> " Column expected but given: "
+            <> badDesc
+
+  adaptedArgValue (ColumnOf _col !obj) = EdhObject obj
+
 sliceColumn ::
   Object ->
   SomeColumn ->
