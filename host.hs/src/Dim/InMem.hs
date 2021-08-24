@@ -86,9 +86,9 @@ instance
         !clvNew <- newTVar len
         exitEdh ets exit (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
 
-  copy'column'slice (InMemDevCol csv clv) !start !stop !step !exit !ets =
+  copy'column'slice (InMemDevCol csv clv) !ccap !start !stop !step !exit !ets =
     do
-      DeviceArray !cap (fp :: ForeignPtr a) <- readTMVar csv
+      DeviceArray _cap (fp :: ForeignPtr a) <- readTMVar csv
       !cl <- readTVar clv
 
       if stop < start || start < 0 || stop > cl
@@ -100,42 +100,40 @@ instance
               <> T.pack (show stop)
               <> " vs "
               <> T.pack (show cl)
-        else
-          runEdhTx ets $
-            edhContIO $
-              if start >= cap || stop == start
-                then do
-                  !csNew <- emptyDeviceArray @a
-                  atomically $ do
-                    !csvNew <- newTMVar csNew
-                    !clvNew <- newTVar 0
-                    exitEdh
-                      ets
-                      exit
-                      (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
-                else do
-                  let (q, r) = quotRem (stop - start) step
-                      !len = if r == 0 then abs q else 1 + abs q
-                  !fp' <- withForeignPtr fp $ \ !p -> do
-                    !p' <- callocArray len
-                    !fp' <- newForeignPtr finalizerFree p'
-                    let fillRng :: Int -> Int -> IO ()
-                        fillRng !n !i =
-                          if i >= len
-                            then return ()
-                            else do
-                              peekElemOff p n >>= pokeElemOff p' i
-                              fillRng (n + step) (i + 1)
-                    fillRng start 0
-                    return fp'
-                  let !cs' = DeviceArray len fp'
-                  atomically $ do
-                    !csvNew <- newTMVar cs'
-                    !clvNew <- newTVar len
-                    exitEdh
-                      ets
-                      exit
-                      (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
+        else do
+          let (q, r) = quotRem (stop - start) step
+              !len = if r == 0 then abs q else 1 + abs q
+          if ccap < len
+            then
+              throwEdh ets UsageError $
+                "capacity too small: " <> T.pack (show ccap) <> " vs "
+                  <> T.pack (show start)
+                  <> ":"
+                  <> T.pack (show stop)
+                  <> ":"
+                  <> T.pack (show step)
+            else runEdhTx ets $
+              edhContIO $ do
+                !fp' <- withForeignPtr fp $ \ !p -> do
+                  !p' <- callocArray ccap
+                  !fp' <- newForeignPtr finalizerFree p'
+                  let fillRng :: Int -> Int -> IO ()
+                      fillRng !n !i =
+                        if i >= len
+                          then return ()
+                          else do
+                            peekElemOff p n >>= pokeElemOff p' i
+                            fillRng (n + step) (i + 1)
+                  fillRng start 0
+                  return fp'
+                let !cs' = DeviceArray len fp'
+                atomically $ do
+                  !csvNew <- newTMVar cs'
+                  !clvNew <- newTVar len
+                  exitEdh
+                    ets
+                    exit
+                    (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
 
   derive'new'column (InMemDevCol csv clv) !sizer (!deriver, !exit) = do
     (!cs, !cl) <- atomically $ do
@@ -273,11 +271,10 @@ instance
         !clvNew <- newTVar len
         exitEdh ets exit (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
 
-  copy'column'slice (InMemDirCol csv clv) !start !stop !step !exit !ets =
+  copy'column'slice (InMemDirCol csv clv) !ccap !start !stop !step !exit !ets =
     do
       DirectArray !iov <- readTMVar csv
       !cl <- readTVar clv
-      let cap = MV.length iov
 
       if stop < start || start < 0 || stop > cl
         then
@@ -288,41 +285,39 @@ instance
               <> T.pack (show stop)
               <> " vs "
               <> T.pack (show cl)
-        else
-          runEdhTx ets $
-            edhContIO $
-              if start >= cap || stop == start
-                then do
-                  !csNew <- emptyDirectArray @a
-                  atomically $ do
-                    !csvNew <- newTMVar csNew
-                    !clvNew <- newTVar 0
-                    exitEdh
-                      ets
-                      exit
-                      (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
-                else do
-                  let (q, r) = quotRem (stop - start) step
-                      !len = if r == 0 then abs q else 1 + abs q
-                  !iov' <- do
-                    !iov' <- MV.unsafeNew len
-                    let fillRng :: Int -> Int -> IO ()
-                        fillRng !n !i =
-                          if i >= len
-                            then return ()
-                            else do
-                              MV.unsafeRead iov n >>= MV.unsafeWrite iov' i
-                              fillRng (n + step) (i + 1)
-                    fillRng start 0
-                    return iov'
-                  let !cs' = DirectArray iov'
-                  atomically $ do
-                    !csvNew <- newTMVar cs'
-                    !clvNew <- newTVar len
-                    exitEdh
-                      ets
-                      exit
-                      (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
+        else do
+          let (q, r) = quotRem (stop - start) step
+              !len = if r == 0 then abs q else 1 + abs q
+          if ccap < len
+            then
+              throwEdh ets UsageError $
+                "capacity too small: " <> T.pack (show ccap) <> " vs "
+                  <> T.pack (show start)
+                  <> ":"
+                  <> T.pack (show stop)
+                  <> ":"
+                  <> T.pack (show step)
+            else runEdhTx ets $
+              edhContIO $ do
+                !iov' <- do
+                  !iov' <- MV.unsafeNew ccap
+                  let fillRng :: Int -> Int -> IO ()
+                      fillRng !n !i =
+                        if i >= len
+                          then return ()
+                          else do
+                            MV.unsafeRead iov n >>= MV.unsafeWrite iov' i
+                            fillRng (n + step) (i + 1)
+                  fillRng start 0
+                  return iov'
+                let !cs' = DirectArray iov'
+                atomically $ do
+                  !csvNew <- newTMVar cs'
+                  !clvNew <- newTVar len
+                  exitEdh
+                    ets
+                    exit
+                    (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
 
   derive'new'column (InMemDirCol csv clv) !sizer (!deriver, !exit) = do
     (!cs, !cl) <- atomically $ do

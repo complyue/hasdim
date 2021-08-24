@@ -1395,20 +1395,26 @@ createColumnClass !defaultDt !clsOuterScope =
     colIdxWriteProc !idxVal !other !exit = withColumnSelf $ \_colInst !col ->
       idxAssignColumn col idxVal other $ exitEdhTx exit other
 
-    colCopyProc :: EdhHostProc
-    colCopyProc !exit !ets = runEdhTx ets $
+    colCopyProc :: "capacity" ?: Int -> EdhHostProc
+    colCopyProc (optionalArg -> !maybeCap) !exit !ets = runEdhTx ets $
       withThisColumn $ \ !this !col ->
         read'column'length col $ \ !cl ->
-          copy'column'slice col 0 cl 1 $ \(disp, col') _ets -> case disp of
-            StayComposed ->
-              edhCloneHostObj ets this this col' $
-                \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
-            ExtractAlone -> getColumnDtype ets this $ \ !dto ->
-              edhCreateHostObj'
-                (edh'obj'class this)
-                (toDyn col')
-                [dto]
-                >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
+          copy'column'slice
+            col
+            (fromMaybe cl maybeCap)
+            0
+            cl
+            1
+            $ \(disp, col') _ets -> case disp of
+              StayComposed ->
+                edhCloneHostObj ets this this col' $
+                  \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
+              ExtractAlone -> getColumnDtype ets this $ \ !dto ->
+                edhCreateHostObj'
+                  (edh'obj'class this)
+                  (toDyn col')
+                  [dto]
+                  >>= \ !newColObj -> exitEdh ets exit $ EdhObject newColObj
 
     colDtypeProc :: EdhHostProc
     colDtypeProc !exit !ets =

@@ -127,49 +127,63 @@ instance
                 exit
                 (ExtractAlone, someColumn $ InMemDevCol csvNew clvNew)
 
-  copy'column'slice (DbColumn !dba !dbc'offs) !start !stop !step !exit !ets =
-    readTMVar (db'array'store dba) >>= \case
-      Left !err -> throwSTM err
-      Right (_shape, !hdr, DeviceArray _cap (fp0 :: ForeignPtr a)) -> do
-        !dba'len <- fromIntegral <$> unsafeIOToSTM (readDbArrayLength hdr)
-        let fp :: ForeignPtr a =
-              plusForeignPtr fp0 $ dbc'offs * sizeOf (undefined :: a)
-            !cl = dba'len - dbc'offs
-        if stop < start || start < 0 || stop > cl
-          then
-            throwEdh ets UsageError $
-              "column slice range out of range: "
-                <> T.pack (show start)
-                <> ":"
-                <> T.pack (show stop)
-                <> " vs "
-                <> T.pack (show cl)
-          else runEdhTx ets $
-            edhContIO $ do
+  copy'column'slice
+    (DbColumn !dba !dbc'offs)
+    !ccap
+    !start
+    !stop
+    !step
+    !exit
+    !ets =
+      readTMVar (db'array'store dba) >>= \case
+        Left !err -> throwSTM err
+        Right (_shape, !hdr, DeviceArray _cap (fp0 :: ForeignPtr a)) -> do
+          !dba'len <- fromIntegral <$> unsafeIOToSTM (readDbArrayLength hdr)
+          let fp :: ForeignPtr a =
+                plusForeignPtr fp0 $ dbc'offs * sizeOf (undefined :: a)
+              !cl = dba'len - dbc'offs
+          if stop < start || start < 0 || stop > cl
+            then
+              throwEdh ets UsageError $
+                "column slice range out of range: "
+                  <> T.pack (show start)
+                  <> ":"
+                  <> T.pack (show stop)
+                  <> " vs "
+                  <> T.pack (show cl)
+            else do
               let (q, r) = quotRem (stop - start) step
                   !len = if r == 0 then abs q else 1 + abs q
-              !cs' <-
-                if len <= 0
-                  then emptyDeviceArray
-                  else (DeviceArray len <$>) $
-                    withForeignPtr fp $ \ !p -> do
-                      !p' <- callocArray len
-                      !fp' <- newForeignPtr finalizerFree p'
-                      let fillRng :: Int -> Int -> IO (ForeignPtr a)
-                          fillRng !n !i =
-                            if i >= len
-                              then return fp'
-                              else do
-                                peekElemOff p n >>= pokeElemOff p' i
-                                fillRng (n + step) (i + 1)
-                      fillRng start 0
-              atomically $ do
-                !csvNew <- newTMVar cs'
-                !clvNew <- newTVar len
-                exitEdh
-                  ets
-                  exit
-                  (ExtractAlone, someColumn $ InMemDevCol csvNew clvNew)
+              if ccap < len
+                then
+                  throwEdh ets UsageError $
+                    "capacity too small: " <> T.pack (show ccap) <> " vs "
+                      <> T.pack (show start)
+                      <> ":"
+                      <> T.pack (show stop)
+                      <> ":"
+                      <> T.pack (show step)
+                else runEdhTx ets $
+                  edhContIO $ do
+                    !cs' <- (DeviceArray len <$>) $
+                      withForeignPtr fp $ \ !p -> do
+                        !p' <- callocArray ccap
+                        !fp' <- newForeignPtr finalizerFree p'
+                        let fillRng :: Int -> Int -> IO (ForeignPtr a)
+                            fillRng !n !i =
+                              if i >= len
+                                then return fp'
+                                else do
+                                  peekElemOff p n >>= pokeElemOff p' i
+                                  fillRng (n + step) (i + 1)
+                        fillRng start 0
+                    atomically $ do
+                      !csvNew <- newTMVar cs'
+                      !clvNew <- newTVar len
+                      exitEdh
+                        ets
+                        exit
+                        (ExtractAlone, someColumn $ InMemDevCol csvNew clvNew)
 
   derive'new'column (DbColumn !dba !dbc'offs) !sizer (!deriver, !exit) =
     atomically (readTMVar $ db'array'store dba) >>= \case

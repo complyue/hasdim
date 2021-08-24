@@ -63,6 +63,7 @@ class
   -- called when copying-slicing is requested for the column
   copy'column'slice ::
     c a ->
+    Int -> -- capacity
     Int -> -- start
     Int -> -- stop
     Int -> -- step
@@ -241,7 +242,7 @@ sliceColumn ::
 sliceColumn !objCol !col !start !stop !step !exit =
   if stop >= start && step == 1
     then view'column'slice col start stop withSliced
-    else copy'column'slice col start stop step withSliced
+    else copy'column'slice col stop start stop step withSliced
   where
     withSliced (disp, col') !ets = case disp of
       StayComposed -> edhCloneHostObj ets objCol objCol col' $
