@@ -482,7 +482,7 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal !doneAssign !ets =
                                       array'reader cs'rhs n
                                         >>= array'writer cs i
                                       go (i + iStep) (n + 1)
-                              go 0 0
+                              go iStart 0
                               atomically $ runEdhTx ets doneAssign
 
           withColumnOf' @YesNo
