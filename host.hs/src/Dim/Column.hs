@@ -540,14 +540,18 @@ data Line2Show = Line2Show
   }
 
 showColContent ::
-  ArrayLength -> (Int -> (Text -> IO ()) -> IO ()) -> (Text -> IO ()) -> IO ()
+  ArrayLength ->
+  (ArrayIndex -> (Text -> IO ()) -> IO ()) ->
+  (Text -> IO ()) ->
+  IO ()
 showColContent !cl !readElem !exit = tryHeadLines [] 0 0 "" 0
   where
     -- todo make these tunable
     lineWidth = 79
     maxHeadLines = 10
 
-    tryHeadLines :: [Line2Show] -> Int -> Int -> Text2Show -> Int -> IO ()
+    tryHeadLines ::
+      [Line2Show] -> Int -> ArrayIndex -> Text2Show -> ArrayIndex -> IO ()
     tryHeadLines cumLines nLines i line lineFirstElemIdx
       -- got all elements
       | i >= cl =
@@ -581,10 +585,11 @@ showColContent !cl !readElem !exit = tryHeadLines [] 0 0 "" 0
               i
           else tryHeadLines cumLines nLines (i + 1) line' lineFirstElemIdx
 
-    showTailLines :: [Line2Show] -> Int -> IO ()
+    showTailLines :: [Line2Show] -> ArrayIndex -> IO ()
     showTailLines hls headIdxShown = go [] 0 (cl - 1) "" (cl - 1)
       where
-        go :: [Line2Show] -> Int -> Int -> Text2Show -> Int -> IO ()
+        go ::
+          [Line2Show] -> Int -> ArrayIndex -> Text2Show -> ArrayIndex -> IO ()
         go cumLines nLines i line lineLastElemIdx
           -- not that many elements, we can show its entirty
           | i <= headIdxShown = do

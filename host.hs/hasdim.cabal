@@ -162,6 +162,7 @@ library
     Dim.DbArray
     Dim.DbArts
     Dim.DiskBack
+    Dim.DtArts
     Dim.Float
     Dim.Fold
     Dim.InMem

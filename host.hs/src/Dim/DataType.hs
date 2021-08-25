@@ -180,6 +180,20 @@ mkIntDataType !dti =
       (\naExit _exit -> naExit)
       (\_naExit exit -> exit (typeRep @a))
 
+mkBitsDataType ::
+  forall a.
+  (Bits a, Ord a, Storable a, EdhXchg a, Typeable a) =>
+  DataTypeIdent ->
+  DataType a
+mkBitsDataType !dti =
+  DeviceDt $
+    DeviceDataType
+      dti
+      ($ typeRep @a)
+      (\naExit _exit -> naExit)
+      (\naExit _exit -> naExit)
+      (\naExit _exit -> naExit)
+
 mkBoxDataType ::
   forall a.
   (Eq a, EdhXchg a, Typeable a) =>

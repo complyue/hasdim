@@ -8,6 +8,7 @@ module Dim.EHI
     module Dim.Fold,
     module Dim.InMem,
     module Dim.Table,
+    module Dim.DtArts,
     module Dim.DbArray,
   )
 where
@@ -23,6 +24,7 @@ import Dim.Column
 import Dim.DataType
 import Dim.DbArray
 import Dim.DbArts
+import Dim.DtArts
 import Dim.Float
 import Dim.Fold
 import Dim.InMem

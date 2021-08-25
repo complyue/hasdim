@@ -1,5 +1,3 @@
-{-# LANGUAGE MultiParamTypeClasses #-}
-
 module Dim.InMem where
 
 -- import           Debug.Trace
@@ -47,7 +45,7 @@ instance
           )
           (\(!cs, _cl) -> atomically $ void $ tryPutTMVar csv cs)
           $ \(!cs, !cl) -> do
-            cs' <- dupDeviceArray cs cl newCap
+            !cs' <- dupDeviceArray cs cl newCap
             atomically $ do
               putTMVar csv cs'
               exitEdh ets exit (cs', cl)
@@ -232,7 +230,7 @@ instance
           )
           (\(!cs, _cl) -> atomically $ void $ tryPutTMVar csv cs)
           $ \(!cs, !cl) -> do
-            cs' <- dupDirectArray cs cl newCap
+            !cs' <- dupDirectArray cs cl newCap
             atomically $ do
               putTMVar csv cs'
               exitEdh ets exit (cs', cl)
