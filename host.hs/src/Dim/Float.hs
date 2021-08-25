@@ -61,24 +61,25 @@ floatOpProc !fop (mandatoryArg -> !colObj) !exit !ets =
         (notFloatDt $ device'data'type'ident dt)
         $ \(_ :: TypeRep a) ->
           withColumnOf @a colObj dtMismatch $ \ !colInst !col ->
-            view'column'data col $ \(cs, cl) -> edhContIO $ do
-              !p <- callocArray @a cl
-              !fp <- newForeignPtr finalizerFree p
-              let pumpAt :: Int -> IO ()
-                  pumpAt !i =
-                    if i >= cl
-                      then return ()
-                      else do
-                        array'reader cs i >>= pokeElemOff p i . fop
-                        pumpAt (i + 1)
-              pumpAt 0
-              atomically $ do
-                let !cs' = DeviceArray cl fp
-                !csv <- newTMVar cs'
-                !clv <- newTVar cl
-                let !col' = InMemDevCol csv clv
-                edhCloneHostObj ets colInst colObj (someColumn col') $
-                  exitEdh ets exit . EdhObject
+            edhContIO $
+              view'column'data col >>= \(cs, cl) -> do
+                !p <- callocArray @a cl
+                !fp <- newForeignPtr finalizerFree p
+                let pumpAt :: Int -> IO ()
+                    pumpAt !i =
+                      if i >= cl
+                        then return ()
+                        else do
+                          array'reader cs i >>= pokeElemOff p i . fop
+                          pumpAt (i + 1)
+                pumpAt 0
+                atomically $ do
+                  let !cs' = DeviceArray cl fp
+                  !csv <- newTMVar cs'
+                  !clv <- newTVar cl
+                  let !col' = InMemDevCol csv clv
+                  edhCloneHostObj ets colInst colObj (someColumn col') $
+                    exitEdh ets exit . EdhObject
       DirectDt _dt ->
         throwEdhTx UsageError "not implemented for direct dtype yet"
   where

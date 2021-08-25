@@ -117,18 +117,19 @@ mkBoxSuperDt !dti !defv !outerScope = do
       boxInpProc !flipOperands !op !other !exit !ets = runEdhTx ets $
         withColumnSelfOf @EdhValue exit $ \_objCol !col -> do
           let vecOp =
-                view'column'data col $ \(cs, cl) -> edhContIO $ do
-                  let go i
-                        | i < 0 = atomically doExit
-                        | otherwise = do
-                          lhev <- array'reader cs i
-                          atomically $
-                            runEdhTx ets $
-                              evalOp flipOperands op lhev other $
-                                \ !result -> edhContIO $ do
-                                  array'writer cs i result
-                                  go $ i - 1
-                  go $ cl - 1
+                edhContIO $
+                  view'column'data col >>= \(cs, cl) -> do
+                    let go i
+                          | i < 0 = atomically doExit
+                          | otherwise = do
+                            lhev <- array'reader cs i
+                            atomically $
+                              runEdhTx ets $
+                                evalOp flipOperands op lhev other $
+                                  \ !result -> edhContIO $ do
+                                    array'writer cs i result
+                                    go $ i - 1
+                    go $ cl - 1
 
               elemOp ::
                 forall c' f'.
@@ -137,28 +138,30 @@ mkBoxSuperDt !dti !defv !outerScope = do
                 c' EdhValue ->
                 EdhTx
               elemOp _ col' =
-                view'column'data col $ \(cs, cl) ->
-                  view'column'data col' $ \(cs', cl') ->
-                    if cl' /= cl
-                      then
-                        throwEdhTx UsageError $
-                          "column length mistmatch: "
-                            <> T.pack (show cl)
-                            <> " vs "
-                            <> T.pack (show cl')
-                      else edhContIO $ do
-                        let go i
-                              | i < 0 = atomically doExit
-                              | otherwise = do
-                                lhev <- array'reader cs i
-                                rhev <- array'reader cs' i
-                                atomically $
-                                  runEdhTx ets $
-                                    evalOp flipOperands op lhev rhev $
-                                      \ !result -> edhContIO $ do
-                                        array'writer cs i result
-                                        go $ i - 1
-                        go $ cl - 1
+                edhContIO $
+                  view'column'data col >>= \(cs, cl) ->
+                    view'column'data col' >>= \(cs', cl') ->
+                      if cl' /= cl
+                        then
+                          atomically $
+                            throwEdh ets UsageError $
+                              "column length mistmatch: "
+                                <> T.pack (show cl)
+                                <> " vs "
+                                <> T.pack (show cl')
+                        else do
+                          let go i
+                                | i < 0 = atomically doExit
+                                | otherwise = do
+                                  lhev <- array'reader cs i
+                                  rhev <- array'reader cs' i
+                                  atomically $
+                                    runEdhTx ets $
+                                      evalOp flipOperands op lhev rhev $
+                                        \ !result -> edhContIO $ do
+                                          array'writer cs i result
+                                          go $ i - 1
+                          go $ cl - 1
 
           withColumnOf' @EdhValue other vecOp elemOp
         where
@@ -180,22 +183,23 @@ mkBoxSuperDt !dti !defv !outerScope = do
                   >>= exitEdh ets exit . EdhObject
 
               vecOp =
-                view'column'data col $ \(cs, cl) -> edhContIO $ do
-                  (iov, csResult) <- newDirectArray @EdhValue cl
-                  let go i
-                        | i < 0 = atomically $ do
-                          csvResult <- newTMVar csResult
-                          clvResult <- newTVar cl
-                          exitWithResult $ InMemDirCol csvResult clvResult
-                        | otherwise = do
-                          lhev <- array'reader cs i
-                          atomically $
-                            runEdhTx ets $
-                              evalOp flipOperands op lhev other $
-                                \ !result -> edhContIO $ do
-                                  MV.unsafeWrite iov i result
-                                  go $ i - 1
-                  go $ cl - 1
+                edhContIO $
+                  view'column'data col >>= \(cs, cl) -> do
+                    (iov, csResult) <- newDirectArray @EdhValue cl
+                    let go i
+                          | i < 0 = atomically $ do
+                            csvResult <- newTMVar csResult
+                            clvResult <- newTVar cl
+                            exitWithResult $ InMemDirCol csvResult clvResult
+                          | otherwise = do
+                            lhev <- array'reader cs i
+                            atomically $
+                              runEdhTx ets $
+                                evalOp flipOperands op lhev other $
+                                  \ !result -> edhContIO $ do
+                                    MV.unsafeWrite iov i result
+                                    go $ i - 1
+                    go $ cl - 1
 
               elemOp ::
                 forall c' f'.
@@ -204,32 +208,34 @@ mkBoxSuperDt !dti !defv !outerScope = do
                 c' EdhValue ->
                 EdhTx
               elemOp _ col' =
-                view'column'data col $ \(cs, cl) ->
-                  view'column'data col' $ \(cs', cl') ->
-                    if cl' /= cl
-                      then
-                        throwEdhTx UsageError $
-                          "column length mistmatch: "
-                            <> T.pack (show cl)
-                            <> " vs "
-                            <> T.pack (show cl')
-                      else edhContIO $ do
-                        (iov, csResult) <- newDirectArray @EdhValue cl
-                        let go i
-                              | i < 0 = atomically $ do
-                                csvResult <- newTMVar csResult
-                                clvResult <- newTVar cl
-                                exitWithResult $ InMemDirCol csvResult clvResult
-                              | otherwise = do
-                                lhev <- array'reader cs i
-                                rhev <- array'reader cs' i
-                                atomically $
-                                  runEdhTx ets $
-                                    evalOp flipOperands op lhev rhev $
-                                      \ !result -> edhContIO $ do
-                                        MV.unsafeWrite iov i result
-                                        go $ i - 1
-                        go $ cl - 1
+                edhContIO $
+                  view'column'data col >>= \(cs, cl) ->
+                    view'column'data col' >>= \(cs', cl') ->
+                      if cl' /= cl
+                        then
+                          atomically $
+                            throwEdh ets UsageError $
+                              "column length mistmatch: "
+                                <> T.pack (show cl)
+                                <> " vs "
+                                <> T.pack (show cl')
+                        else do
+                          (iov, csResult) <- newDirectArray @EdhValue cl
+                          let go i
+                                | i < 0 = atomically $ do
+                                  csvResult <- newTMVar csResult
+                                  clvResult <- newTVar cl
+                                  exitWithResult $ InMemDirCol csvResult clvResult
+                                | otherwise = do
+                                  lhev <- array'reader cs i
+                                  rhev <- array'reader cs' i
+                                  atomically $
+                                    runEdhTx ets $
+                                      evalOp flipOperands op lhev rhev $
+                                        \ !result -> edhContIO $ do
+                                          MV.unsafeWrite iov i result
+                                          go $ i - 1
+                          go $ cl - 1
 
           withColumnOf' @EdhValue other vecOp elemOp
 
@@ -932,49 +938,53 @@ colCmpProc !dtYesNo !cmp !other !exit !ets = runEdhTx ets $
             >>= exitEdh ets exit . EdhObject
 
         vecOp =
-          view'column'data col $ \(cs, cl) ->
-            fromEdh' @a other naExit $ \rhv -> edhContIO $ do
-              (fp, csResult) <- newDeviceArray @YesNo cl
-              let p = unsafeForeignPtrToPtr fp
-                  go i
-                    | i < 0 = return ()
-                    | otherwise = do
-                      lhev <- array'reader cs i
-                      pokeElemOff p i $ yesOrNo $ cmp lhev rhv
-                      go $ i - 1
-              go $ cl - 1
-              atomically $ do
-                csvResult <- newTMVar csResult
-                clvResult <- newTVar cl
-                exitWithResult $ InMemDevCol csvResult clvResult
-
-        elemOp ::
-          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
-        elemOp _ col' =
-          view'column'data col $ \(cs, cl) ->
-            view'column'data col' $ \(cs', cl') ->
-              if cl' /= cl
-                then
-                  throwEdhTx UsageError $
-                    "column length mistmatch: "
-                      <> T.pack (show cl)
-                      <> " vs "
-                      <> T.pack (show cl')
-                else edhContIO $ do
+          edhContIO $
+            view'column'data col >>= \(cs, cl) -> atomically $
+              runEdhTx ets $
+                fromEdh' @a other naExit $ \rhv -> edhContIO $ do
                   (fp, csResult) <- newDeviceArray @YesNo cl
                   let p = unsafeForeignPtrToPtr fp
                       go i
                         | i < 0 = return ()
                         | otherwise = do
                           lhev <- array'reader cs i
-                          rhev <- array'reader cs' i
-                          pokeElemOff p i $ yesOrNo $ cmp lhev rhev
+                          pokeElemOff p i $ yesOrNo $ cmp lhev rhv
                           go $ i - 1
                   go $ cl - 1
                   atomically $ do
                     csvResult <- newTMVar csResult
                     clvResult <- newTVar cl
                     exitWithResult $ InMemDevCol csvResult clvResult
+
+        elemOp ::
+          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
+        elemOp _ col' =
+          edhContIO $
+            view'column'data col >>= \(cs, cl) ->
+              view'column'data col' >>= \(cs', cl') ->
+                if cl' /= cl
+                  then
+                    atomically $
+                      throwEdh ets UsageError $
+                        "column length mistmatch: "
+                          <> T.pack (show cl)
+                          <> " vs "
+                          <> T.pack (show cl')
+                  else do
+                    (fp, csResult) <- newDeviceArray @YesNo cl
+                    let p = unsafeForeignPtrToPtr fp
+                        go i
+                          | i < 0 = return ()
+                          | otherwise = do
+                            lhev <- array'reader cs i
+                            rhev <- array'reader cs' i
+                            pokeElemOff p i $ yesOrNo $ cmp lhev rhev
+                            go $ i - 1
+                    go $ cl - 1
+                    atomically $ do
+                      csvResult <- newTMVar csResult
+                      clvResult <- newTVar cl
+                      exitWithResult $ InMemDevCol csvResult clvResult
 
     withColumnOf' @a other vecOp elemOp
   where
@@ -998,49 +1008,53 @@ devColOpProc !op !other !exit !ets = runEdhTx ets $
             \ !newObj -> exitEdh ets exit $ EdhObject newObj
 
         vecOp =
-          view'column'data col $ \(cs, cl) ->
-            fromEdh' @a other naExit $ \rhv -> edhContIO $ do
-              (fp, csResult) <- newDeviceArray @a cl
-              let p = unsafeForeignPtrToPtr fp
-                  go i
-                    | i < 0 = return ()
-                    | otherwise = do
-                      lhev <- array'reader cs i
-                      pokeElemOff p i $ op lhev rhv
-                      go $ i - 1
-              go $ cl - 1
-              atomically $ do
-                csvResult <- newTMVar csResult
-                clvResult <- newTVar cl
-                exitWithNewClone $ InMemDevCol csvResult clvResult
-
-        elemOp ::
-          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
-        elemOp _ col' =
-          view'column'data col $ \(cs, cl) ->
-            view'column'data col' $ \(cs', cl') ->
-              if cl' /= cl
-                then
-                  throwEdhTx UsageError $
-                    "column length mistmatch: "
-                      <> T.pack (show cl)
-                      <> " vs "
-                      <> T.pack (show cl')
-                else edhContIO $ do
+          edhContIO $
+            view'column'data col >>= \(cs, cl) -> atomically $
+              runEdhTx ets $
+                fromEdh' @a other naExit $ \rhv -> edhContIO $ do
                   (fp, csResult) <- newDeviceArray @a cl
                   let p = unsafeForeignPtrToPtr fp
                       go i
                         | i < 0 = return ()
                         | otherwise = do
                           lhev <- array'reader cs i
-                          rhev <- array'reader cs' i
-                          pokeElemOff p i $ op lhev rhev
+                          pokeElemOff p i $ op lhev rhv
                           go $ i - 1
                   go $ cl - 1
                   atomically $ do
                     csvResult <- newTMVar csResult
                     clvResult <- newTVar cl
                     exitWithNewClone $ InMemDevCol csvResult clvResult
+
+        elemOp ::
+          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
+        elemOp _ col' =
+          edhContIO $
+            view'column'data col >>= \(cs, cl) ->
+              view'column'data col' >>= \(cs', cl') ->
+                if cl' /= cl
+                  then
+                    atomically $
+                      throwEdh ets UsageError $
+                        "column length mistmatch: "
+                          <> T.pack (show cl)
+                          <> " vs "
+                          <> T.pack (show cl')
+                  else do
+                    (fp, csResult) <- newDeviceArray @a cl
+                    let p = unsafeForeignPtrToPtr fp
+                        go i
+                          | i < 0 = return ()
+                          | otherwise = do
+                            lhev <- array'reader cs i
+                            rhev <- array'reader cs' i
+                            pokeElemOff p i $ op lhev rhev
+                            go $ i - 1
+                    go $ cl - 1
+                    atomically $ do
+                      csvResult <- newTMVar csResult
+                      clvResult <- newTVar cl
+                      exitWithNewClone $ InMemDevCol csvResult clvResult
 
     withColumnOf' @a other vecOp elemOp
   where
@@ -1064,47 +1078,51 @@ dirColOpProc !op !other !exit !ets = runEdhTx ets $
             \ !newObj -> exitEdh ets exit $ EdhObject newObj
 
         vecOp =
-          view'column'data col $ \(cs, cl) ->
-            fromEdh' @a other naExit $ \rhv -> edhContIO $ do
-              (iov, csResult) <- newDirectArray @a cl
-              let go i
-                    | i < 0 = return ()
-                    | otherwise = do
-                      lhev <- array'reader cs i
-                      MV.unsafeWrite iov i $ op lhev rhv
-                      go $ i - 1
-              go $ cl - 1
-              atomically $ do
-                csvResult <- newTMVar csResult
-                clvResult <- newTVar cl
-                exitWithNewClone $ InMemDirCol csvResult clvResult
-
-        elemOp ::
-          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
-        elemOp _ col' =
-          view'column'data col $ \(cs, cl) ->
-            view'column'data col' $ \(cs', cl') ->
-              if cl' /= cl
-                then
-                  throwEdhTx UsageError $
-                    "column length mistmatch: "
-                      <> T.pack (show cl)
-                      <> " vs "
-                      <> T.pack (show cl')
-                else edhContIO $ do
+          edhContIO $
+            view'column'data col >>= \(cs, cl) -> atomically $
+              runEdhTx ets $
+                fromEdh' @a other naExit $ \rhv -> edhContIO $ do
                   (iov, csResult) <- newDirectArray @a cl
                   let go i
                         | i < 0 = return ()
                         | otherwise = do
                           lhev <- array'reader cs i
-                          rhev <- array'reader cs' i
-                          MV.unsafeWrite iov i $ op lhev rhev
+                          MV.unsafeWrite iov i $ op lhev rhv
                           go $ i - 1
                   go $ cl - 1
                   atomically $ do
                     csvResult <- newTMVar csResult
                     clvResult <- newTVar cl
                     exitWithNewClone $ InMemDirCol csvResult clvResult
+
+        elemOp ::
+          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
+        elemOp _ col' =
+          edhContIO $
+            view'column'data col >>= \(cs, cl) ->
+              view'column'data col' >>= \(cs', cl') ->
+                if cl' /= cl
+                  then
+                    atomically $
+                      throwEdh ets UsageError $
+                        "column length mistmatch: "
+                          <> T.pack (show cl)
+                          <> " vs "
+                          <> T.pack (show cl')
+                  else do
+                    (iov, csResult) <- newDirectArray @a cl
+                    let go i
+                          | i < 0 = return ()
+                          | otherwise = do
+                            lhev <- array'reader cs i
+                            rhev <- array'reader cs' i
+                            MV.unsafeWrite iov i $ op lhev rhev
+                            go $ i - 1
+                    go $ cl - 1
+                    atomically $ do
+                      csvResult <- newTMVar csResult
+                      clvResult <- newTVar cl
+                      exitWithNewClone $ InMemDirCol csvResult clvResult
 
     withColumnOf' @a other vecOp elemOp
   where
@@ -1119,39 +1137,43 @@ colInpProc ::
 colInpProc !op !other !exit !ets = runEdhTx ets $
   withColumnSelfOf @a exit $ \_objCol !col -> do
     let vecOp =
-          view'column'data col $ \(cs, cl) ->
-            fromEdh' @a other naExit $ \rhv -> edhContIO $ do
-              let go i
-                    | i < 0 = return ()
-                    | otherwise = do
-                      lhev <- array'reader cs i
-                      array'writer cs i $ op lhev rhv
-                      go $ i - 1
-              go $ cl - 1
-              atomically doExit
-
-        elemOp ::
-          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
-        elemOp _ col' =
-          view'column'data col $ \(cs, cl) ->
-            view'column'data col' $ \(cs', cl') ->
-              if cl' /= cl
-                then
-                  throwEdhTx UsageError $
-                    "column length mistmatch: "
-                      <> T.pack (show cl)
-                      <> " vs "
-                      <> T.pack (show cl')
-                else edhContIO $ do
+          edhContIO $
+            view'column'data col >>= \(cs, cl) -> atomically $
+              runEdhTx ets $
+                fromEdh' @a other naExit $ \rhv -> edhContIO $ do
                   let go i
                         | i < 0 = return ()
                         | otherwise = do
                           lhev <- array'reader cs i
-                          rhev <- array'reader cs' i
-                          array'writer cs i $ op lhev rhev
+                          array'writer cs i $ op lhev rhv
                           go $ i - 1
                   go $ cl - 1
                   atomically doExit
+
+        elemOp ::
+          forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
+        elemOp _ col' =
+          edhContIO $
+            view'column'data col >>= \(cs, cl) ->
+              view'column'data col' >>= \(cs', cl') ->
+                if cl' /= cl
+                  then
+                    atomically $
+                      throwEdh ets UsageError $
+                        "column length mistmatch: "
+                          <> T.pack (show cl)
+                          <> " vs "
+                          <> T.pack (show cl')
+                  else do
+                    let go i
+                          | i < 0 = return ()
+                          | otherwise = do
+                            lhev <- array'reader cs i
+                            rhev <- array'reader cs' i
+                            array'writer cs i $ op lhev rhev
+                            go $ i - 1
+                    go $ cl - 1
+                    atomically doExit
 
     withColumnOf' @a other vecOp elemOp
   where

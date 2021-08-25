@@ -66,9 +66,10 @@ readTableRow tbl@(Table _cv !rcv _tcols) !i !exit !ets = do
             EdhTxExit (AttrKey, EdhValue) ->
             EdhTx
           readCell (colKey, _colInst, SomeColumn _ col) !cellExit =
-            view'column'data col $ \(cs, _cl) -> edhContIO $ do
-              !hv <- array'reader cs rowIdx
-              atomically $ runEdhTx ets $ toEdh hv $ cellExit . (colKey,)
+            edhContIO $
+              view'column'data col >>= \(cs, _cl) -> do
+                !hv <- array'reader cs rowIdx
+                atomically $ runEdhTx ets $ toEdh hv $ cellExit . (colKey,)
       seqEdhTx (readCell <$> cols) $
         exitEdhTx exit . odFromList
 
@@ -87,13 +88,15 @@ growTable !newCap tbl@(Table cv rcv _tcols) !exit
     when (newCap < rc) $ writeTVar rcv newCap
     -- now shrink all columns
     runEdhTx ets $
-      seqEdhTx (grow1 <$> cols) $ \_ _ets -> do
-        -- update table capacity after all columns successfully updated
-        writeTVar cv newCap
-        exitEdh ets exit ()
+      edhContIO $ do
+        sequence_ $ grow1 <$> cols
+        atomically $ do
+          -- update table capacity after all columns successfully updated
+          writeTVar cv newCap
+          exitEdh ets exit ()
   where
-    grow1 :: (AttrKey, Object, SomeColumn) -> EdhTxExit () -> EdhTx
-    grow1 (_, _, SomeColumn _ !col) = grow'column'capacity col newCap
+    grow1 :: (AttrKey, Object, SomeColumn) -> IO ()
+    grow1 (_, _, SomeColumn _ !col) = void $ grow'column'capacity col newCap
 
 markTable :: ArrayLength -> Table -> EdhTxExit () -> EdhTx
 markTable !newCnt tbl@(Table cv rcv _tcols) !exit = withTblCols tbl $
@@ -110,12 +113,14 @@ markTable !newCnt tbl@(Table cv rcv _tcols) !exit = withTblCols tbl $
         when (newCnt < rc) $ writeTVar rcv newCnt
         -- now mark all columns
         runEdhTx ets $
-          seqEdhTx (mark1 <$> cols) $ \_ _ets -> do
-            -- update table row count after all columns successfully updated
-            writeTVar rcv newCnt
-            exitEdh ets exit ()
+          edhContIO $ do
+            sequence_ $ mark1 <$> cols
+            atomically $ do
+              -- update table row count after all columns successfully updated
+              writeTVar rcv newCnt
+              exitEdh ets exit ()
   where
-    mark1 :: (AttrKey, Object, SomeColumn) -> EdhTxExit () -> EdhTx
+    mark1 :: (AttrKey, Object, SomeColumn) -> IO ()
     mark1 (_, _, SomeColumn _ !col) = mark'column'length col newCnt
 
 createTableClass :: Object -> Object -> Scope -> STM Object
@@ -206,23 +211,26 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                           exitEdh ets exit (colKey, colObj)
 
               withColumn' obj tryDt $ \_colInst (SomeColumn _ !col) ->
-                view'column'data col $ \(!cs, !cl) ->
-                  if array'capacity cs < ctorCap || cl < ctorCnt
-                    then
-                      throwEdhTx UsageError $
-                        "Column "
-                          <> attrKeyStr colKey
-                          <> " is not long enough: "
-                          <> T.pack (show cl)
-                          <> "/"
-                          <> T.pack (show $ array'capacity cs)
-                          <> " vs "
-                          <> T.pack (show ctorCnt)
-                          <> "/"
-                          <> T.pack (show ctorCap)
-                    else -- todo leave a longer column w/o truncating it?
-                    mark'column'length col ctorCnt $ \() ->
-                      exitEdhTx exit (colKey, obj)
+                edhContIO $
+                  view'column'data col >>= \(!cs, !cl) ->
+                    if array'capacity cs < ctorCap || cl < ctorCnt
+                      then
+                        atomically $
+                          throwEdh etsCtor UsageError $
+                            "Column "
+                              <> attrKeyStr colKey
+                              <> " is not long enough: "
+                              <> T.pack (show cl)
+                              <> "/"
+                              <> T.pack (show $ array'capacity cs)
+                              <> " vs "
+                              <> T.pack (show ctorCnt)
+                              <> "/"
+                              <> T.pack (show ctorCap)
+                      else do
+                        -- todo leave a longer column w/o truncating it?
+                        mark'column'length col ctorCnt
+                        atomically $ exitEdh etsCtor exit (colKey, obj)
             EdhArgsPack (ArgsPack !args !kwargs)
               | odNull kwargs -> createBoxCol args $ exit . (colKey,)
             EdhList (List _ !lv) -> \ !ets -> do
@@ -355,122 +363,134 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                             exitEdh ets exit $ EdhObject colObj
 
                 withColumn' obj tryDt $ \_colInst (SomeColumn _ !col) ->
-                  view'column'data col $ \(!cs, !cl) ->
-                    if array'capacity cs < cap || cl < rc
-                      then
-                        throwEdhTx UsageError $
-                          "Column "
-                            <> attrKeyStr colKey
-                            <> " is not long enough: "
-                            <> T.pack (show cl)
-                            <> "/"
-                            <> T.pack (show $ array'capacity cs)
-                            <> " vs "
-                            <> T.pack (show rc)
-                            <> "/"
-                            <> T.pack (show cap)
-                      else -- todo leave a longer column w/o truncating it?
-                      mark'column'length col rc $ \() _ets -> do
-                        iopdInsert colKey obj tcols
-                        exitEdh ets exit $ EdhObject obj
+                  edhContIO $
+                    view'column'data col >>= \(!cs, !cl) ->
+                      if array'capacity cs < cap || cl < rc
+                        then
+                          atomically $
+                            throwEdh ets UsageError $
+                              "Column "
+                                <> attrKeyStr colKey
+                                <> " is not long enough: "
+                                <> T.pack (show cl)
+                                <> "/"
+                                <> T.pack (show $ array'capacity cs)
+                                <> " vs "
+                                <> T.pack (show rc)
+                                <> "/"
+                                <> T.pack (show cap)
+                        else do
+                          -- todo leave a longer column w/o truncating it?
+                          mark'column'length col rc
+                          atomically $ do
+                            iopdInsert colKey obj tcols
+                            exitEdh ets exit $ EdhObject obj
               _ -> badColSrc
 
     tblIdxReadProc :: EdhValue -> EdhHostProc
-    tblIdxReadProc !idxVal !tblExit = withThisTable $
-      \ !thisTbl !tbl -> withTblCols tbl $ \ !tcols -> do
-        -- let that = edh'scope'that $ contextScope $ edh'context ets
-        let withBoolIdx ::
-              forall c f.
-              ManagedColumn c f YesNo =>
-              Object ->
-              c YesNo ->
-              EdhTx
-            withBoolIdx _ !idxCol = idxCols $ \ !thisCol !col !colExit ->
-              extractColumnBool thisCol col idxCol $
-                \(!newColObj, SomeColumn _ !newCol) ->
-                  view'column'data newCol $ \(!cs, !cl) ->
-                    exitEdhTx colExit (newColObj, array'capacity cs, cl)
-
-            withIntpIdx ::
-              forall c f.
-              ManagedColumn c f Int =>
-              Object ->
-              c Int ->
-              EdhTx
-            withIntpIdx _ !idxCol = idxCols $ \ !thisCol !col !colExit ->
-              extractColumnFancy thisCol col idxCol $
-                \(!newColObj, SomeColumn _ !newCol) ->
-                  view'column'data newCol $ \(!cs, !cl) ->
-                    exitEdhTx colExit (newColObj, array'capacity cs, cl)
-
-            withEdhIdx :: EdhTx
-            withEdhIdx !ets = parseEdhIndex ets idxVal $ \case
-              Left !err -> throwEdh ets UsageError err
-              Right !idx -> case idx of
-                EdhIndex !i ->
-                  runEdhTx ets $
-                    readTableRow tbl i $
-                      exitEdhTx tblExit . (EdhArgsPack . ArgsPack [])
-                EdhAny -> exitEdh ets tblExit $ EdhObject that
-                EdhAll -> exitEdh ets tblExit $ EdhObject that
-                EdhSlice !start !stop !step -> do
-                  !rowCnt <- readTVar (table'row'count tbl)
-                  edhRegulateSlice ets rowCnt (start, stop, step) $
-                    \(!iStart, !iStop, !iStep) -> runEdhTx ets $
-                      idxCols $ \ !thisCol !col !colExit ->
-                        sliceColumn thisCol col iStart iStop iStep $
-                          \(!newColObj, SomeColumn _ !newCol) ->
-                            view'column'data newCol $ \(!cs, !cl) ->
-                              exitEdhTx
-                                colExit
-                                (newColObj, array'capacity cs, cl)
-              where
-                that = edh'scope'that $ contextScope $ edh'context ets
-
-            idxCols ::
-              ( Object ->
-                SomeColumn ->
-                EdhTxExit (Object, ArrayCapacity, ArrayLength) ->
+    tblIdxReadProc !idxVal !tblExit !ets = runEdhTx ets $
+      withThisTable $
+        \ !thisTbl !tbl -> withTblCols tbl $ \ !tcols -> do
+          -- let that = edh'scope'that $ contextScope $ edh'context ets
+          let withBoolIdx ::
+                forall c f.
+                ManagedColumn c f YesNo =>
+                Object ->
+                c YesNo ->
                 EdhTx
-              ) ->
-              EdhTx
-            idxCols doCol !ets = do
-              !rowCap <- readTVar $ table'capacity tbl
-              !rowCnt <- readTVar $ table'row'count tbl
-              let go ::
-                    ArrayCapacity ->
-                    ArrayLength ->
-                    [(AttrKey, Object)] ->
-                    [(AttrKey, Object, SomeColumn)] ->
-                    STM ()
-                  go !rowCap' !rowCnt' rCols [] = do
-                    !cv' <- newTVar rowCap'
-                    !rcv' <- newTVar rowCnt'
-                    !tcols' <- iopdFromList $ reverse rCols
-                    edhCloneHostObj
-                      ets
-                      thisTbl
-                      (edh'scope'that $ contextScope $ edh'context ets)
-                      (Table cv' rcv' tcols')
-                      (exitEdh ets tblExit . EdhObject)
-                  go
-                    !rowCap'
-                    !rowCnt'
-                    rCols
-                    ((!colKey, !colObj, !col) : rest) = runEdhTx ets $
-                      doCol colObj col $
-                        \(!colObj', cap', cl') _ets ->
-                          go
-                            (min cap' rowCap')
-                            (min cl' rowCnt')
-                            ((colKey, colObj') : rCols)
-                            rest
-              go rowCap rowCnt [] tcols
+              withBoolIdx _ !idxCol = idxCols $ \ !thisCol !col !colExit ->
+                extractColumnBool thisCol col idxCol $
+                  \(!newColObj, SomeColumn _ !newCol) ->
+                    edhContIO $
+                      view'column'data newCol >>= \(!cs, !cl) ->
+                        atomically $
+                          exitEdh ets colExit (newColObj, array'capacity cs, cl)
 
-        withColumnOf' @YesNo
-          idxVal
-          (withColumnOf' @Int idxVal withEdhIdx withIntpIdx)
-          withBoolIdx
+              withIntpIdx ::
+                forall c f.
+                ManagedColumn c f Int =>
+                Object ->
+                c Int ->
+                EdhTx
+              withIntpIdx _ !idxCol = idxCols $ \ !thisCol !col !colExit ->
+                extractColumnFancy thisCol col idxCol $
+                  \(!newColObj, SomeColumn _ !newCol) ->
+                    edhContIO $
+                      view'column'data newCol >>= \(!cs, !cl) ->
+                        atomically $
+                          exitEdh ets colExit (newColObj, array'capacity cs, cl)
+
+              withEdhIdx :: EdhTx
+              withEdhIdx _ets = parseEdhIndex ets idxVal $ \case
+                Left !err -> throwEdh ets UsageError err
+                Right !idx -> case idx of
+                  EdhIndex !i ->
+                    runEdhTx ets $
+                      readTableRow tbl i $
+                        exitEdhTx tblExit . (EdhArgsPack . ArgsPack [])
+                  EdhAny -> exitEdh ets tblExit $ EdhObject that
+                  EdhAll -> exitEdh ets tblExit $ EdhObject that
+                  EdhSlice !start !stop !step -> do
+                    !rowCnt <- readTVar (table'row'count tbl)
+                    edhRegulateSlice ets rowCnt (start, stop, step) $
+                      \(!iStart, !iStop, !iStep) -> runEdhTx ets $
+                        idxCols $ \ !thisCol !col !colExit ->
+                          sliceColumn thisCol col iStart iStop iStep $
+                            \(!newColObj, SomeColumn _ !newCol) ->
+                              edhContIO $
+                                view'column'data newCol >>= \(!cs, !cl) ->
+                                  atomically $
+                                    exitEdh
+                                      ets
+                                      colExit
+                                      (newColObj, array'capacity cs, cl)
+                where
+                  that = edh'scope'that $ contextScope $ edh'context ets
+
+              idxCols ::
+                ( Object ->
+                  SomeColumn ->
+                  EdhTxExit (Object, ArrayCapacity, ArrayLength) ->
+                  EdhTx
+                ) ->
+                EdhTx
+              idxCols doCol _ets = do
+                !rowCap <- readTVar $ table'capacity tbl
+                !rowCnt <- readTVar $ table'row'count tbl
+                let go ::
+                      ArrayCapacity ->
+                      ArrayLength ->
+                      [(AttrKey, Object)] ->
+                      [(AttrKey, Object, SomeColumn)] ->
+                      STM ()
+                    go !rowCap' !rowCnt' rCols [] = do
+                      !cv' <- newTVar rowCap'
+                      !rcv' <- newTVar rowCnt'
+                      !tcols' <- iopdFromList $ reverse rCols
+                      edhCloneHostObj
+                        ets
+                        thisTbl
+                        (edh'scope'that $ contextScope $ edh'context ets)
+                        (Table cv' rcv' tcols')
+                        (exitEdh ets tblExit . EdhObject)
+                    go
+                      !rowCap'
+                      !rowCnt'
+                      rCols
+                      ((!colKey, !colObj, !col) : rest) = runEdhTx ets $
+                        doCol colObj col $
+                          \(!colObj', cap', cl') _ets ->
+                            go
+                              (min cap' rowCap')
+                              (min cl' rowCnt')
+                              ((colKey, colObj') : rCols)
+                              rest
+                go rowCap rowCnt [] tcols
+
+          withColumnOf' @YesNo
+            idxVal
+            (withColumnOf' @Int idxVal withEdhIdx withIntpIdx)
+            withBoolIdx
 
     tblIdxWriteProc :: EdhValue -> EdhValue -> EdhHostProc
     tblIdxWriteProc !idxVal !toVal !exit = withThisTable $
@@ -603,19 +623,25 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                 prepareSpecs
                   specs
                   ((!colKey, _colObj, SomeColumn _ !col) : rest) =
-                    specifiedColWidth colKey $ \ !colWidth -> runEdhTx ets $
-                      view'column'data col $ \(!cs, _cl) _ets -> do
-                        let readCell !rowIdx !cellExit = do
-                              !hvCell <- array'reader cs rowIdx
-                              atomically $
-                                runEdhTx ets $
-                                  toEdh hvCell $
-                                    \ !vCell -> edhValueStrTx vCell $
-                                      \ !reprCell ->
-                                        edhContIO $ cellExit reprCell
-                        prepareSpecs
-                          ((attrKeyStr colKey, colWidth, readCell) : specs)
-                          rest
+                    specifiedColWidth colKey $ \ !colWidth ->
+                      runEdhTx ets $
+                        edhContIO $
+                          view'column'data col >>= \(!cs, _cl) ->
+                            atomically $ do
+                              let readCell !rowIdx !cellExit = do
+                                    !hvCell <- array'reader cs rowIdx
+                                    atomically $
+                                      runEdhTx ets $
+                                        toEdh hvCell $
+                                          \ !vCell -> edhValueStrTx vCell $
+                                            \ !reprCell ->
+                                              edhContIO $ cellExit reprCell
+
+                              prepareSpecs
+                                ( (attrKeyStr colKey, colWidth, readCell) :
+                                  specs
+                                )
+                                rest
 
         runEdhTx ets $
           withTblCols tbl $

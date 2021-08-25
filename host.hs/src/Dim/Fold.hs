@@ -64,18 +64,19 @@ foldComput
           runEdhTx ets $
             self'fold fop dt naExit $ \ !op ->
               withColumnOf @a colObj dtMismatch $ \_ col ->
-                view'column'data col $ \(cs, cl) ->
-                  if cl < 1
-                    then exitEdhTx exit nil
-                    else edhContIO $ do
-                      let go :: Int -> a -> IO ()
-                          go i v
-                            | i >= cl =
-                              atomically $ runEdhTx ets $ toEdh @a v exit
-                            | otherwise = do
-                              e <- array'reader cs i
-                              go (i + 1) $ op v e
-                      go 1 =<< array'reader cs 0
+                edhContIO $
+                  view'column'data col >>= \(cs, cl) ->
+                    if cl < 1
+                      then atomically $ exitEdh ets exit nil
+                      else do
+                        let go :: Int -> a -> IO ()
+                            go i v
+                              | i >= cl =
+                                atomically $ runEdhTx ets $ toEdh @a v exit
+                              | otherwise = do
+                                e <- array'reader cs i
+                                go (i + 1) $ op v e
+                        go 1 =<< array'reader cs 0
         where
           badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
             throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
@@ -100,16 +101,18 @@ foldlComput
           runEdhTx ets $
             left'fold fop dt dt naExit $ \ !op ->
               withColumnOf @a colObj dtMismatch $ \_ col ->
-                view'column'data col $ \(cs, cl) ->
-                  fromEdh startVal $ \ !start -> edhContIO $ do
-                    let go i v
-                          | i >= cl =
-                            atomically $
-                              runEdhTx ets $ toEdh @a v exit
-                          | otherwise = do
-                            e <- array'reader cs i
-                            go (i + 1) $ op v e
-                    go 0 start
+                edhContIO $
+                  view'column'data col >>= \(cs, cl) -> atomically $
+                    runEdhTx ets $
+                      fromEdh startVal $ \ !start -> edhContIO $ do
+                        let go i v
+                              | i >= cl =
+                                atomically $
+                                  runEdhTx ets $ toEdh @a v exit
+                              | otherwise = do
+                                e <- array'reader cs i
+                                go (i + 1) $ op v e
+                        go 0 start
         where
           badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
             throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
@@ -137,16 +140,18 @@ foldrComput
             runEdhTx ets $
               right'fold fop dt dt naExit $ \ !op ->
                 withColumnOf @a colObj dtMismatch $ \_ col ->
-                  view'column'data col $ \(cs, cl) ->
-                    fromEdh startVal $ \ !start -> edhContIO $ do
-                      let go i v
-                            | i < 0 =
-                              atomically $
-                                runEdhTx ets $ toEdh @a v exit
-                            | otherwise = do
-                              e <- array'reader cs i
-                              go (i - 1) $ op e v
-                      go (cl - 1) start
+                  edhContIO $
+                    view'column'data col >>= \(cs, cl) -> atomically $
+                      runEdhTx ets $
+                        fromEdh startVal $ \ !start -> edhContIO $ do
+                          let go i v
+                                | i < 0 =
+                                  atomically $
+                                    runEdhTx ets $ toEdh @a v exit
+                                | otherwise = do
+                                  e <- array'reader cs i
+                                  go (i - 1) $ op e v
+                          go (cl - 1) start
         where
           badColDt = edhValueRepr ets (EdhObject colObj) $ \ !badDesc ->
             throwEdh ets UsageError $ "no dtype from Column: " <> badDesc
