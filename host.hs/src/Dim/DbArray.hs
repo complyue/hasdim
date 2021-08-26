@@ -227,8 +227,8 @@ mmapDbArray !asVar !dataDir !dataPath !maybeShape = case maybeShape of
                     ( fromIntegral (dbArraySize1d shape)
                         < array'data'length hdr
                     )
-                    $ throwIO $
-                      userError $
+                    $ throwHostIO UsageError $
+                      T.pack $
                         "len1d of shape "
                           <> show (dbArraySize1d shape)
                           <> " too small to cover valid data in data file: "

@@ -6,13 +6,14 @@ import Control.Concurrent.STM
 import Control.Exception
 import Data.Dynamic
 import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.Text as T
 import Dim.Column
 import Dim.DataType
 import Dim.DbArray
 import Dim.InMem
 import Dim.XCHG
 import Foreign hiding (void)
-import GHC.Conc (unsafeIOToSTM)
+import Language.Edh.EHI
 import Prelude
 
 data DbColumn a = (Eq a, Storable a, EdhXchg a, Typeable a) =>
@@ -27,24 +28,22 @@ instance
   where
   view'column'data (DbColumn !dba !dbc'offs) exit =
     (exit =<<) $
-      atomically $
-        readTMVar (db'array'store dba) >>= \case
-          Left !err -> throwSTM err
-          Right (_shape, !hdr, !dbcs) -> do
-            !dba'len <- fromIntegral <$> unsafeIOToSTM (readDbArrayLength hdr)
-            return
-              ( unsafeSliceDeviceArray dbcs dbc'offs $
-                  deviceArrayCapacity dbcs - dbc'offs,
-                dba'len - dbc'offs
-              )
+      atomically (readTMVar $ db'array'store dba) >>= \case
+        Left !err -> throwIO err
+        Right (_shape, !hdr, !dbcs) -> do
+          !dba'len <- fromIntegral <$> readDbArrayLength hdr
+          return
+            ( unsafeSliceDeviceArray dbcs dbc'offs $
+                deviceArrayCapacity dbcs - dbc'offs,
+              dba'len - dbc'offs
+            )
 
   read'column'length (DbColumn !dba !dbc'offs) =
-    atomically $
-      readTMVar (db'array'store dba) >>= \case
-        Left !err -> throwSTM err
-        Right (_shape, !hdr, _dbcs) -> do
-          !dba'len <- fromIntegral <$> unsafeIOToSTM (readDbArrayLength hdr)
-          return $ dba'len - dbc'offs
+    atomically (readTMVar $ db'array'store dba) >>= \case
+      Left !err -> throwIO err
+      Right (_shape, !hdr, _dbcs) -> do
+        !dba'len <- fromIntegral <$> readDbArrayLength hdr
+        return $ dba'len - dbc'offs
 
   grow'column'capacity (DbColumn !dba !dbc'offs) !newCap exit =
     (exit =<<) $
@@ -60,62 +59,63 @@ instance
           (db'array'dir dba)
           (db'array'path dba)
           (Just $ ArrayShape $ ("", newCap + dbc'offs) :| [])
-        atomically $
-          readTMVar dbas >>= \case
-            Left !err -> throwSTM err
-            Right (_shape, !hdr, !dbcs) -> do
-              !dba'len <- fromIntegral <$> unsafeIOToSTM (readDbArrayLength hdr)
-              return
-                ( unsafeSliceDeviceArray dbcs dbc'offs $
-                    deviceArrayCapacity dbcs - dbc'offs,
-                  dba'len - dbc'offs
-                )
+        atomically (readTMVar dbas) >>= \case
+          Left !err -> throwIO err
+          Right (_shape, !hdr, !dbcs) -> do
+            !dba'len <- fromIntegral <$> readDbArrayLength hdr
+            return
+              ( unsafeSliceDeviceArray dbcs dbc'offs $
+                  deviceArrayCapacity dbcs - dbc'offs,
+                dba'len - dbc'offs
+              )
 
   mark'column'length (DbColumn !dba !dbc'offs) !newLen =
-    atomically $
-      readTMVar (db'array'store dba) >>= \case
-        Left !err -> throwSTM err
-        Right (_shape, !hdr, !dbcs) -> do
-          let !cap = deviceArrayCapacity dbcs
-          if newLen' < 0 || newLen' > cap
-            then
-              error $
+    atomically (readTMVar (db'array'store dba)) >>= \case
+      Left !err -> throwIO err
+      Right (_shape, !hdr, !dbcs) -> do
+        let !cap = deviceArrayCapacity dbcs
+        if newLen' < 0 || newLen' > cap
+          then
+            throwHostIO
+              UsageError
+              $ T.pack $
                 "column length out of range: " <> show newLen <> " vs "
                   <> show (cap - dbc'offs)
-            else do
-              unsafeIOToSTM $ writeDbArrayLength hdr $ fromIntegral newLen'
-              return ()
+          else do
+            writeDbArrayLength hdr $ fromIntegral newLen'
+            return ()
     where
       !newLen' = newLen + dbc'offs
 
   view'column'slice (DbColumn !dba !dbc'offs) !start !stop exit =
     (exit =<<) $
-      atomically $
-        readTMVar (db'array'store dba) >>= \case
-          Left !err -> throwSTM err
-          Right (_shape, !hdr, DeviceArray _cap !fp0) -> do
-            !dba'len <- fromIntegral <$> unsafeIOToSTM (readDbArrayLength hdr)
-            let !cl = dba'len - dbc'offs
-            if
-                | stop > cl ->
-                  error $
+      atomically (readTMVar $ db'array'store dba) >>= \case
+        Left !err -> throwIO err
+        Right (_shape, !hdr, DeviceArray _cap !fp0) -> do
+          !dba'len <- fromIntegral <$> readDbArrayLength hdr
+          let !cl = dba'len - dbc'offs
+          if
+              | stop > cl ->
+                throwHostIO
+                  UsageError
+                  $ T.pack $
                     "column slice range out of range: "
                       <> show start
                       <> ":"
                       <> show stop
                       <> " vs "
                       <> show dba'len
-                | stop == cl ->
-                  return
-                    (StayComposed, someColumn $ DbColumn dba $ dbc'offs + start)
-                | otherwise -> do
-                  !csvNew <-
-                    newTMVar $
-                      DeviceArray @a (stop - start) $
-                        plusForeignPtr fp0 $
-                          (dbc'offs + start) * sizeOf (undefined :: a)
-                  !clvNew <- newTVar $ stop - start
-                  return (ExtractAlone, someColumn $ InMemDevCol csvNew clvNew)
+              | stop == cl ->
+                return
+                  (StayComposed, someColumn $ DbColumn dba $ dbc'offs + start)
+              | otherwise -> atomically $ do
+                !csvNew <-
+                  newTMVar $
+                    DeviceArray @a (stop - start) $
+                      plusForeignPtr fp0 $
+                        (dbc'offs + start) * sizeOf (undefined :: a)
+                !clvNew <- newTVar $ stop - start
+                return (ExtractAlone, someColumn $ InMemDevCol csvNew clvNew)
 
   copy'column'slice
     (DbColumn !dba !dbc'offs)
@@ -134,23 +134,27 @@ instance
                 !cl = dba'len - dbc'offs
             if stop < start || start < 0 || stop > cl
               then
-                error $
-                  "column slice range out of range: " <> show start <> ":"
-                    <> show stop
-                    <> " vs "
-                    <> show cl
+                throwHostIO
+                  UsageError
+                  $ T.pack $
+                    "column slice range out of range: " <> show start <> ":"
+                      <> show stop
+                      <> " vs "
+                      <> show cl
               else do
                 let (q, r) = quotRem (stop - start) step
                     !len = if r == 0 then abs q else 1 + abs q
                 if ccap < len
                   then
-                    error $
-                      "capacity too small: " <> show ccap <> " vs "
-                        <> show start
-                        <> ":"
-                        <> show stop
-                        <> ":"
-                        <> show step
+                    throwHostIO
+                      UsageError
+                      $ T.pack $
+                        "capacity too small: " <> show ccap <> " vs "
+                          <> show start
+                          <> ":"
+                          <> show stop
+                          <> ":"
+                          <> show step
                   else do
                     !cs' <- (DeviceArray len <$>) $
                       withForeignPtr fp $ \ !p -> do
@@ -196,8 +200,10 @@ instance
           !cl <- subtract dbc'offs . fromIntegral <$> readDbArrayLength hdr
           if idxl /= cl
             then
-              error $
-                "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
+              throwHostIO
+                UsageError
+                $ T.pack $
+                  "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
             else do
               (!fp', !cl') <- withForeignPtr fp $ \ !p -> do
                 !p' <- callocArray cl

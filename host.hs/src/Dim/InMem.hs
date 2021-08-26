@@ -6,6 +6,7 @@ import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
 import Data.Dynamic
+import qualified Data.Text as T
 import qualified Data.Vector.Mutable as MV
 import Dim.Column
 import Dim.DataType
@@ -51,8 +52,9 @@ instance
     let !cap = deviceArrayCapacity cs
     if newLen < 0 || newLen > cap
       then
-        error $
-          "column length out of range: " <> show newLen <> " vs " <> show cap
+        throwHostSTM UsageError $
+          T.pack $
+            "column length out of range: " <> show newLen <> " vs " <> show cap
       else writeTVar clv newLen
 
   view'column'slice (InMemDevCol csv clv) !start !stop !exit = (exit =<<) $
@@ -62,13 +64,14 @@ instance
       !cl <- readTVar clv
       if stop < start || start < 0 || stop > cap
         then
-          error $
-            "column slice range out of range: "
-              <> show start
-              <> ":"
-              <> show stop
-              <> " vs "
-              <> show cap
+          throwHostSTM UsageError $
+            T.pack $
+              "column slice range out of range: "
+                <> show start
+                <> ":"
+                <> show stop
+                <> " vs "
+                <> show cap
         else do
           let !cs' = unsafeSliceDeviceArray cs start (cap - start)
               !len = max 0 $ min cl stop - start
@@ -83,25 +86,27 @@ instance
 
       if stop < start || start < 0 || stop > cl
         then
-          error $
-            "column slice range out of range: "
-              <> show start
-              <> ":"
-              <> show stop
-              <> " vs "
-              <> show cl
+          throwHostIO UsageError $
+            T.pack $
+              "column slice range out of range: "
+                <> show start
+                <> ":"
+                <> show stop
+                <> " vs "
+                <> show cl
         else do
           let (q, r) = quotRem (stop - start) step
               !len = if r == 0 then abs q else 1 + abs q
           if ccap < len
             then
-              error $
-                "capacity too small: " <> show ccap <> " vs "
-                  <> show start
-                  <> ":"
-                  <> show stop
-                  <> ":"
-                  <> show step
+              throwHostIO UsageError $
+                T.pack $
+                  "capacity too small: " <> show ccap <> " vs "
+                    <> show start
+                    <> ":"
+                    <> show stop
+                    <> ":"
+                    <> show step
             else do
               !fp' <- withForeignPtr fp $ \ !p -> do
                 !p' <- callocArray ccap
@@ -139,8 +144,9 @@ instance
     view'column'data idxCol $ \(!idxa, !idxl) ->
       if idxl /= cl
         then
-          error $
-            "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
+          throwHostIO UsageError $
+            T.pack $
+              "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
         else do
           (!fp', !cl') <- withForeignPtr fp $ \ !p -> do
             !p' <- callocArray cl
@@ -223,8 +229,9 @@ instance
     let !cap = directArrayCapacity cs
     if newLen < 0 || newLen > cap
       then
-        error $
-          "column length out of range: " <> show newLen <> " vs " <> show cap
+        throwHostSTM UsageError $
+          T.pack $
+            "column length out of range: " <> show newLen <> " vs " <> show cap
       else do
         writeTVar clv newLen
         return ()
@@ -236,13 +243,14 @@ instance
       !cl <- readTVar clv
       if stop < start || start < 0 || stop > cap
         then
-          error $
-            "column slice range out of range: "
-              <> show start
-              <> ":"
-              <> show stop
-              <> " vs "
-              <> show cap
+          throwHostSTM UsageError $
+            T.pack $
+              "column slice range out of range: "
+                <> show start
+                <> ":"
+                <> show stop
+                <> " vs "
+                <> show cap
         else do
           let !cs' = unsafeSliceDirectArray cs start (cap - start)
               !len = max 0 $ min cl stop - start
@@ -257,25 +265,27 @@ instance
 
       if stop < start || start < 0 || stop > cl
         then
-          error $
-            "column slice range out of range: "
-              <> show start
-              <> ":"
-              <> show stop
-              <> " vs "
-              <> show cl
+          throwHostIO UsageError $
+            T.pack $
+              "column slice range out of range: "
+                <> show start
+                <> ":"
+                <> show stop
+                <> " vs "
+                <> show cl
         else do
           let (q, r) = quotRem (stop - start) step
               !len = if r == 0 then abs q else 1 + abs q
           if ccap < len
             then
-              error $
-                "capacity too small: " <> show ccap <> " vs "
-                  <> show start
-                  <> ":"
-                  <> show stop
-                  <> ":"
-                  <> show step
+              throwHostIO UsageError $
+                T.pack $
+                  "capacity too small: " <> show ccap <> " vs "
+                    <> show start
+                    <> ":"
+                    <> show stop
+                    <> ":"
+                    <> show step
             else do
               !iov' <- do
                 !iov' <- MV.unsafeNew ccap
@@ -313,8 +323,9 @@ instance
     view'column'data idxCol $ \(!idxa, !idxl) ->
       if idxl /= cl
         then
-          error $
-            "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
+          throwHostIO UsageError $
+            T.pack $
+              "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
         else do
           (!iov', !cl') <- do
             !iov' <- MV.new cl
