@@ -18,6 +18,24 @@ import Language.Edh.EHI
 import Type.Reflection
 import Prelude
 
+data ColumnOf a = forall c f. ManagedColumn c f a => ColumnOf (c a) !Object
+
+instance Typeable a => ScriptArgAdapter (ColumnOf a) where
+  adaptEdhArg !v !exit = case edhUltimate v of
+    EdhObject o -> withColumnOf @a o badVal $ \_colInst !col ->
+      exit $ ColumnOf @a col o
+    _ -> badVal
+    where
+      badVal = edhValueDescTx v $ \ !badDesc ->
+        throwEdhTx UsageError $
+          T.pack (show $ typeRep @a) <> " Column expected but given: "
+            <> badDesc
+
+  adaptedArgValue (ColumnOf _col !obj) = EdhObject obj
+
+instance Eq (ColumnOf a) where
+  (ColumnOf _x'col x'o) == (ColumnOf _y'col y'o) = x'o == y'o
+
 data InstanceDisposition = StayComposed | ExtractAlone
 
 class
@@ -74,7 +92,13 @@ class
     c a ->
     ((f a, ArrayLength, ArrayCapacity) -> ArrayCapacity) ->
     ( forall c' f'.
-      ManagedColumn c' f' a =>
+      ( ManagedColumn c' f' a,
+        Typeable (c' a),
+        Typeable (f' a),
+        Typeable c',
+        Typeable f',
+        Typeable a
+      ) =>
       ( (f a, ArrayLength) -> (f' a, ArrayCapacity) -> IO ArrayLength,
         c' a -> IO ()
       )
@@ -104,6 +128,7 @@ data SomeColumn
     ( ManagedColumn c f a,
       Typeable (c a),
       Typeable (f a),
+      Typeable c,
       Typeable f,
       Typeable a
     ) =>
@@ -114,12 +139,28 @@ someColumn ::
   ( ManagedColumn c f a,
     Typeable (c a),
     Typeable (f a),
+    Typeable c,
     Typeable f,
     Typeable a
   ) =>
   c a ->
   SomeColumn
 someColumn = SomeColumn (typeRep @f)
+
+castColumn ::
+  forall c a f.
+  ( ManagedColumn c f a,
+    Typeable (c a),
+    Typeable (f a),
+    Typeable c,
+    Typeable f,
+    Typeable a
+  ) =>
+  SomeColumn ->
+  Maybe (c a)
+castColumn (SomeColumn _ (col :: c' a')) = case eqT of
+  Just (Refl :: c' a' :~: c a) -> Just col
+  Nothing -> Nothing
 
 withColumn :: Object -> (Object -> SomeColumn -> EdhTx) -> EdhTx
 withColumn !colObj =
@@ -227,21 +268,6 @@ getColumnDtype' !objCol naExit !exit =
     -- safe guard in case a Column instance has been further extended
     findSuperDto (maybeDto : rest) =
       withDataType maybeDto (findSuperDto rest) (const $ exit maybeDto)
-
-data ColumnOf a = forall c f. ManagedColumn c f a => ColumnOf (c a) !Object
-
-instance Typeable a => ScriptArgAdapter (ColumnOf a) where
-  adaptEdhArg !v !exit = case edhUltimate v of
-    EdhObject o -> withColumnOf @a o badVal $ \_colInst !col ->
-      exit $ ColumnOf @a col o
-    _ -> badVal
-    where
-      badVal = edhValueDescTx v $ \ !badDesc ->
-        throwEdhTx UsageError $
-          T.pack (show $ typeRep @a) <> " Column expected but given: "
-            <> badDesc
-
-  adaptedArgValue (ColumnOf _col !obj) = EdhObject obj
 
 sliceColumn ::
   Object ->

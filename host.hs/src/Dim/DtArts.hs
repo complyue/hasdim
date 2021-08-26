@@ -1000,7 +1000,12 @@ devColOpProc !op !other !exit !ets = runEdhTx ets $
   withColumnSelfOf @a exit $ \ !objCol !col -> do
     let exitWithNewClone ::
           forall c' f'.
-          (ManagedColumn c' f' a, Typeable (c' a)) =>
+          ( ManagedColumn c' f' a,
+            Typeable (c' a),
+            Typeable (f' a),
+            Typeable c',
+            Typeable f'
+          ) =>
           c' a ->
           STM ()
         exitWithNewClone !colResult =
@@ -1070,7 +1075,12 @@ dirColOpProc !op !other !exit !ets = runEdhTx ets $
   withColumnSelfOf @a exit $ \ !objCol !col -> do
     let exitWithNewClone ::
           forall c' f'.
-          (ManagedColumn c' f' a, Typeable (c' a)) =>
+          ( ManagedColumn c' f' a,
+            Typeable (c' a),
+            Typeable (f' a),
+            Typeable c',
+            Typeable f'
+          ) =>
           c' a ->
           STM ()
         exitWithNewClone !colResult =
