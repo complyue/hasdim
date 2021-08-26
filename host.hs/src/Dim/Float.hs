@@ -62,7 +62,7 @@ floatOpProc !fop (mandatoryArg -> !colObj) !exit !ets =
         $ \(_ :: TypeRep a) ->
           withColumnOf @a colObj dtMismatch $ \ !colInst !col ->
             edhContIO $
-              view'column'data col >>= \(cs, cl) -> do
+              view'column'data col $ \(cs, cl) -> do
                 !p <- callocArray @a cl
                 !fp <- newForeignPtr finalizerFree p
                 let pumpAt :: Int -> IO ()

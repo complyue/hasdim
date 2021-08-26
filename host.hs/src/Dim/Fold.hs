@@ -65,7 +65,7 @@ foldComput
             self'fold fop dt naExit $ \ !op ->
               withColumnOf @a colObj dtMismatch $ \_ col ->
                 edhContIO $
-                  view'column'data col >>= \(cs, cl) ->
+                  view'column'data col $ \(cs, cl) ->
                     if cl < 1
                       then atomically $ exitEdh ets exit nil
                       else do
@@ -102,7 +102,7 @@ foldlComput
             left'fold fop dt dt naExit $ \ !op ->
               withColumnOf @a colObj dtMismatch $ \_ col ->
                 edhContIO $
-                  view'column'data col >>= \(cs, cl) -> atomically $
+                  view'column'data col $ \(cs, cl) -> atomically $
                     runEdhTx ets $
                       fromEdh startVal $ \ !start -> edhContIO $ do
                         let go i v
@@ -141,7 +141,7 @@ foldrComput
               right'fold fop dt dt naExit $ \ !op ->
                 withColumnOf @a colObj dtMismatch $ \_ col ->
                   edhContIO $
-                    view'column'data col >>= \(cs, cl) -> atomically $
+                    view'column'data col $ \(cs, cl) -> atomically $
                       runEdhTx ets $
                         fromEdh startVal $ \ !start -> edhContIO $ do
                           let go i v

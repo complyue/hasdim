@@ -118,7 +118,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
         withColumnSelfOf @EdhValue exit $ \_objCol !col -> do
           let vecOp =
                 edhContIO $
-                  view'column'data col >>= \(cs, cl) -> do
+                  view'column'data col $ \(cs, cl) -> do
                     let go i
                           | i < 0 = atomically doExit
                           | otherwise = do
@@ -139,8 +139,8 @@ mkBoxSuperDt !dti !defv !outerScope = do
                 EdhTx
               elemOp _ col' =
                 edhContIO $
-                  view'column'data col >>= \(cs, cl) ->
-                    view'column'data col' >>= \(cs', cl') ->
+                  view'column'data col $ \(cs, cl) ->
+                    view'column'data col' $ \(cs', cl') ->
                       if cl' /= cl
                         then
                           atomically $
@@ -184,7 +184,7 @@ mkBoxSuperDt !dti !defv !outerScope = do
 
               vecOp =
                 edhContIO $
-                  view'column'data col >>= \(cs, cl) -> do
+                  view'column'data col $ \(cs, cl) -> do
                     (iov, csResult) <- newDirectArray @EdhValue cl
                     let go i
                           | i < 0 = atomically $ do
@@ -209,8 +209,8 @@ mkBoxSuperDt !dti !defv !outerScope = do
                 EdhTx
               elemOp _ col' =
                 edhContIO $
-                  view'column'data col >>= \(cs, cl) ->
-                    view'column'data col' >>= \(cs', cl') ->
+                  view'column'data col $ \(cs, cl) ->
+                    view'column'data col' $ \(cs', cl') ->
                       if cl' /= cl
                         then
                           atomically $
@@ -939,7 +939,7 @@ colCmpProc !dtYesNo !cmp !other !exit !ets = runEdhTx ets $
 
         vecOp =
           edhContIO $
-            view'column'data col >>= \(cs, cl) -> atomically $
+            view'column'data col $ \(cs, cl) -> atomically $
               runEdhTx ets $
                 fromEdh' @a other naExit $ \rhv -> edhContIO $ do
                   (fp, csResult) <- newDeviceArray @YesNo cl
@@ -960,8 +960,8 @@ colCmpProc !dtYesNo !cmp !other !exit !ets = runEdhTx ets $
           forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
         elemOp _ col' =
           edhContIO $
-            view'column'data col >>= \(cs, cl) ->
-              view'column'data col' >>= \(cs', cl') ->
+            view'column'data col $ \(cs, cl) ->
+              view'column'data col' $ \(cs', cl') ->
                 if cl' /= cl
                   then
                     atomically $
@@ -1009,7 +1009,7 @@ devColOpProc !op !other !exit !ets = runEdhTx ets $
 
         vecOp =
           edhContIO $
-            view'column'data col >>= \(cs, cl) -> atomically $
+            view'column'data col $ \(cs, cl) -> atomically $
               runEdhTx ets $
                 fromEdh' @a other naExit $ \rhv -> edhContIO $ do
                   (fp, csResult) <- newDeviceArray @a cl
@@ -1030,8 +1030,8 @@ devColOpProc !op !other !exit !ets = runEdhTx ets $
           forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
         elemOp _ col' =
           edhContIO $
-            view'column'data col >>= \(cs, cl) ->
-              view'column'data col' >>= \(cs', cl') ->
+            view'column'data col $ \(cs, cl) ->
+              view'column'data col' $ \(cs', cl') ->
                 if cl' /= cl
                   then
                     atomically $
@@ -1079,7 +1079,7 @@ dirColOpProc !op !other !exit !ets = runEdhTx ets $
 
         vecOp =
           edhContIO $
-            view'column'data col >>= \(cs, cl) -> atomically $
+            view'column'data col $ \(cs, cl) -> atomically $
               runEdhTx ets $
                 fromEdh' @a other naExit $ \rhv -> edhContIO $ do
                   (iov, csResult) <- newDirectArray @a cl
@@ -1099,8 +1099,8 @@ dirColOpProc !op !other !exit !ets = runEdhTx ets $
           forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
         elemOp _ col' =
           edhContIO $
-            view'column'data col >>= \(cs, cl) ->
-              view'column'data col' >>= \(cs', cl') ->
+            view'column'data col $ \(cs, cl) ->
+              view'column'data col' $ \(cs', cl') ->
                 if cl' /= cl
                   then
                     atomically $
@@ -1138,7 +1138,7 @@ colInpProc !op !other !exit !ets = runEdhTx ets $
   withColumnSelfOf @a exit $ \_objCol !col -> do
     let vecOp =
           edhContIO $
-            view'column'data col >>= \(cs, cl) -> atomically $
+            view'column'data col $ \(cs, cl) -> atomically $
               runEdhTx ets $
                 fromEdh' @a other naExit $ \rhv -> edhContIO $ do
                   let go i
@@ -1154,8 +1154,8 @@ colInpProc !op !other !exit !ets = runEdhTx ets $
           forall c' f'. ManagedColumn c' f' a => Object -> c' a -> EdhTx
         elemOp _ col' =
           edhContIO $
-            view'column'data col >>= \(cs, cl) ->
-              view'column'data col' >>= \(cs', cl') ->
+            view'column'data col $ \(cs, cl) ->
+              view'column'data col' $ \(cs', cl') ->
                 if cl' /= cl
                   then
                     atomically $

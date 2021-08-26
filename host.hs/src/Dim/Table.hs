@@ -67,7 +67,7 @@ readTableRow tbl@(Table _cv !rcv _tcols) !i !exit !ets = do
             EdhTx
           readCell (colKey, _colInst, SomeColumn _ col) !cellExit =
             edhContIO $
-              view'column'data col >>= \(cs, _cl) -> do
+              view'column'data col $ \(cs, _cl) -> do
                 !hv <- array'reader cs rowIdx
                 atomically $ runEdhTx ets $ toEdh hv $ cellExit . (colKey,)
       seqEdhTx (readCell <$> cols) $
@@ -89,14 +89,19 @@ growTable !newCap tbl@(Table cv rcv _tcols) !exit
     -- now shrink all columns
     runEdhTx ets $
       edhContIO $ do
-        sequence_ $ grow1 <$> cols
-        atomically $ do
-          -- update table capacity after all columns successfully updated
-          writeTVar cv newCap
-          exitEdh ets exit ()
+        -- TODO do we need such a reusable utility `seqContIO` ?
+        let growAll :: [(AttrKey, Object, SomeColumn)] -> IO () -> IO ()
+            growAll [] !exit' = exit'
+            growAll (x : rest) exit' = grow1 x $ growAll rest exit'
+        growAll cols $
+          atomically $ do
+            -- update table capacity after all columns successfully updated
+            writeTVar cv newCap
+            exitEdh ets exit ()
   where
-    grow1 :: (AttrKey, Object, SomeColumn) -> IO ()
-    grow1 (_, _, SomeColumn _ !col) = void $ grow'column'capacity col newCap
+    grow1 :: (AttrKey, Object, SomeColumn) -> IO () -> IO ()
+    grow1 (_, _, SomeColumn _ !col) !exit' =
+      grow'column'capacity col newCap $ const exit'
 
 markTable :: ArrayLength -> Table -> EdhTxExit () -> EdhTx
 markTable !newCnt tbl@(Table cv rcv _tcols) !exit = withTblCols tbl $
@@ -212,7 +217,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
 
               withColumn' obj tryDt $ \_colInst (SomeColumn _ !col) ->
                 edhContIO $
-                  view'column'data col >>= \(!cs, !cl) ->
+                  view'column'data col $ \(!cs, !cl) ->
                     if array'capacity cs < ctorCap || cl < ctorCnt
                       then
                         atomically $
@@ -364,7 +369,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
 
                 withColumn' obj tryDt $ \_colInst (SomeColumn _ !col) ->
                   edhContIO $
-                    view'column'data col >>= \(!cs, !cl) ->
+                    view'column'data col $ \(!cs, !cl) ->
                       if array'capacity cs < cap || cl < rc
                         then
                           atomically $
@@ -402,7 +407,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                 extractColumnBool thisCol col idxCol $
                   \(!newColObj, SomeColumn _ !newCol) ->
                     edhContIO $
-                      view'column'data newCol >>= \(!cs, !cl) ->
+                      view'column'data newCol $ \(!cs, !cl) ->
                         atomically $
                           exitEdh ets colExit (newColObj, array'capacity cs, cl)
 
@@ -416,7 +421,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                 extractColumnFancy thisCol col idxCol $
                   \(!newColObj, SomeColumn _ !newCol) ->
                     edhContIO $
-                      view'column'data newCol >>= \(!cs, !cl) ->
+                      view'column'data newCol $ \(!cs, !cl) ->
                         atomically $
                           exitEdh ets colExit (newColObj, array'capacity cs, cl)
 
@@ -438,7 +443,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                           sliceColumn thisCol col iStart iStop iStep $
                             \(!newColObj, SomeColumn _ !newCol) ->
                               edhContIO $
-                                view'column'data newCol >>= \(!cs, !cl) ->
+                                view'column'data newCol $ \(!cs, !cl) ->
                                   atomically $
                                     exitEdh
                                       ets
@@ -626,7 +631,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                     specifiedColWidth colKey $ \ !colWidth ->
                       runEdhTx ets $
                         edhContIO $
-                          view'column'data col >>= \(!cs, _cl) ->
+                          view'column'data col $ \(!cs, _cl) ->
                             atomically $ do
                               let readCell !rowIdx !cellExit = do
                                     !hvCell <- array'reader cs rowIdx
