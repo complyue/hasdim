@@ -6,7 +6,6 @@ module Dim.DataType where
 -- import           Debug.Trace
 
 import Control.Monad
-import qualified Data.ByteString.Internal as B
 import Data.Dynamic
 import Data.Lossless.Decimal as D
 import Data.Maybe
@@ -309,8 +308,9 @@ class FlatArray f a where
   -- | indexed writer
   array'writer :: f a -> (ArrayIndex -> a -> IO ())
 
-  -- | convert to blob if possible
-  array'as'blob :: forall r. f a -> ArrayLength -> r -> (B.ByteString -> r) -> r
+  -- | obtain pointer to the underlying data if applicable
+  array'data'ptr ::
+    forall r. f a -> r -> ((Storable a) => ForeignPtr a -> r) -> r
 
 data DeviceArray a = (Storable a, EdhXchg a, Typeable a) =>
   DeviceArray
@@ -329,9 +329,7 @@ instance FlatArray DeviceArray a where
     where
       -- note: withForeignPtr can not be safer here
       p = unsafeForeignPtrToPtr fp
-  array'as'blob (DeviceArray _cap fp) !len _naExit !exit =
-    exit $
-      B.fromForeignPtr (castForeignPtr fp) 0 (len * sizeOf (undefined :: a))
+  array'data'ptr (DeviceArray _cap fp) _naExit !exit = exit fp
 
 data DirectArray a
   = (Eq a, EdhXchg a, Typeable a) => DirectArray !(MV.IOVector a)
@@ -341,7 +339,7 @@ instance FlatArray DirectArray a where
   array'duplicate = dupDirectArray
   array'reader (DirectArray iov) = \ !i -> MV.unsafeRead iov i
   array'writer (DirectArray iov) = \ !i !a -> MV.unsafeWrite iov i a
-  array'as'blob _a _len naExit _exit = naExit
+  array'data'ptr _a naExit _exit = naExit
 
 emptyDeviceArray ::
   forall a. (EdhXchg a, Typeable a, Storable a) => IO (DeviceArray a)

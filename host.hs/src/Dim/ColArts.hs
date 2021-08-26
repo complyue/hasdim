@@ -4,6 +4,7 @@ module Dim.ColArts where
 
 import Control.Concurrent.STM
 import Control.Monad
+import qualified Data.ByteString.Internal as B
 import Data.Dynamic
 import Data.Maybe
 import Data.Text (Text)
@@ -192,8 +193,14 @@ createColumnClass !defaultDt !clsOuterScope =
       withThisColumn $ \_this (SomeColumn _ !col) ->
         edhContIO $
           view'column'data col $ \(cs, cl) -> atomically $
-            array'as'blob cs cl (exitEdh ets exit edhNA) $ \ !bytes ->
-              exitEdh ets exit $ EdhBlob bytes
+            array'data'ptr cs (exitEdh ets exit edhNA) $
+              \(fp :: ForeignPtr a) ->
+                exitEdh ets exit $
+                  EdhBlob $
+                    B.fromForeignPtr
+                      (castForeignPtr fp)
+                      0
+                      (cl * sizeOf (undefined :: a))
 
     colJsonProc :: EdhHostProc
     colJsonProc !exit !ets = runEdhTx ets $

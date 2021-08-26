@@ -18,6 +18,8 @@ import Language.Edh.EHI
 import Type.Reflection
 import Prelude
 
+-- * Host arg adapter for columns
+
 data ColumnOf a = forall c f. ManagedColumn c f a => ColumnOf (c a) !Object
 
 instance Typeable a => ScriptArgAdapter (ColumnOf a) where
@@ -35,6 +37,8 @@ instance Typeable a => ScriptArgAdapter (ColumnOf a) where
 
 instance Eq (ColumnOf a) where
   (ColumnOf _x'col x'o) == (ColumnOf _y'col y'o) = x'o == y'o
+
+-- * Type class for managed column
 
 data InstanceDisposition = StayComposed | ExtractAlone
 
@@ -123,6 +127,8 @@ class
     (SomeColumn -> IO ()) ->
     IO ()
 
+-- * Heterogeneous host wrapper of columns
+
 data SomeColumn
   = forall c f a.
     ( ManagedColumn c f a,
@@ -161,6 +167,8 @@ castColumn ::
 castColumn (SomeColumn _ (col :: c' a')) = case eqT of
   Just (Refl :: c' a' :~: c a) -> Just col
   Nothing -> Nothing
+
+-- * Scripting helper utilities for columns
 
 withColumn :: Object -> (Object -> SomeColumn -> EdhTx) -> EdhTx
 withColumn !colObj =
@@ -551,7 +559,7 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal !doneAssign !ets =
                           (withColumnOf' @Int idxVal byEdhIdx byIntpIdx)
                           byBoolIdx
 
--- * implementation details for pretty showing of column data
+-- * Implementation details for pretty showing of column data
 
 data Text2Show = Text2Show
   { text'to'show :: TL.Text,
