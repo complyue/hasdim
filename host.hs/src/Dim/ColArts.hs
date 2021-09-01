@@ -335,7 +335,7 @@ createColumnClass !defaultDt !clsOuterScope =
                 SomeColumn _ col' ->
                   edhContIO $
                     view'column'data col' $ \(_cs, !cl) -> atomically $
-                      edhRegulateSlice ets cl (start, stop, step) $
+                      regulateEdhSlice ets cl (start, stop, step) $
                         \(!iStart, !iStop, !iStep) ->
                           runEdhTx ets $
                             sliceColumn this col iStart iStop iStep $

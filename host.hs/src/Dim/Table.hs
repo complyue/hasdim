@@ -59,7 +59,7 @@ withTblCols (Table _cv _rcv !tcols) !exit !ets = do
 readTableRow :: Table -> Int -> (KwArgs -> EdhTx) -> EdhTx
 readTableRow tbl@(Table _cv !rcv _tcols) !i !exit !ets = do
   !rc <- readTVar rcv
-  edhRegulateIndex ets rc i $ \ !rowIdx -> runEdhTx ets $
+  regulateEdhIndex ets rc i $ \ !rowIdx -> runEdhTx ets $
     withTblCols tbl $ \ !cols -> do
       let readCell ::
             (AttrKey, Object, SomeColumn) ->
@@ -437,7 +437,7 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                   EdhAll -> exitEdh ets tblExit $ EdhObject that
                   EdhSlice !start !stop !step -> do
                     !rowCnt <- readTVar (table'row'count tbl)
-                    edhRegulateSlice ets rowCnt (start, stop, step) $
+                    regulateEdhSlice ets rowCnt (start, stop, step) $
                       \(!iStart, !iStop, !iStep) -> runEdhTx ets $
                         idxCols $ \ !thisCol !col !colExit ->
                           sliceColumn thisCol col iStart iStop iStep $
