@@ -5,6 +5,7 @@ module Dim.DataType where
 
 -- import           Debug.Trace
 
+import Control.Applicative
 import Control.Monad
 import Data.Dynamic
 import Data.Lossless.Decimal as D
@@ -14,7 +15,7 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
 import Dim.XCHG
-import Foreign as F
+import Foreign
 import Foreign.ForeignPtr.Unsafe
 import Language.Edh.EHI
 import System.Random
@@ -229,60 +230,32 @@ mkRealFracDataType !dti !defv !maybeFromDec =
         Nothing -> \naExit _exit -> naExit
         Just !fromDec -> \_naExit exit -> exit fromDec
 
-withDeviceDataType ::
-  forall r.
-  Object ->
-  r ->
-  (forall a. (Eq a, Storable a, EdhXchg a, Typeable a) => TypeRep a -> r) ->
-  r
-withDeviceDataType !dto !naExit !exit = case edh'obj'store dto of
-  HostStore (Dynamic trGDT monoDataType) -> case trGDT of
-    App trDataType _a -> case trDataType `eqTypeRep` typeRep @DataType of
-      Just HRefl -> case monoDataType of
-        DeviceDt dt -> device'data'type'holder dt exit
-        _ -> naExit
-      _ -> naExit
-    _ -> naExit
-  _ -> naExit
-
-withDirectDataType ::
-  forall r.
-  Object ->
-  r ->
-  (forall a. (Eq a, EdhXchg a, Typeable a) => a -> r) ->
-  r
-withDirectDataType !dto !naExit !exit = case edh'obj'store dto of
-  HostStore (Dynamic trGDT monoDataType) -> case trGDT of
-    App trDataType _a -> case trDataType `eqTypeRep` typeRep @DataType of
-      Just HRefl -> case monoDataType of
-        DirectDt dt -> direct'data'defv'holder dt exit
-        _ -> naExit
-      _ -> naExit
-    _ -> naExit
-  _ -> naExit
-
 withDataType ::
-  forall r. Object -> r -> (forall a. (Typeable a) => DataType a -> r) -> r
-withDataType !dto !naExit !exit = case edh'obj'store dto of
+  forall m r.
+  (MonadPlus m) =>
+  Object ->
+  (forall a. (Typeable a) => DataType a -> m r) ->
+  m r
+withDataType !dto !withDto = case edh'obj'store dto of
   HostStore (Dynamic trGDT monoDataType) -> case trGDT of
     App trDataType trA -> withTypeable trA $
       case trDataType `eqTypeRep` typeRep @DataType of
-        Just HRefl -> exit monoDataType
-        _ -> naExit
-    _ -> naExit
-  _ -> naExit
+        Just HRefl -> withDto monoDataType
+        _ -> mzero
+    _ -> mzero
+  _ -> mzero
 
-dtypeEqProc :: EdhValue -> EdhHostProc
-dtypeEqProc !other !exit !ets = case edhUltimate other of
-  EdhObject !objOther -> withDataType objOther exitNeg $ \ !dtOther ->
-    withDataType this badSelf $ \ !dtSelf ->
-      exitEdh ets exit $ EdhBool $ isJust $ dtOther `eqDataType` dtSelf
-  _ -> exitNeg
+dtypeEqProc :: EdhValue -> Edh EdhValue
+dtypeEqProc !other = do
+  !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
+  case edhUltimate other of
+    EdhObject !objOther -> (<|> rtnNeg) $
+      withDataType objOther $ \ !dtOther ->
+        withDataType this $ \ !dtSelf ->
+          return $ EdhBool $ isJust $ dtOther `eqDataType` dtSelf
+    _ -> rtnNeg
   where
-    this = edh'scope'this $ contextScope $ edh'context ets
-
-    badSelf = throwEdh ets EvalError "bug: not a host value of DataType"
-    exitNeg = exitEdh ets exit $ EdhBool False
+    rtnNeg = return (EdhBool False)
 
 -- * Unified Flat Array Interface
 

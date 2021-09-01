@@ -3,7 +3,6 @@ module Dim.Column where
 -- import           Debug.Trace
 
 import Control.Applicative
-import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Dynamic
@@ -168,55 +167,51 @@ castColumn (SomeColumn _ (col :: c' a')) = case eqT of
 
 -- * Scripting helper utilities for columns
 
-withColumn :: Object -> (Object -> SomeColumn -> EdhTx) -> EdhTx
-withColumn !colObj =
-  withColumn' colObj $
-    throwEdhTx UsageError "not a Column as expected"
+withColumnSelf :: Edh (Object, SomeColumn)
+withColumnSelf = do
+  !that <- edh'scope'that . contextScope . edh'context <$> edhThreadState
+  withColumn that <|> throwEdhM EvalError "bug: not a Column self as expected"
 
-withColumnSelf :: (Object -> SomeColumn -> EdhTx) -> EdhTx
-withColumnSelf !colExit !ets =
-  runEdhTx ets $ withColumn' that naExit colExit
-  where
-    that = edh'scope'that $ contextScope $ edh'context ets
-    naExit =
-      throwEdhTx UsageError "this is not a Column as expected"
+{- HLINT ignore "Redundant <$>" -}
 
-withColumn' :: Object -> EdhTx -> (Object -> SomeColumn -> EdhTx) -> EdhTx
-withColumn' !colObj naExit !colExit !ets = do
-  supers <- readTVar $ edh'obj'supers colObj
-  withComposition $ colObj : supers
+withColumn :: Object -> Edh (Object, SomeColumn)
+withColumn !obj = do
+  (obj :) <$> readTVarEdh (edh'obj'supers obj) >>= withComposition
   where
-    withComposition :: [Object] -> STM ()
-    withComposition [] = runEdhTx ets naExit
+    withComposition :: [Object] -> Edh (Object, SomeColumn)
+    withComposition [] = naM "not an expected Column object"
     withComposition (o : rest) = case fromDynamic =<< dynamicHostData o of
       Nothing -> withComposition rest
-      Just col -> runEdhTx ets $ colExit o col
+      Just col -> return (o, col)
 
 asColumnOf ::
   forall a r.
   (Typeable a) =>
   Object ->
-  r ->
-  (forall c f. ManagedColumn c f a => c a -> r) ->
-  r
-asColumnOf !obj !naExit !exit = case dynamicHostData obj of
-  Nothing -> naExit
+  (forall c f. ManagedColumn c f a => c a -> Edh r) ->
+  Edh r
+asColumnOf !obj !act = case dynamicHostData obj of
+  Nothing -> naAct
   Just dd -> case fromDynamic dd of
-    Nothing -> naExit
+    Nothing -> naAct
     Just (SomeColumn _ (col :: c b)) -> case eqT of
-      Nothing -> naExit
-      Just (Refl :: a :~: b) -> exit col
+      Nothing -> naAct
+      Just (Refl :: a :~: b) -> act col
+  where
+    naAct =
+      naM $ "not expected Column of type: " <> T.pack (show $ typeRep @a)
 
 asColumnOf' ::
   forall a r.
   (Typeable a) =>
   EdhValue ->
-  r ->
-  (forall c f. ManagedColumn c f a => c a -> r) ->
-  r
-asColumnOf' !val !naExit !exit = case edhUltimate val of
-  EdhObject !obj -> asColumnOf obj naExit exit
-  _ -> naExit
+  (forall c f. ManagedColumn c f a => c a -> Edh r) ->
+  Edh r
+asColumnOf' !val !act = case edhUltimate val of
+  EdhObject !obj -> asColumnOf obj act
+  _ ->
+    naM $
+      "not expected Column object of type: " <> T.pack (show $ typeRep @a)
 
 withColumnOf ::
   forall a r.
@@ -224,16 +219,14 @@ withColumnOf ::
   Object ->
   (forall c f. ManagedColumn c f a => Object -> c a -> Edh r) ->
   Edh r
-withColumnOf !obj !withCol = mEdh' $ \naExit exit ets -> do
-  let withComposition :: [Object] -> STM ()
+withColumnOf !obj !withCol = do
+  let withComposition :: [Object] -> Edh r
       withComposition [] =
-        runEdhTx ets $
-          naExit $
-            "not expected Column of type: " <> T.pack (show $ typeRep @a)
+        naM $ "not expected Column of type: " <> T.pack (show $ typeRep @a)
       withComposition (o : rest) =
-        asColumnOf @a o (withComposition rest) $ \ !col ->
-          runEdh ets (withCol o col) exit
-  supers <- readTVar $ edh'obj'supers obj
+        (<|> withComposition rest) $
+          asColumnOf @a o $ withCol o
+  supers <- readTVarEdh $ edh'obj'supers obj
   withComposition $ obj : supers
 
 withColumnOf' ::
@@ -245,8 +238,7 @@ withColumnOf' ::
 withColumnOf' !val !withCol = case edhUltimate val of
   EdhObject !obj -> withColumnOf obj withCol
   _ ->
-    naM $
-      "not expected Column object of type: " <> T.pack (show $ typeRep @a)
+    naM $ "not expected Column object of type: " <> T.pack (show $ typeRep @a)
 
 withColumnSelfOf ::
   forall a r.
@@ -258,24 +250,18 @@ withColumnSelfOf !withCol = mEdh $ \ !exit !ets -> do
   flip (runEdh ets) exit $ withColumnOf @a that withCol
 
 getColumnDtype :: Object -> Edh Object
-getColumnDtype !objCol =
-  getColumnDtype' objCol >>= \case
-    Nothing ->
-      edhSimpleDescM (EdhObject objCol) >>= \ !badDesc ->
-        throwEdhM UsageError $ "not a Column with dtype: " <> badDesc
-    Just !dto -> return dto
-
-getColumnDtype' :: Object -> Edh (Maybe Object)
-getColumnDtype' !objCol = mEdh $ \ !exit !ets -> do
-  let findSuperDto :: [Object] -> STM ()
-      findSuperDto [] = exit Nothing ets
+getColumnDtype !objCol = do
+  let findSuperDto :: [Object] -> Edh Object
+      findSuperDto [] =
+        edhSimpleDescM (EdhObject objCol) >>= \ !badDesc ->
+          naM $ "not a Column with dtype: " <> badDesc
       -- this is right and avoids unnecessary checks in vastly usual cases
-      findSuperDto [dto] = exit (Just dto) ets
+      findSuperDto [dto] = return dto
       -- safe guard in case a Column instance has been further extended
       findSuperDto (maybeDto : rest) =
-        withDataType maybeDto (findSuperDto rest) $
-          const $ exit (Just maybeDto) ets
-  readTVar (edh'obj'supers objCol) >>= findSuperDto
+        (<|> findSuperDto rest) $
+          withDataType maybeDto $ const $ return maybeDto
+  readTVarEdh (edh'obj'supers objCol) >>= findSuperDto
 
 sliceColumn ::
   Object ->

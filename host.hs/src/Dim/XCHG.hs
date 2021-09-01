@@ -114,17 +114,14 @@ coerceEdhToFloat ::
   Edh (Maybe a)
 coerceEdhToFloat !v = case edhUltimate v of
   EdhDecimal !d -> return $ Just $ convertDecimal d
-  EdhObject !o -> Edh $ \ !exit !ets ->
-    runEdhTx ets $
-      callMagicMethod
-        o
-        (AttrByName "__float__")
-        (ArgsPack [] odEmpty)
-        $ \ !magicRtn _ets -> case edhUltimate magicRtn of
-          EdhDecimal !d -> exitEdh ets exit $ Just $ convertDecimal d
-          _ -> edhSimpleDesc ets magicRtn $ \ !badDesc ->
-            throwEdh ets UsageError $
-              "bad value returned from __float__(): " <> badDesc
+  EdhObject !o -> do
+    !magicRtn <- callMagicM o (AttrByName "__float__") (ArgsPack [] odEmpty)
+    case edhUltimate magicRtn of
+      EdhDecimal !d -> return $ Just $ convertDecimal d
+      _ ->
+        edhSimpleDescM magicRtn >>= \ !badDesc ->
+          throwEdhM UsageError $
+            "bad value returned from __float__(): " <> badDesc
   _ -> return Nothing
   where
     convertDecimal :: Decimal -> a
@@ -140,17 +137,14 @@ coerceEdhToIntegral ::
   Edh (Maybe a)
 coerceEdhToIntegral !v = case edhUltimate v of
   EdhDecimal !d -> return $ convertDecimal d
-  EdhObject !o -> Edh $ \ !exit !ets ->
-    runEdhTx ets $
-      callMagicMethod
-        o
-        (AttrByName "__int__")
-        (ArgsPack [] odEmpty)
-        $ \ !magicRtn _ets -> case edhUltimate magicRtn of
-          EdhDecimal !d -> exitEdh ets exit $ convertDecimal d
-          _ -> edhSimpleDesc ets magicRtn $ \ !badDesc ->
-            throwEdh ets UsageError $
-              "bad value returned from __int__(): " <> badDesc
+  EdhObject !o -> do
+    !magicRtn <- callMagicM o (AttrByName "__int__") (ArgsPack [] odEmpty)
+    case edhUltimate magicRtn of
+      EdhDecimal !d -> return $ convertDecimal d
+      _ ->
+        edhSimpleDescM magicRtn >>= \ !badDesc ->
+          throwEdhM UsageError $
+            "bad value returned from __int__(): " <> badDesc
   _ -> return Nothing
   where
     convertDecimal :: Decimal -> Maybe a
