@@ -17,7 +17,7 @@ import qualified Data.Vector.Storable.Mutable as MVS
 import Dim.XCHG
 import Foreign
 import Foreign.ForeignPtr.Unsafe
-import Language.Edh.EHI
+import Language.Edh.MHI
 import System.Random
 import Type.Reflection
 import Prelude
@@ -26,86 +26,50 @@ import Prelude
 
 -- | Device-native types stored in memory shared with computing devices
 -- (a computing device can be a GPU or CPU with heavy SIMD orientation)
-data DeviceDataType a' = DeviceDataType
+data DeviceDataType a = (Eq a, Storable a, EdhXchg a, Typeable a) =>
+  DeviceDataType
   { device'data'type'ident :: !DataTypeIdent,
-    device'data'type'holder ::
-      forall r.
-      ( forall a.
-        (a ~ a', Eq a, Storable a, EdhXchg a, Typeable a) =>
-        TypeRep a ->
-        r
-      ) ->
-      r,
-    device'data'type'as'of'num ::
-      forall r.
-      r ->
-      ( forall a.
-        (a ~ a', Num a, Eq a, Storable a, EdhXchg a, Typeable a) =>
-        TypeRep a ->
-        r
-      ) ->
-      r,
-    device'data'type'as'of'float ::
-      forall r.
-      r ->
-      ( forall a.
-        (a ~ a', RealFloat a, Eq a, Storable a, EdhXchg a, Typeable a) =>
-        TypeRep a ->
-        r
-      ) ->
-      r,
-    device'data'type'as'of'random ::
-      forall r.
-      r ->
-      ( forall a.
-        (a ~ a', Random a, Eq a, Ord a, Storable a, EdhXchg a, Typeable a) =>
-        TypeRep a ->
-        r
-      ) ->
-      r
+    device'data'type :: TypeRep a,
+    with'num'device'data'type ::
+      forall m r.
+      (MonadPlus m) =>
+      (forall a'. (a' ~ a, Num a') => TypeRep a -> m r) ->
+      m r,
+    with'float'device'data'type ::
+      forall m r.
+      (MonadPlus m) =>
+      (forall a'. (a' ~ a, RealFloat a') => TypeRep a -> m r) ->
+      m r,
+    with'random'device'data'type ::
+      forall m r.
+      (MonadPlus m) =>
+      (forall a'. (a' ~ a, Random a') => TypeRep a -> m r) ->
+      m r
   }
 
 instance Eq (DeviceDataType a) where
   x == y = device'data'type'ident x == device'data'type'ident y
 
 -- | Lifted Haskell types directly operatable by the host language
-data DirectDataType a' = DirectDataType
+data DirectDataType a = (Eq a, EdhXchg a, Typeable a) =>
+  DirectDataType
   { direct'data'type'ident :: !DataTypeIdent,
-    direct'data'defv'holder ::
-      forall r.
-      ( forall a.
-        (a ~ a', Eq a, EdhXchg a, Typeable a) =>
-        a ->
-        r
-      ) ->
-      r,
-    direct'data'type'as'of'num ::
-      forall r.
-      r ->
-      ( forall a.
-        (a ~ a', Num a, Eq a, EdhXchg a, Typeable a) =>
-        TypeRep a ->
-        r
-      ) ->
-      r,
-    direct'data'type'as'of'random ::
-      forall r.
-      r ->
-      ( forall a.
-        (a ~ a', Random a, Eq a, Ord a, EdhXchg a, Typeable a) =>
-        TypeRep a ->
-        r
-      ) ->
-      r,
-    direct'data'type'from'num ::
-      forall r.
-      r ->
-      ( forall a.
-        (a ~ a', Eq a, EdhXchg a, Typeable a) =>
-        (D.Decimal -> a) ->
-        r
-      ) ->
-      r
+    direct'data'default :: a,
+    with'num'direct'data'type ::
+      forall m r.
+      (MonadPlus m) =>
+      (forall a'. (a' ~ a, Num a') => TypeRep a -> m r) ->
+      m r,
+    with'random'direct'data'type ::
+      forall m r.
+      (MonadPlus m) =>
+      (forall a'. (a' ~ a, Random a') => TypeRep a -> m r) ->
+      m r,
+    with'num'seed'direct'data'type ::
+      forall m r.
+      (MonadPlus m) =>
+      ((D.Decimal -> a) -> m r) ->
+      m r
   }
 
 instance Eq (DirectDataType a) where
@@ -120,8 +84,8 @@ type DataTypeIdent = AttrName
 -- note: need separate data constructors along respective ADTs because GHC does
 --       not yet support impredicative polymorphism
 data DataType a
-  = (EdhXchg a, Typeable a) => DeviceDt !(DeviceDataType a)
-  | (EdhXchg a, Typeable a) => DirectDt !(DirectDataType a)
+  = (Eq a, Storable a, EdhXchg a, Typeable a) => DeviceDt !(DeviceDataType a)
+  | (Eq a, EdhXchg a, Typeable a) => DirectDt !(DirectDataType a)
 
 data'type'ident :: DataType a -> DataTypeIdent
 data'type'ident (DeviceDt dt) = device'data'type'ident dt
@@ -159,12 +123,12 @@ mkFloatDataType ::
   DataType a
 mkFloatDataType !dti =
   DeviceDt $
-    DeviceDataType
+    DeviceDataType @a
       dti
-      ($ typeRep @a)
-      (\_naExit exit -> exit (typeRep @a))
-      (\_naExit exit -> exit (typeRep @a))
-      (\_naExit exit -> exit (typeRep @a))
+      typeRep
+      ($ typeRep)
+      ($ typeRep)
+      ($ typeRep)
 
 mkIntDataType ::
   forall a.
@@ -173,12 +137,12 @@ mkIntDataType ::
   DataType a
 mkIntDataType !dti =
   DeviceDt $
-    DeviceDataType
+    DeviceDataType @a
       dti
-      ($ typeRep @a)
-      (\_naExit exit -> exit (typeRep @a))
-      (\naExit _exit -> naExit)
-      (\_naExit exit -> exit (typeRep @a))
+      typeRep
+      ($ typeRep)
+      (\_ -> mzero)
+      ($ typeRep)
 
 mkBitsDataType ::
   forall a.
@@ -187,12 +151,12 @@ mkBitsDataType ::
   DataType a
 mkBitsDataType !dti =
   DeviceDt $
-    DeviceDataType
+    DeviceDataType @a
       dti
-      ($ typeRep @a)
-      (\naExit _exit -> naExit)
-      (\naExit _exit -> naExit)
-      (\naExit _exit -> naExit)
+      typeRep
+      (\_ -> mzero)
+      (\_ -> mzero)
+      (\_ -> mzero)
 
 mkBoxDataType ::
   forall a.
@@ -203,14 +167,14 @@ mkBoxDataType ::
   DataType a
 mkBoxDataType !dti !defv !maybeFromDec =
   DirectDt $
-    DirectDataType
+    DirectDataType @a
       dti
-      ($ defv)
-      (\naExit _exit -> naExit)
-      (\naExit _exit -> naExit)
+      defv
+      (\_ -> mzero)
+      (\_ -> mzero)
       $ case maybeFromDec of
-        Nothing -> \naExit _exit -> naExit
-        Just !fromDec -> \_naExit exit -> exit fromDec
+        Nothing -> \_ -> mzero
+        Just !fromDec -> ($ fromDec)
 
 mkRealFracDataType ::
   forall a.
@@ -221,14 +185,14 @@ mkRealFracDataType ::
   DataType a
 mkRealFracDataType !dti !defv !maybeFromDec =
   DirectDt $
-    DirectDataType
+    DirectDataType @a
       dti
-      ($ defv)
-      (\_naExit exit -> exit (typeRep @a))
-      (\_naExit exit -> exit (typeRep @a))
+      defv
+      ($ typeRep)
+      ($ typeRep)
       $ case maybeFromDec of
-        Nothing -> \naExit _exit -> naExit
-        Just !fromDec -> \_naExit exit -> exit fromDec
+        Nothing -> \_ -> mzero
+        Just !fromDec -> ($ fromDec)
 
 withDataType ::
   forall m r.
@@ -283,7 +247,11 @@ class FlatArray f a where
 
   -- | obtain pointer to the underlying data if applicable
   array'data'ptr ::
-    forall r. f a -> r -> ((Storable a) => ForeignPtr a -> r) -> r
+    forall m r.
+    (MonadPlus m) =>
+    f a ->
+    (Storable a => ForeignPtr a -> m r) ->
+    m r
 
 data DeviceArray a = (Storable a, EdhXchg a, Typeable a) =>
   DeviceArray
@@ -302,7 +270,7 @@ instance FlatArray DeviceArray a where
     where
       -- note: withForeignPtr can not be safer here
       p = unsafeForeignPtrToPtr fp
-  array'data'ptr (DeviceArray _cap fp) _naExit !exit = exit fp
+  array'data'ptr (DeviceArray _cap fp) = ($ fp)
 
 data DirectArray a
   = (Eq a, EdhXchg a, Typeable a) => DirectArray !(MV.IOVector a)
@@ -312,7 +280,7 @@ instance FlatArray DirectArray a where
   array'duplicate = dupDirectArray
   array'reader (DirectArray iov) = \ !i -> MV.unsafeRead iov i
   array'writer (DirectArray iov) = \ !i !a -> MV.unsafeWrite iov i a
-  array'data'ptr _a naExit _exit = naExit
+  array'data'ptr _a _ = mzero
 
 emptyDeviceArray ::
   forall a. (EdhXchg a, Typeable a, Storable a) => IO (DeviceArray a)

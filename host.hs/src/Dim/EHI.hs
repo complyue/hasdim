@@ -31,7 +31,7 @@ import Dim.InMem
 import Dim.Table
 import Dim.XCHG
 import Foreign hiding (void)
-import Language.Edh.EHI
+import Language.Edh.MHI
 import Prelude
 
 builtinDataTypes :: Scope -> STM [(DataTypeIdent, Object)]

@@ -13,7 +13,7 @@ import qualified Data.Lossless.Decimal as D
 import Data.Text (Text)
 import qualified Data.Text as T
 import Foreign (Bits, Int8, Storable)
-import Language.Edh.EHI
+import Language.Edh.MHI
 import System.Random
 import Type.Reflection
 import Prelude

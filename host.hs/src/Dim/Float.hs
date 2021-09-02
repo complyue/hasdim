@@ -9,18 +9,16 @@ import Dim.Column
 import Dim.DataType
 import Dim.InMem
 import Foreign
-import Language.Edh.EHI
+import Language.Edh.MHI
 import Type.Reflection
 import Prelude
 
 piProc :: Object -> Object -> Int -> "dtype" ?: Object -> Edh EdhValue
-piProc !defaultDt !colClass !cap (defaultArg defaultDt -> !dto) =
+piProc !defaultDt !clsColumn !cap (defaultArg defaultDt -> !dto) =
   (<|> badDtype) $
     withDataType dto $ \case
-      DeviceDt dt -> device'data'type'as'of'float
-        dt
-        (notFloatDt $ device'data'type'ident dt)
-        $ \(_ :: TypeRep a) -> do
+      DeviceDt dt -> (<|> notFloatDt (device'data'type'ident dt)) $
+        with'float'device'data'type dt $ \(_ :: TypeRep a) -> do
           !fp <- liftIO $ do
             !p <- callocArray @a cap
             !fp <- newForeignPtr finalizerFree p
@@ -38,11 +36,8 @@ piProc !defaultDt !colClass !cap (defaultArg defaultDt -> !dto) =
           !csv <- newTMVarEdh cs
           !clv <- newTVarEdh cap
           let !col = InMemDevCol csv clv
-          edhCreateHostObj'
-            colClass
-            (toDyn $ someColumn col)
-            [dto]
-            >>= exitEdh ets exit . EdhObject
+          EdhObject
+            <$> createHostObjectM' clsColumn (toDyn $ someColumn col) [dto]
       DirectDt _dt ->
         throwEdhM UsageError "not implemented for direct dtype yet"
   where
@@ -50,7 +45,7 @@ piProc !defaultDt !colClass !cap (defaultArg defaultDt -> !dto) =
       edhObjDescM dto >>= \ !badDesc ->
         throwEdhM UsageError $ "invalid dtype: " <> badDesc
 
-    notFloatDt dti = throwEdh ets UsageError $ "not a floating dtype: " <> dti
+    notFloatDt dti = throwEdhM UsageError $ "not a floating dtype: " <> dti
 
 floatOpProc ::
   (forall a. Floating a => a -> a) -> "col" !: Object -> Edh EdhValue
@@ -61,10 +56,8 @@ floatOpProc !fop (mandatoryArg -> !colObj) =
             throwEdhM UsageError $ "invalid dtype: " <> badDesc
     (<|> badDtype) $
       withDataType dto $ \case
-        DeviceDt dt -> device'data'type'as'of'float
-          dt
-          (notFloatDt $ device'data'type'ident dt)
-          $ \(_ :: TypeRep a) ->
+        DeviceDt dt -> (<|> notFloatDt (device'data'type'ident dt)) $
+          with'float'device'data'type dt $ \(_ :: TypeRep a) ->
             (<|> dtMismatch) $
               withColumnOf @a colObj $ \ !colInst !col ->
                 view'column'data col >>= \(cs, cl) -> do
@@ -85,8 +78,8 @@ floatOpProc !fop (mandatoryArg -> !colObj) =
                   !csv <- newTMVarEdh cs'
                   !clv <- newTVarEdh cl
                   let !col' = InMemDevCol csv clv
-                  edhCloneHostObj ets colInst colObj (someColumn col') $
-                    exitEdh ets exit . EdhObject
+                  EdhObject
+                    <$> mutCloneHostObjectM colObj colInst (someColumn col')
         DirectDt _dt ->
           throwEdhM UsageError "not implemented for direct dtype yet"
   where

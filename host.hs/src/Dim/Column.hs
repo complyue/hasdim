@@ -15,7 +15,7 @@ import Data.Typeable hiding (TypeRep, typeRep)
 import Dim.DataType
 import Dim.XCHG
 import Foreign
-import Language.Edh.EHI
+import Language.Edh.MHI
 import Type.Reflection
 import Prelude
 
@@ -106,7 +106,7 @@ class
         c' a -> IO ()
       )
     ) ->
-    IO ()
+    IO SomeColumn
 
   -- extract elements by a mask column of the same shape
   extract'column'bool ::
@@ -277,13 +277,12 @@ sliceColumn !objCol (SomeColumn _ !col) !start !stop !step =
       else copy'column'slice col stop start stop step
   where
     withSliced (disp, col') = case disp of
-      StayComposed -> mEdh $ \ !exit !ets ->
-        edhCloneHostObj ets objCol objCol col' $ \ !objCol' ->
-          exit (objCol', col') ets
-      ExtractAlone ->
-        getColumnDtype objCol >>= \ !dto -> mEdh $ \ !exit !ets ->
-          edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
-            >>= \ !objCol' -> exit (objCol', col') ets
+      StayComposed ->
+        (,col') <$> mutCloneHostObjectM objCol objCol col'
+      ExtractAlone -> do
+        !dto <- getColumnDtype objCol
+        let clsCol = edh'obj'class objCol
+        (,col') <$> createHostObjectM' clsCol (toDyn col') [dto]
 
 extractColumnBool ::
   forall c' f'.
@@ -292,11 +291,12 @@ extractColumnBool ::
   SomeColumn ->
   c' YesNo ->
   Edh (Object, SomeColumn)
-extractColumnBool !objCol (SomeColumn _ !col) !colMask =
-  extract'column'bool col colMask >>= \ !col' ->
-    getColumnDtype objCol >>= \ !dto -> mEdh $ \ !exit !ets ->
-      edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
-        >>= \ !objCol' -> exitEdh ets exit (objCol', col')
+extractColumnBool !objCol (SomeColumn _ !col) !colMask = do
+  !dto <- getColumnDtype objCol
+  !col' <- extract'column'bool col colMask
+  (,col') <$> createHostObjectM' clsCol (toDyn col') [dto]
+  where
+    clsCol = edh'obj'class objCol
 
 extractColumnFancy ::
   forall c' f'.
@@ -305,11 +305,12 @@ extractColumnFancy ::
   SomeColumn ->
   c' Int ->
   Edh (Object, SomeColumn)
-extractColumnFancy !objCol (SomeColumn _ !col) !colIdxs =
-  extract'column'fancy col colIdxs >>= \ !col' ->
-    getColumnDtype objCol >>= \ !dto -> mEdh $ \ !exit !ets ->
-      edhCreateHostObj' (edh'obj'class objCol) (toDyn col') [dto]
-        >>= \ !objCol' -> exitEdh ets exit (objCol', col')
+extractColumnFancy !objCol (SomeColumn _ !col) !colIdxs = do
+  !dto <- getColumnDtype objCol
+  !col' <- extract'column'fancy col colIdxs
+  (,col') <$> createHostObjectM' clsCol (toDyn col') [dto]
+  where
+    clsCol = edh'obj'class objCol
 
 idxAssignColumn :: SomeColumn -> EdhValue -> EdhValue -> Edh ()
 idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal =

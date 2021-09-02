@@ -13,7 +13,7 @@ import Dim.DbArray
 import Dim.InMem
 import Dim.XCHG
 import Foreign hiding (void)
-import Language.Edh.EHI
+import Language.Edh.MHI
 import Prelude
 
 data DbColumn a = (Eq a, Storable a, EdhXchg a, Typeable a) =>

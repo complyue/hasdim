@@ -18,7 +18,7 @@ import Foreign hiding (void)
 import Foreign.ForeignPtr.Unsafe
 import GHC.Conc (unsafeIOToSTM)
 import GHC.Float
-import Language.Edh.EHI
+import Language.Edh.MHI
 import System.Random
 import Prelude
 

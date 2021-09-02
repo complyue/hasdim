@@ -12,7 +12,7 @@ import Dim.Column
 import Dim.DataType
 import Dim.XCHG
 import Foreign hiding (void)
-import Language.Edh.EHI
+import Language.Edh.MHI
 import Type.Reflection
 import Prelude
 
@@ -377,13 +377,13 @@ createInMemColumn ::
   EdhTxExit SomeColumn ->
   EdhTx
 createInMemColumn !gdt !cap !len !exit !ets = runEdhTx ets $ case gdt of
-  DeviceDt dt -> device'data'type'holder dt $ \(_ :: TypeRep a) ->
+  DeviceDt dt -> with'device'data'type dt $ \(_ :: TypeRep a) ->
     edhContIO $
       newDeviceArray @a cap >>= \(_fp, !cs) -> atomically $ do
         !csv <- newTMVar cs
         !clv <- newTVar len
         exitEdh ets exit $ someColumn $ InMemDevCol csv clv
-  DirectDt dt -> direct'data'defv'holder dt $ \(defv :: a) ->
+  DirectDt dt -> with'direct'data'default dt $ \(defv :: a) ->
     edhContIO $
       newDirectArray' defv cap >>= \(_iov, !cs) -> atomically $ do
         !csv <- newTMVar cs

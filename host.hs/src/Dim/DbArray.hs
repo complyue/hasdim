@@ -17,7 +17,7 @@ import Dim.DataType
 import Dim.XCHG
 import Foreign hiding (void)
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
-import Language.Edh.EHI
+import Language.Edh.MHI
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (IOMode (ReadWriteMode), hFileSize, withFile)

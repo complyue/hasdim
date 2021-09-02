@@ -15,7 +15,7 @@ import Dim.DataType
 import Dim.InMem
 import Dim.XCHG
 import Foreign hiding (void)
-import Language.Edh.EHI
+import Language.Edh.MHI
 import System.Random
 import Type.Reflection
 import Prelude
@@ -87,7 +87,7 @@ createColumnClass !defaultDt !clsOuterScope =
               <> T.pack (show ctorCap)
         | otherwise = withDataType dto badDtype $ \case
           DeviceDt dt ->
-            device'data'type'holder dt $ \(_ :: TypeRep a) ->
+            with'device'data'type dt $ \(_ :: TypeRep a) ->
               runEdhTx etsCtor $
                 edhContIO $ do
                   (_fp, !cs) <- newDeviceArray @a ctorCap
@@ -100,7 +100,7 @@ createColumnClass !defaultDt !clsOuterScope =
                           SomeColumn (typeRep @DeviceArray) $
                             InMemDevCol @a csv clv
           DirectDt dt ->
-            direct'data'defv'holder dt $ \(fill'val :: a) ->
+            with'direct'data'default dt $ \(fill'val :: a) ->
               runEdhTx etsCtor $
                 edhContIO $ do
                   (_iov, !cs) <- newDirectArray' @a fill'val ctorCap
@@ -414,7 +414,7 @@ arangeProc
             let (q, r) = quotRem (stop - start) step
                 !len = if r == 0 then abs q else 1 + abs q
             withDataType dto badDtype $ \case
-              DeviceDt dt -> device'data'type'as'of'num
+              DeviceDt dt -> with'num'device'data'type
                 dt
                 (notNumDt $ device'data'type'ident dt)
                 $ \(_ :: TypeRep a) -> runEdhTx ets $
@@ -441,7 +441,7 @@ arangeProc
                         >>= exitEdh ets exit . EdhObject
               DirectDt dt -> do
                 let tryFromDec :: STM ()
-                    tryFromDec = direct'data'type'from'num
+                    tryFromDec = with'num'seed'direct'data'type
                       dt
                       (notNumDt $ direct'data'type'ident dt)
                       $ \ !fromDec -> runEdhTx ets $
@@ -467,7 +467,7 @@ arangeProc
                               [dto]
                               >>= exitEdh ets exit . EdhObject
 
-                direct'data'type'as'of'num dt tryFromDec $
+                with'num'direct'data'type dt tryFromDec $
                   \(_ :: TypeRep a) -> runEdhTx ets $
                     edhContIO $ do
                       (iov :: MV.IOVector a) <- MV.new len
@@ -529,7 +529,7 @@ randomProc
       createRandomCol :: EdhValue -> EdhValue -> STM ()
       createRandomCol !lowerValue !upperValue = do
         withDataType dto badDtype $ \case
-          DeviceDt dt -> device'data'type'as'of'random
+          DeviceDt dt -> with'random'device'data'type
             dt
             (notRndDt $ device'data'type'ident dt)
             $ \(_ :: TypeRep a) -> runEdhTx ets $
@@ -562,7 +562,7 @@ randomProc
                           (toDyn $ someColumn col)
                           [dto]
                           >>= exitEdh ets exit . EdhObject
-          DirectDt dt -> direct'data'type'as'of'random
+          DirectDt dt -> with'random'direct'data'type
             dt
             (notRndDt $ direct'data'type'ident dt)
             $ \(_ :: TypeRep a) -> runEdhTx ets $

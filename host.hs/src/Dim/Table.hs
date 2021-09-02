@@ -13,7 +13,7 @@ import Dim.Column
 import Dim.DataType
 import Dim.InMem
 import Dim.XCHG
-import Language.Edh.EHI
+import Language.Edh.MHI
 import Prelude
 
 {- HLINT ignore "Redundant <$>" -}
@@ -474,8 +474,8 @@ createTableClass !dtBox !clsColumn !clsOuterScope =
                       !tcols' <- iopdFromList $ reverse rCols
                       edhCloneHostObj
                         ets
-                        thisTbl
                         (edh'scope'that $ contextScope $ edh'context ets)
+                        thisTbl
                         (Table cv' rcv' tcols')
                         (exitEdh ets tblExit . EdhObject)
                     go

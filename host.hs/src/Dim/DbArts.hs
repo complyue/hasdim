@@ -14,7 +14,7 @@ import Dim.DiskBack
 import Dim.XCHG
 import Foreign
 import GHC.Conc (unsafeIOToSTM)
-import Language.Edh.EHI
+import Language.Edh.MHI
 import Type.Reflection
 import Prelude
 
@@ -66,7 +66,7 @@ createDbArrayClass !clsColumn !defaultDt !clsOuterScope =
       !etsCtor = withDataType dto badDtype $ \case
         DirectDt _ ->
           throwEdh etsCtor UsageError "DbArray only works with device dtype"
-        DeviceDt dt -> device'data'type'holder dt $
+        DeviceDt dt -> with'device'data'type dt $
           \(_ :: TypeRep a) -> case maybeShape of
             Nothing ->
               runEdhTx etsCtor $ edhContIO $ goMemMap @a Nothing
