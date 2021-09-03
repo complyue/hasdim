@@ -177,8 +177,7 @@ scanlComput
                                   let v' = op v e
                                   array'writer cs' i v'
                                   go (i + 1) v'
-                          go 0 start,
-                        \_col' -> pure ()
+                          go 0 start
                       )
                 EdhObject
                   <$> createHostObjectM'
@@ -219,8 +218,7 @@ scanrComput
                                   let v' = op v e
                                   array'writer cs' i v'
                                   go (i + 1) v'
-                          go 0 start,
-                        \_col' -> pure ()
+                          go 0 start
                       )
                 EdhObject
                   <$> createHostObjectM'

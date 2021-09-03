@@ -94,17 +94,11 @@ class
   derive'new'column ::
     c a ->
     ((f a, ArrayLength, ArrayCapacity) -> ArrayCapacity) ->
-    ( forall c' f'.
-      ( ManagedColumn c' f' a,
-        Typeable (c' a),
-        Typeable (f' a),
-        Typeable c',
-        Typeable f',
-        Typeable a
-      ) =>
-      ( (f a, ArrayLength) -> (f' a, ArrayCapacity) -> IO ArrayLength,
-        c' a -> IO ()
-      )
+    ( forall f'.
+      (FlatArray f' a, Typeable f') =>
+      (f a, ArrayLength) ->
+      (f' a, ArrayCapacity) ->
+      IO ArrayLength
     ) ->
     IO SomeColumn
 

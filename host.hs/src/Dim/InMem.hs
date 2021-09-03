@@ -5,6 +5,7 @@ module Dim.InMem where
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
+import Control.Monad.IO.Class
 import Data.Dynamic
 import qualified Data.Text as T
 import qualified Data.Vector.Mutable as MV
@@ -26,15 +27,14 @@ instance
   (Eq a, Storable a, EdhXchg a, Typeable a) =>
   ManagedColumn InMemDevCol DeviceArray a
   where
-  view'column'data (InMemDevCol csv clv) exit = (exit =<<) $
-    atomically $ do
-      !cs <- readTMVar csv
-      !cl <- readTVar clv
-      return (cs, cl)
+  view'column'data (InMemDevCol csv clv) = inlineSTM $ do
+    !cs <- readTMVar csv
+    !cl <- readTVar clv
+    return (cs, cl)
 
   read'column'length (InMemDevCol _csv clv) = readTVarIO clv
 
-  grow'column'capacity (InMemDevCol csv clv) !newCap !exit = (exit =<<) $
+  grow'column'capacity (InMemDevCol csv clv) !newCap = liftIO $
     bracketOnError
       ( atomically $ do
           !cs <- takeTMVar csv
@@ -47,68 +47,66 @@ instance
         atomically $ putTMVar csv cs'
         return (cs', cl)
 
-  mark'column'length (InMemDevCol csv clv) !newLen = atomically $ do
-    !cs <- readTMVar csv
+  mark'column'length (InMemDevCol csv clv) !newLen = do
+    !cs <- atomically $ readTMVar csv
     let !cap = deviceArrayCapacity cs
     if newLen < 0 || newLen > cap
       then
-        throwHostSTM UsageError $
+        throwHostIO UsageError $
           T.pack $
             "column length out of range: " <> show newLen <> " vs " <> show cap
-      else writeTVar clv newLen
+      else atomically $ writeTVar clv newLen
 
-  view'column'slice (InMemDevCol csv clv) !start !stop !exit = (exit =<<) $
-    atomically $ do
-      !cs <- readTMVar csv
-      let !cap = deviceArrayCapacity cs
-      !cl <- readTVar clv
-      if stop < start || start < 0 || stop > cap
-        then
-          throwHostSTM UsageError $
-            T.pack $
-              "column slice range out of range: "
-                <> show start
-                <> ":"
-                <> show stop
-                <> " vs "
-                <> show cap
-        else do
-          let !cs' = unsafeSliceDeviceArray cs start (cap - start)
-              !len = max 0 $ min cl stop - start
-          !csvNew <- newTMVar cs'
-          !clvNew <- newTVar len
-          return (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
+  view'column'slice (InMemDevCol csv clv) !start !stop = do
+    !cs <- readTMVarEdh csv
+    let !cap = deviceArrayCapacity cs
+    !cl <- readTVarEdh clv
+    if stop < start || start < 0 || stop > cap
+      then
+        throwEdhM UsageError $
+          T.pack $
+            "column slice range out of range: "
+              <> show start
+              <> ":"
+              <> show stop
+              <> " vs "
+              <> show cap
+      else do
+        let !cs' = unsafeSliceDeviceArray cs start (cap - start)
+            !len = max 0 $ min cl stop - start
+        !csvNew <- newTMVarEdh cs'
+        !clvNew <- newTVarEdh len
+        return (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
 
-  copy'column'slice (InMemDevCol csv clv) !ccap !start !stop !step !exit =
-    (exit =<<) $ do
-      DeviceArray _cap (fp :: ForeignPtr a) <- atomically $ readTMVar csv
-      !cl <- readTVarIO clv
-
-      if stop < start || start < 0 || stop > cl
-        then
-          throwHostIO UsageError $
-            T.pack $
-              "column slice range out of range: "
-                <> show start
-                <> ":"
-                <> show stop
-                <> " vs "
-                <> show cl
-        else do
-          let (q, r) = quotRem (stop - start) step
-              !len = if r == 0 then abs q else 1 + abs q
-          if ccap < len
-            then
-              throwHostIO UsageError $
-                T.pack $
-                  "capacity too small: " <> show ccap <> " vs "
-                    <> show start
-                    <> ":"
-                    <> show stop
-                    <> ":"
-                    <> show step
-            else do
-              !fp' <- withForeignPtr fp $ \ !p -> do
+  copy'column'slice (InMemDevCol csv clv) !ccap !start !stop !step = do
+    DeviceArray _cap (fp :: ForeignPtr a) <- readTMVarEdh csv
+    !cl <- readTVarEdh clv
+    if stop < start || start < 0 || stop > cl
+      then
+        throwEdhM UsageError $
+          T.pack $
+            "column slice range out of range: "
+              <> show start
+              <> ":"
+              <> show stop
+              <> " vs "
+              <> show cl
+      else do
+        let (q, r) = quotRem (stop - start) step
+            !len = if r == 0 then abs q else 1 + abs q
+        if ccap < len
+          then
+            throwEdhM UsageError $
+              T.pack $
+                "capacity too small: " <> show ccap <> " vs "
+                  <> show start
+                  <> ":"
+                  <> show stop
+                  <> ":"
+                  <> show step
+          else do
+            !fp' <- liftIO $
+              withForeignPtr fp $ \ !p -> do
                 !p' <- callocArray ccap
                 !fp' <- newForeignPtr finalizerFree p'
                 let fillRng :: Int -> Int -> IO ()
@@ -120,13 +118,12 @@ instance
                           fillRng (n + step) (i + 1)
                 fillRng start 0
                 return fp'
-              let !cs' = DeviceArray len fp'
-              atomically $ do
-                !csvNew <- newTMVar cs'
-                !clvNew <- newTVar len
-                return (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
+            let !cs' = DeviceArray len fp'
+            !csvNew <- newTMVarEdh cs'
+            !clvNew <- newTVarEdh len
+            return (StayComposed, someColumn $ InMemDevCol csvNew clvNew)
 
-  derive'new'column (InMemDevCol csv clv) !sizer (!deriver, !exit) = do
+  derive'new'column (InMemDevCol csv clv) !sizer !deriver = do
     (!cs, !cl) <- atomically $ do
       !cs <- readTMVar csv
       !cl <- readTVar clv
@@ -136,19 +133,20 @@ instance
     !cl' <- deriver (cs, cl) (cs', cap')
     !csv' <- newTMVarIO cs'
     !clv' <- newTVarIO cl'
-    exit $ InMemDevCol csv' clv'
+    return $ someColumn $ InMemDevCol csv' clv'
 
-  extract'column'bool (InMemDevCol csv clv) !idxCol !exit = do
-    DeviceArray _cap (fp :: ForeignPtr a) <- atomically $ readTMVar csv
-    !cl <- readTVarIO clv
-    view'column'data idxCol $ \(!idxa, !idxl) ->
-      if idxl /= cl
-        then
-          throwHostIO UsageError $
-            T.pack $
-              "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
-        else do
-          (!fp', !cl') <- withForeignPtr fp $ \ !p -> do
+  extract'column'bool (InMemDevCol csv clv) !idxCol = do
+    DeviceArray _cap (fp :: ForeignPtr a) <- readTMVarEdh csv
+    !cl <- readTVarEdh clv
+    (!idxa, !idxl) <- view'column'data idxCol
+    if idxl /= cl
+      then
+        throwEdhM UsageError $
+          T.pack $
+            "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
+      else do
+        (!fp', !cl') <- liftIO $
+          withForeignPtr fp $ \ !p -> do
             !p' <- callocArray cl
             !fp' <- newForeignPtr finalizerFree p'
             let extractAt :: Int -> Int -> IO (ForeignPtr a, Int)
@@ -162,18 +160,17 @@ instance
                           peekElemOff p i >>= pokeElemOff p' n
                           extractAt (i + 1) (n + 1)
             extractAt 0 0
-          let !cs' = DeviceArray cl fp'
-          (exit =<<) $
-            atomically $ do
-              !csvNew <- newTMVar cs'
-              !clvNew <- newTVar cl'
-              return $ someColumn $ InMemDevCol csvNew clvNew
+        let !cs' = DeviceArray cl fp'
+        !csvNew <- newTMVarEdh cs'
+        !clvNew <- newTVarEdh cl'
+        return $ someColumn $ InMemDevCol csvNew clvNew
 
-  extract'column'fancy (InMemDevCol csv _clv) !idxCol !exit = do
-    DeviceArray _cap (fp :: ForeignPtr a) <- atomically $ readTMVar csv
+  extract'column'fancy (InMemDevCol csv _clv) !idxCol = do
+    DeviceArray _cap (fp :: ForeignPtr a) <- readTMVarEdh csv
     -- !cl <- readTVarIO clv
-    view'column'data idxCol $ \(!idxa, !idxl) -> do
-      !fp' <- withForeignPtr fp $ \ !p -> do
+    (!idxa, !idxl) <- view'column'data idxCol
+    !fp' <- liftIO $
+      withForeignPtr fp $ \ !p -> do
         !p' <- callocArray idxl
         !fp' <- newForeignPtr finalizerFree p'
         let extractAt :: Int -> IO (ForeignPtr a)
@@ -185,12 +182,10 @@ instance
                   peekElemOff p idxi >>= pokeElemOff p' i
                   extractAt (i + 1)
         extractAt 0
-      let !cs' = DeviceArray idxl fp'
-      (exit =<<) $
-        atomically $ do
-          !csvNew <- newTMVar cs'
-          !clvNew <- newTVar idxl
-          return $ someColumn $ InMemDevCol csvNew clvNew
+    let !cs' = DeviceArray idxl fp'
+    !csvNew <- newTMVarEdh cs'
+    !clvNew <- newTVarEdh idxl
+    return $ someColumn $ InMemDevCol csvNew clvNew
 
 data InMemDirCol a = (Eq a, EdhXchg a, Typeable a) =>
   InMemDirCol
@@ -202,15 +197,14 @@ instance
   (Eq a, EdhXchg a, Typeable a) =>
   ManagedColumn InMemDirCol DirectArray a
   where
-  view'column'data (InMemDirCol csv clv) exit = (exit =<<) $
-    atomically $ do
-      !cs <- readTMVar csv
-      !cl <- readTVar clv
-      return (cs, cl)
+  view'column'data (InMemDirCol csv clv) = do
+    !cs <- readTMVarEdh csv
+    !cl <- readTVarEdh clv
+    return (cs, cl)
 
   read'column'length (InMemDirCol _csv clv) = readTVarIO clv
 
-  grow'column'capacity (InMemDirCol csv clv) !newCap exit = (exit =<<) $
+  grow'column'capacity (InMemDirCol csv clv) !newCap = liftIO $
     bracketOnError
       ( atomically $ do
           !cs <- takeTMVar csv
@@ -224,88 +218,83 @@ instance
           putTMVar csv cs'
           return (cs', cl)
 
-  mark'column'length (InMemDirCol csv clv) !newLen = atomically $ do
-    !cs <- readTMVar csv
+  mark'column'length (InMemDirCol csv clv) !newLen = do
+    !cs <- atomically $ readTMVar csv
     let !cap = directArrayCapacity cs
     if newLen < 0 || newLen > cap
       then
-        throwHostSTM UsageError $
+        throwHostIO UsageError $
           T.pack $
             "column length out of range: " <> show newLen <> " vs " <> show cap
+      else atomically $ writeTVar clv newLen
+
+  view'column'slice (InMemDirCol csv clv) !start !stop = do
+    !cs <- readTMVarEdh csv
+    let !cap = directArrayCapacity cs
+    !cl <- readTVarEdh clv
+    if stop < start || start < 0 || stop > cap
+      then
+        throwEdhM UsageError $
+          T.pack $
+            "column slice range out of range: "
+              <> show start
+              <> ":"
+              <> show stop
+              <> " vs "
+              <> show cap
       else do
-        writeTVar clv newLen
-        return ()
+        let !cs' = unsafeSliceDirectArray cs start (cap - start)
+            !len = max 0 $ min cl stop - start
+        !csvNew <- newTMVarEdh cs'
+        !clvNew <- newTVarEdh len
+        return (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
 
-  view'column'slice (InMemDirCol csv clv) !start !stop exit = (exit =<<) $
-    atomically $ do
-      !cs <- readTMVar csv
-      let !cap = directArrayCapacity cs
-      !cl <- readTVar clv
-      if stop < start || start < 0 || stop > cap
-        then
-          throwHostSTM UsageError $
-            T.pack $
-              "column slice range out of range: "
-                <> show start
-                <> ":"
-                <> show stop
-                <> " vs "
-                <> show cap
-        else do
-          let !cs' = unsafeSliceDirectArray cs start (cap - start)
-              !len = max 0 $ min cl stop - start
-          !csvNew <- newTMVar cs'
-          !clvNew <- newTVar len
-          return (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
+  copy'column'slice (InMemDirCol csv clv) !ccap !start !stop !step = do
+    DirectArray !iov <- readTMVarEdh csv
+    !cl <- readTVarEdh clv
 
-  copy'column'slice (InMemDirCol csv clv) !ccap !start !stop !step exit =
-    (exit =<<) $ do
-      DirectArray !iov <- atomically $ readTMVar csv
-      !cl <- readTVarIO clv
+    if stop < start || start < 0 || stop > cl
+      then
+        throwEdhM UsageError $
+          T.pack $
+            "column slice range out of range: "
+              <> show start
+              <> ":"
+              <> show stop
+              <> " vs "
+              <> show cl
+      else do
+        let (q, r) = quotRem (stop - start) step
+            !len = if r == 0 then abs q else 1 + abs q
+        if ccap < len
+          then
+            throwEdhM UsageError $
+              T.pack $
+                "capacity too small: " <> show ccap <> " vs "
+                  <> show start
+                  <> ":"
+                  <> show stop
+                  <> ":"
+                  <> show step
+          else do
+            !iov' <- liftIO $ do
+              !iov' <- MV.unsafeNew ccap
+              let fillRng :: Int -> Int -> IO ()
+                  fillRng !n !i =
+                    if i >= len
+                      then return ()
+                      else do
+                        MV.unsafeRead iov n >>= MV.unsafeWrite iov' i
+                        fillRng (n + step) (i + 1)
+              fillRng start 0
+              return iov'
+            let !cs' = DirectArray iov'
+            !csvNew <- newTMVarEdh cs'
+            !clvNew <- newTVarEdh len
+            return
+              (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
 
-      if stop < start || start < 0 || stop > cl
-        then
-          throwHostIO UsageError $
-            T.pack $
-              "column slice range out of range: "
-                <> show start
-                <> ":"
-                <> show stop
-                <> " vs "
-                <> show cl
-        else do
-          let (q, r) = quotRem (stop - start) step
-              !len = if r == 0 then abs q else 1 + abs q
-          if ccap < len
-            then
-              throwHostIO UsageError $
-                T.pack $
-                  "capacity too small: " <> show ccap <> " vs "
-                    <> show start
-                    <> ":"
-                    <> show stop
-                    <> ":"
-                    <> show step
-            else do
-              !iov' <- do
-                !iov' <- MV.unsafeNew ccap
-                let fillRng :: Int -> Int -> IO ()
-                    fillRng !n !i =
-                      if i >= len
-                        then return ()
-                        else do
-                          MV.unsafeRead iov n >>= MV.unsafeWrite iov' i
-                          fillRng (n + step) (i + 1)
-                fillRng start 0
-                return iov'
-              let !cs' = DirectArray iov'
-              atomically $ do
-                !csvNew <- newTMVar cs'
-                !clvNew <- newTVar len
-                return
-                  (StayComposed, someColumn $ InMemDirCol csvNew clvNew)
-
-  derive'new'column (InMemDirCol csv clv) !sizer (!deriver, !exit) = do
+  derive'new'column (InMemDirCol csv clv) !sizer !deriver = do
     (!cs, !cl) <- atomically $ do
       !cs <- readTMVar csv
       !cl <- readTVar clv
@@ -315,77 +304,72 @@ instance
     !cl' <- deriver (cs, cl) (cs', cap')
     !csv' <- newTMVarIO cs'
     !clv' <- newTVarIO cl'
-    exit $ InMemDirCol csv' clv'
+    return $ someColumn $ InMemDirCol csv' clv'
 
-  extract'column'bool (InMemDirCol csv clv) !idxCol exit = do
-    DirectArray !iov <- atomically $ readTMVar csv
-    !cl <- readTVarIO clv
-    view'column'data idxCol $ \(!idxa, !idxl) ->
-      if idxl /= cl
-        then
-          throwHostIO UsageError $
-            T.pack $
-              "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
-        else do
-          (!iov', !cl') <- do
-            !iov' <- MV.new cl
-            let extractAt :: Int -> Int -> IO (MV.IOVector a, Int)
-                extractAt !i !n =
-                  if i >= cl
-                    then return (iov', n)
-                    else do
-                      array'reader idxa i >>= \case
-                        YesNo 0 -> extractAt (i + 1) n
-                        _ -> do
-                          MV.unsafeRead iov i >>= MV.unsafeWrite iov' n
-                          extractAt (i + 1) (n + 1)
-            extractAt 0 0
-          let !cs' = DirectArray iov'
-          (exit =<<) $
-            atomically $ do
-              !csvNew <- newTMVar cs'
-              !clvNew <- newTVar cl'
-              return $ someColumn $ InMemDirCol csvNew clvNew
+  extract'column'bool (InMemDirCol csv clv) !idxCol = do
+    DirectArray !iov <- readTMVarEdh csv
+    !cl <- readTVarEdh clv
+    (!idxa, !idxl) <- view'column'data idxCol
+    if idxl /= cl
+      then
+        throwEdhM UsageError $
+          T.pack $
+            "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
+      else do
+        (!iov', !cl') <- liftIO $ do
+          !iov' <- MV.new cl
+          let extractAt :: Int -> Int -> IO (MV.IOVector a, Int)
+              extractAt !i !n =
+                if i >= cl
+                  then return (iov', n)
+                  else do
+                    array'reader idxa i >>= \case
+                      YesNo 0 -> extractAt (i + 1) n
+                      _ -> do
+                        MV.unsafeRead iov i >>= MV.unsafeWrite iov' n
+                        extractAt (i + 1) (n + 1)
+          extractAt 0 0
+        let !cs' = DirectArray iov'
+        !csvNew <- newTMVarEdh cs'
+        !clvNew <- newTVarEdh cl'
+        return $ someColumn $ InMemDirCol csvNew clvNew
 
-  extract'column'fancy (InMemDirCol csv _clv) !idxCol exit = do
-    DirectArray !iov <- atomically $ readTMVar csv
+  extract'column'fancy (InMemDirCol csv _clv) !idxCol = do
+    DirectArray !iov <- readTMVarEdh csv
     -- !cl <- readTVar clv
-    view'column'data idxCol $ \(!idxa, !idxl) -> do
-      !iov' <- do
-        !iov' <- MV.new idxl
-        let extractAt :: Int -> IO (MV.IOVector a)
-            extractAt !i =
-              if i >= idxl
-                then return iov'
-                else do
-                  !idxi <- array'reader idxa i
-                  MV.unsafeRead iov idxi >>= MV.unsafeWrite iov' i
-                  extractAt (i + 1)
-        extractAt 0
-      let !cs' = DirectArray iov'
-      (exit =<<) $
-        atomically $ do
-          !csvNew <- newTMVar cs'
-          !clvNew <- newTVar idxl
-          return $ someColumn $ InMemDirCol csvNew clvNew
+    (!idxa, !idxl) <- view'column'data idxCol
+    !iov' <- liftIO $ do
+      !iov' <- MV.new idxl
+      let extractAt :: Int -> IO (MV.IOVector a)
+          extractAt !i =
+            if i >= idxl
+              then return iov'
+              else do
+                !idxi <- array'reader idxa i
+                MV.unsafeRead iov idxi >>= MV.unsafeWrite iov' i
+                extractAt (i + 1)
+      extractAt 0
+    let !cs' = DirectArray iov'
+    !csvNew <- newTMVarEdh cs'
+    !clvNew <- newTVarEdh idxl
+    return $ someColumn $ InMemDirCol csvNew clvNew
 
 createInMemColumn ::
   forall a.
   DataType a ->
   ArrayCapacity ->
   ArrayLength ->
-  EdhTxExit SomeColumn ->
-  EdhTx
-createInMemColumn !gdt !cap !len !exit !ets = runEdhTx ets $ case gdt of
-  DeviceDt dt -> with'device'data'type dt $ \(_ :: TypeRep a) ->
-    edhContIO $
-      newDeviceArray @a cap >>= \(_fp, !cs) -> atomically $ do
-        !csv <- newTMVar cs
-        !clv <- newTVar len
-        exitEdh ets exit $ someColumn $ InMemDevCol csv clv
-  DirectDt dt -> with'direct'data'default dt $ \(defv :: a) ->
-    edhContIO $
-      newDirectArray' defv cap >>= \(_iov, !cs) -> atomically $ do
-        !csv <- newTMVar cs
-        !clv <- newTVar len
-        exitEdh ets exit $ someColumn $ InMemDirCol csv clv
+  Edh SomeColumn
+createInMemColumn !gdt !cap !len = case gdt of
+  DeviceDt dt -> case device'data'type dt of
+    (_ :: TypeRep a) -> do
+      (_fp, !cs) <- liftIO $ newDeviceArray @a cap
+      !csv <- newTMVarEdh cs
+      !clv <- newTVarEdh len
+      return $ someColumn $ InMemDevCol csv clv
+  DirectDt dt -> do
+    let defv = direct'data'default dt
+    (_iov, !cs) <- liftIO $ newDirectArray' defv cap
+    !csv <- newTMVarEdh cs
+    !clv <- newTVarEdh len
+    return $ someColumn $ InMemDirCol csv clv
