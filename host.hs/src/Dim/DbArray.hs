@@ -2,6 +2,7 @@ module Dim.DbArray where
 
 -- import           Debug.Trace
 
+import Control.Applicative
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
@@ -52,20 +53,20 @@ dbArraySize :: ArrayShape -> DimSize
 dbArraySize (ArrayShape !shape) = product (snd <$> shape)
 
 flatIndexInShape ::
-  EdhThreadState -> [EdhValue] -> ArrayShape -> (DimSize -> STM ()) -> STM ()
-flatIndexInShape !ets !idxs (ArrayShape !shape) !exit =
+  [EdhValue] -> ArrayShape -> Edh DimSize
+flatIndexInShape !idxs (ArrayShape !shape) =
   if length idxs /= NE.length shape
     then
-      throwEdh ets UsageError $
+      throwEdhM UsageError $
         "dim of index mismatch shape: "
           <> T.pack (show $ length idxs)
           <> " vs "
           <> T.pack (show $ NE.length shape)
-    else flatIdx (reverse idxs) (reverse $ NE.toList shape) exit
+    else flatIdx (reverse idxs) (reverse $ NE.toList shape)
   where
-    flatIdx :: [EdhValue] -> [(DimName, DimSize)] -> (DimSize -> STM ()) -> STM ()
-    flatIdx [] [] !exit' = exit' 0
-    flatIdx (EdhDecimal d : restIdxs) ((_, ds) : restDims) !exit' =
+    flatIdx :: [EdhValue] -> [(DimName, DimSize)] -> Edh DimSize
+    flatIdx [] [] = return 0
+    flatIdx (EdhDecimal d : restIdxs) ((_, ds) : restDims) =
       case D.decimalToInteger d of
         Just d' ->
           let s' = case fromIntegral d' of
@@ -73,37 +74,41 @@ flatIndexInShape !ets !idxs (ArrayShape !shape) !exit =
                 s -> s
            in if s' < 0 || s' >= ds
                 then
-                  throwEdh ets UsageError $
+                  throwEdhM UsageError $
                     "index out of bounds: "
                       <> T.pack (show d')
                       <> " vs "
                       <> T.pack (show ds)
-                else flatIdx restIdxs restDims $ \i -> exit' $ ds * i + s'
+                else flatIdx restIdxs restDims >>= \i -> return $ ds * i + s'
         Nothing ->
-          throwEdh ets UsageError $ "index not an integer: " <> T.pack (show d)
-    flatIdx _ _ _ = throwEdh ets UsageError "invalid index"
+          throwEdhM UsageError $ "index not an integer: " <> T.pack (show d)
+    flatIdx _ _ = throwEdhM UsageError "invalid index"
 
-parseArrayShape ::
-  EdhThreadState -> EdhValue -> (ArrayShape -> STM ()) -> STM ()
-parseArrayShape !ets !val !exit = case val of
+parseArrayShape :: EdhValue -> Edh ArrayShape
+parseArrayShape !val = case val of
   EdhArgsPack (ArgsPack [!dim1] _) ->
-    parseDim dim1 $ \ !pd -> exit $ ArrayShape $ pd :| []
-  EdhArgsPack (ArgsPack (dim1 : dims) _) -> parseDim dim1 $ \ !pd ->
-    seqcontSTM (parseDim <$> dims) $ \ !pds -> exit $ ArrayShape $ pd :| pds
-  !dim1 -> parseDim dim1 $ \ !pd -> exit $ ArrayShape $ pd :| []
+    parseDim dim1 >>= \ !pd -> return $ ArrayShape $ pd :| []
+  EdhArgsPack (ArgsPack (dim1 : dims) _) -> do
+    !pd <- parseDim dim1
+    !pds <- sequence (parseDim <$> dims)
+    return $ ArrayShape $ pd :| pds
+  !dim1 -> parseDim dim1 >>= \ !pd -> return $ ArrayShape $ pd :| []
   where
-    parseDim :: EdhValue -> ((DimName, DimSize) -> STM ()) -> STM ()
-    parseDim v@(EdhDecimal d) !exit' = case D.decimalToInteger d of
-      Just size | size > 0 -> exit' ("", fromInteger size)
-      _ -> edhValueRepr ets v $
-        \r -> throwEdh ets UsageError $ "invalid dimension size: " <> r
-    parseDim v@(EdhNamedValue name (EdhDecimal d)) !exit' =
+    parseDim :: EdhValue -> Edh (DimName, DimSize)
+    parseDim v@(EdhDecimal d) = case D.decimalToInteger d of
+      Just size | size > 0 -> return ("", fromInteger size)
+      _ ->
+        edhValueReprM v
+          >>= \r -> throwEdhM UsageError $ "invalid dimension size: " <> r
+    parseDim v@(EdhNamedValue name (EdhDecimal d)) =
       case D.decimalToInteger d of
-        Just size | size > 0 -> exit' (name, fromInteger size)
-        _ -> edhValueRepr ets v $
-          \r -> throwEdh ets UsageError $ "invalid dimension size: " <> r
-    parseDim v _ = edhValueRepr ets v $
-      \r -> throwEdh ets UsageError $ "invalid dimension spec: " <> r
+        Just size | size > 0 -> return (name, fromInteger size)
+        _ ->
+          edhValueReprM v
+            >>= \r -> throwEdhM UsageError $ "invalid dimension size: " <> r
+    parseDim v =
+      edhValueReprM v
+        >>= \r -> throwEdhM UsageError $ "invalid dimension spec: " <> r
 
 edhArrayShape :: ArrayShape -> EdhValue
 edhArrayShape (ArrayShape !shape) =
@@ -328,110 +333,84 @@ dbArrayShape !dba =
     Right (!shape, _, _) -> return shape
 
 asDbArrayOf ::
-  forall a r.
-  (Typeable a) =>
+  forall a m r.
+  (MonadPlus m, Typeable a) =>
   Object ->
-  r ->
-  (DbArray a -> r) ->
-  r
-asDbArrayOf !obj !naExit !exit = case dynamicHostData obj of
-  Nothing -> naExit
+  (DbArray a -> m r) ->
+  m r
+asDbArrayOf !obj !exit = case dynamicHostData obj of
+  Nothing -> mzero
   Just (Dynamic trDBA dba) ->
     case trDBA `eqTypeRep` typeRep @(DbArray a) of
-      Nothing -> naExit
+      Nothing -> mzero
       Just HRefl -> exit dba
 
 asDbArrayOf' ::
-  forall a r.
-  (Typeable a) =>
+  forall a m r.
+  (MonadPlus m, Typeable a) =>
   EdhValue ->
-  r ->
-  (DbArray a -> r) ->
-  r
-asDbArrayOf' !val !naExit !exit = case edhUltimate val of
-  EdhObject !obj -> asDbArrayOf obj naExit exit
-  _ -> naExit
+  (DbArray a -> m r) ->
+  m r
+asDbArrayOf' !val !exit = case edhUltimate val of
+  EdhObject !obj -> asDbArrayOf obj exit
+  _ -> mzero
 
-withDbArrayOf ::
-  forall a.
-  Typeable a =>
-  Object ->
-  EdhTx ->
-  (Object -> DbArray a -> EdhTx) ->
-  EdhTx
-withDbArrayOf !obj naExit !dbaExit !ets = do
-  supers <- readTVar $ edh'obj'supers obj
+withDbArrayOf :: forall a. Typeable a => Object -> Edh (Object, DbArray a)
+withDbArrayOf !obj = do
+  supers <- readTVarEdh $ edh'obj'supers obj
   withComposition $ obj : supers
   where
-    withComposition :: [Object] -> STM ()
-    withComposition [] = runEdhTx ets naExit
+    withComposition :: [Object] -> Edh (Object, DbArray a)
+    withComposition [] = naM ""
     withComposition (o : rest) =
-      asDbArrayOf @a o (withComposition rest) (runEdhTx ets . dbaExit o)
+      asDbArrayOf @a o (return . (o,)) <|> withComposition rest
 
-withDbArrayOf' ::
-  forall a.
-  Typeable a =>
-  EdhValue ->
-  EdhTx ->
-  (Object -> DbArray a -> EdhTx) ->
-  EdhTx
-withDbArrayOf' !val naExit !dbaExit = case edhUltimate val of
+withDbArrayOf' :: forall a. Typeable a => EdhValue -> Edh (Object, DbArray a)
+withDbArrayOf' !val = case edhUltimate val of
   EdhObject !obj -> do
-    withDbArrayOf obj naExit dbaExit
-  _ -> naExit
+    withDbArrayOf obj
+  _ -> naM ""
 
-withDbArraySelfOf ::
-  forall a.
-  Typeable a =>
-  (Object -> DbArray a -> EdhTx) ->
-  EdhTx
-withDbArraySelfOf !dbaExit !ets =
-  runEdhTx ets $ withDbArrayOf @a that naExit dbaExit
-  where
-    that = edh'scope'that $ contextScope $ edh'context ets
-    naExit =
-      throwEdhTx UsageError $
-        "not an expected self DbArray of type " <> T.pack (show $ typeRep @a)
+withDbArraySelfOf :: forall a. Typeable a => Edh (Object, DbArray a)
+withDbArraySelfOf = do
+  that <- edh'scope'that . contextScope . edh'context <$> edhThreadState
+  (withDbArrayOf @a that <|>) $
+    throwEdhM UsageError $
+      "not an expected self DbArray of type " <> T.pack (show $ typeRep @a)
 
 withDbArraySelf ::
   ( forall a.
     (Eq a, Storable a, EdhXchg a, Typeable a) =>
     Object ->
     DbArray a ->
-    EdhTx
+    Edh ()
   ) ->
-  EdhTx
-withDbArraySelf !dbaExit !ets = do
-  supers <- readTVar $ edh'obj'supers that
+  Edh ()
+withDbArraySelf !dbaExit = do
+  that <- edh'scope'that . contextScope . edh'context <$> edhThreadState
+  supers <- readTVarEdh $ edh'obj'supers that
   withComposition $ that : supers
   where
-    that = edh'scope'that $ contextScope $ edh'context ets
-    naExit = throwEdh ets UsageError "not an expected self DbArray"
-
-    withComposition :: [Object] -> STM ()
-    withComposition [] = naExit
+    withComposition :: [Object] -> Edh ()
+    withComposition [] = naM "not an expected self DbArray"
     withComposition (o : rest) = case dynamicHostData o of
       Nothing -> withComposition rest
       Just (Dynamic trDBA dba) -> case trDBA of
         App trDBAC _trA -> case trDBAC `eqTypeRep` typeRep @DbArray of
           Nothing -> withComposition rest
           Just HRefl -> case dba of -- need this case to witness its instances
-            dba'@DbArray {} -> runEdhTx ets $ dbaExit o dba'
+            dba'@DbArray {} -> dbaExit o dba'
         _ -> withComposition rest
 
-getDbArrayDtype :: EdhThreadState -> Object -> (Object -> STM ()) -> STM ()
-getDbArrayDtype ets !objAry = getDbArrayDtype' objAry $
-  edhSimpleDesc ets (EdhObject objAry) $ \ !badDesc ->
-    throwEdh ets UsageError $ "not a DbArray with dtype: " <> badDesc
-
-getDbArrayDtype' :: Object -> STM () -> (Object -> STM ()) -> STM ()
-getDbArrayDtype' !objAry naExit !exit =
-  readTVar (edh'obj'supers objAry) >>= findSuperDto
+getDbArrayDtype :: Object -> Edh Object
+getDbArrayDtype !objAry = readTVarEdh (edh'obj'supers objAry) >>= findSuperDto
   where
-    findSuperDto :: [Object] -> STM ()
-    findSuperDto [] = naExit
+    findSuperDto :: [Object] -> Edh Object
+    findSuperDto [] = do
+      badDesc <- edhSimpleDescM (EdhObject objAry)
+      naM $ "not a DbArray with dtype: " <> badDesc
     -- this is right and avoids unnecessary checks in vastly usual cases
-    findSuperDto [dto] = exit dto
+    findSuperDto [dto] = return dto
     -- safe guard in case a DbArray instance has been further extended
     findSuperDto (maybeDto : rest) =
-      withDataType maybeDto (findSuperDto rest) (const $ exit maybeDto)
+      withDataType maybeDto (const $ return maybeDto) <|> findSuperDto rest
