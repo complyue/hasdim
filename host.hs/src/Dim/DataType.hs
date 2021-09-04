@@ -33,17 +33,17 @@ data DeviceDataType a = (Eq a, Storable a, EdhXchg a, Typeable a) =>
     with'num'device'data'type ::
       forall m r.
       (MonadPlus m) =>
-      (forall a'. (a' ~ a, Num a') => TypeRep a -> m r) ->
+      (forall a'. (a' ~ a, Num a') => m r) ->
       m r,
     with'float'device'data'type ::
       forall m r.
       (MonadPlus m) =>
-      (forall a'. (a' ~ a, RealFloat a') => TypeRep a -> m r) ->
+      (forall a'. (a' ~ a, RealFloat a') => m r) ->
       m r,
     with'random'device'data'type ::
       forall m r.
       (MonadPlus m) =>
-      (forall a'. (a' ~ a, Random a') => TypeRep a -> m r) ->
+      (forall a'. (a' ~ a, Random a') => m r) ->
       m r
   }
 
@@ -58,12 +58,12 @@ data DirectDataType a = (Eq a, EdhXchg a, Typeable a) =>
     with'num'direct'data'type ::
       forall m r.
       (MonadPlus m) =>
-      (forall a'. (a' ~ a, Num a') => TypeRep a -> m r) ->
+      (forall a'. (a' ~ a, Num a') => m r) ->
       m r,
     with'random'direct'data'type ::
       forall m r.
       (MonadPlus m) =>
-      (forall a'. (a' ~ a, Random a') => TypeRep a -> m r) ->
+      (forall a'. (a' ~ a, Random a') => m r) ->
       m r,
     with'num'seed'direct'data'type ::
       forall m r.
@@ -126,9 +126,9 @@ mkFloatDataType !dti =
     DeviceDataType @a
       dti
       typeRep
-      ($ typeRep)
-      ($ typeRep)
-      ($ typeRep)
+      id
+      id
+      id
 
 mkIntDataType ::
   forall a.
@@ -140,9 +140,9 @@ mkIntDataType !dti =
     DeviceDataType @a
       dti
       typeRep
-      ($ typeRep)
+      id
       (\_ -> mzero)
-      ($ typeRep)
+      id
 
 mkBitsDataType ::
   forall a.
@@ -188,8 +188,8 @@ mkRealFracDataType !dti !defv !maybeFromDec =
     DirectDataType @a
       dti
       defv
-      ($ typeRep)
-      ($ typeRep)
+      id
+      id
       $ case maybeFromDec of
         Nothing -> \_ -> mzero
         Just !fromDec -> ($ fromDec)

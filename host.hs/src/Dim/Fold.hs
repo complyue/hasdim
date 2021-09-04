@@ -14,7 +14,6 @@ import Dim.DataType
 import Dim.XCHG
 import Foreign as F
 import Language.Edh.MHI
-import Type.Reflection
 import Prelude
 
 -- * Support of Folding
@@ -232,10 +231,8 @@ data FoldingAdd = FoldingAdd
 
 instance Folding FoldingAdd where
   self'fold _ (gdt :: DataType a) act = case gdt of
-    DeviceDt dt -> with'num'device'data'type dt $ \(_ :: TypeRep a) ->
-      act (+)
-    DirectDt dt -> with'num'direct'data'type dt $ \(_ :: TypeRep a) ->
-      act (+)
+    DeviceDt dt -> with'num'device'data'type dt $ act (+)
+    DirectDt dt -> with'num'direct'data'type dt $ act (+)
 
   left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) act =
     case gdt'a `eqDataType` gdt'b of
@@ -246,10 +243,8 @@ data FoldingMul = FoldingMul
 
 instance Folding FoldingMul where
   self'fold _ (gdt :: DataType a) act = case gdt of
-    DeviceDt dt -> with'num'device'data'type dt $ \(_ :: TypeRep a) ->
-      act (*)
-    DirectDt dt -> with'num'direct'data'type dt $ \(_ :: TypeRep a) ->
-      act (*)
+    DeviceDt dt -> with'num'device'data'type dt $ act (*)
+    DirectDt dt -> with'num'direct'data'type dt $ act (*)
 
   left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) act =
     case gdt'a `eqDataType` gdt'b of
@@ -261,9 +256,8 @@ data FoldingAddV = FoldingAddV
 instance Folding FoldingAddV where
   self'fold _ (gdt :: DataType a) act = case gdt of
     DeviceDt dt -> do
-      let usualNum = with'num'device'data'type dt $ \(_ :: TypeRep a) ->
-            act (+)
-          floatNum = with'float'device'data'type dt $ \(_ :: TypeRep a) ->
+      let usualNum = with'num'device'data'type dt $ act (+)
+          floatNum = with'float'device'data'type dt $
             act $ \lhs rhs ->
               if
                   | isNaN lhs -> rhs
@@ -277,8 +271,7 @@ instance Folding FoldingAddV where
               | D.decimalIsNaN lhs -> rhs
               | D.decimalIsNaN rhs -> lhs
               | otherwise -> lhs + rhs
-      Nothing -> with'num'direct'data'type dt $ \(_ :: TypeRep a) ->
-        act (+)
+      Nothing -> with'num'direct'data'type dt $ act (+)
 
   left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) act =
     case gdt'a `eqDataType` gdt'b of
@@ -290,9 +283,8 @@ data FoldingMulV = FoldingMulV
 instance Folding FoldingMulV where
   self'fold _ (gdt :: DataType a) act = case gdt of
     DeviceDt dt -> do
-      let usualNum = with'num'device'data'type dt $ \(_ :: TypeRep a) ->
-            act (*)
-          floatNum = with'float'device'data'type dt $ \(_ :: TypeRep a) ->
+      let usualNum = with'num'device'data'type dt $ act (*)
+          floatNum = with'float'device'data'type dt $
             act $ \lhs rhs ->
               if
                   | isNaN lhs -> rhs
@@ -306,8 +298,7 @@ instance Folding FoldingMulV where
               | D.decimalIsNaN lhs -> rhs
               | D.decimalIsNaN rhs -> lhs
               | otherwise -> lhs * rhs
-      Nothing -> with'num'direct'data'type dt $ \(_ :: TypeRep a) ->
-        act (*)
+      Nothing -> with'num'direct'data'type dt $ act (*)
 
   left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) act =
     case gdt'a `eqDataType` gdt'b of
