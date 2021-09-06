@@ -15,7 +15,6 @@ where
 
 -- import           Debug.Trace
 
-import Control.Concurrent.STM
 import Control.Monad.Reader
 import Data.Lossless.Decimal as D
 import Data.Maybe
@@ -34,18 +33,17 @@ import Foreign hiding (void)
 import Language.Edh.MHI
 import Prelude
 
-builtinDataTypes :: Scope -> STM [(DataTypeIdent, Object)]
-builtinDataTypes !moduScope = do
-  yesno <- mkYesNoSuperDt "yesno" moduScope
-  box <- mkBoxSuperDt "box" edhNA moduScope
-  decimal <-
-    mkRealFracSuperDt @Decimal yesno "decimal" D.nan (Just id) moduScope
-  float64 <- mkFloatSuperDt @Double yesno "float64" moduScope
-  float32 <- mkFloatSuperDt @Float yesno "float32" moduScope
-  int64 <- mkIntSuperDt @Int64 yesno "int64" moduScope
-  int32 <- mkIntSuperDt @Int32 yesno "int32" moduScope
-  int8 <- mkIntSuperDt @Int8 yesno "int8" moduScope
-  intp <- mkIntSuperDt @Int yesno "intp" moduScope
+builtinDataTypes :: Edh [(DataTypeIdent, Object)]
+builtinDataTypes = do
+  yesno <- mkYesNoSuperDt "yesno"
+  box <- mkBoxSuperDt "box" edhNA
+  decimal <- mkRealFracSuperDt @Decimal yesno "decimal" D.nan (Just id)
+  float64 <- mkFloatSuperDt @Double yesno "float64"
+  float32 <- mkFloatSuperDt @Float yesno "float32"
+  int64 <- mkIntSuperDt @Int64 yesno "int64"
+  int32 <- mkIntSuperDt @Int32 yesno "int32"
+  int8 <- mkIntSuperDt @Int8 yesno "int8"
+  intp <- mkIntSuperDt @Int yesno "intp"
 
   return
     [ ("float64", float64),
@@ -68,26 +66,24 @@ builtinDataTypes !moduScope = do
 
 installDimBatteries :: EdhWorld -> IO ()
 installDimBatteries !world = do
-  !moduDtypes <- installEdhModule world "dim/dtypes" $ \ !ets !exit -> do
-    let !moduScope = contextScope $ edh'context ets
+  !moduDtypes <- installEdhModuleM world "dim/dtypes" $ do
+    !moduScope <- contextScope . edh'context <$> edhThreadState
 
-    !dtAlias <- builtinDataTypes moduScope
+    !dtAlias <- builtinDataTypes
 
     let !moduArts = [(AttrByName k, EdhObject dto) | (k, dto) <- dtAlias]
 
-    iopdUpdate moduArts $ edh'scope'entity moduScope
-    prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
-      iopdUpdate moduArts esExps
-
-    exit
+    iopdUpdateEdh moduArts $ edh'scope'entity moduScope
+    !esExps <- prepareExpStoreM (edh'scope'this moduScope)
+    iopdUpdateEdh moduArts esExps
 
   void $
-    installEdhModule world "dim/primitive/ops" $ \ !ets !exit -> do
-      let !moduScope = contextScope $ edh'context ets
+    installEdhModuleM world "dim/primitive/ops" $ do
+      !moduScope <- contextScope . edh'context <$> edhThreadState
 
       !moduArts0 <-
         sequence $
-          [ (AttrByName nm,) <$> def nm moduScope
+          [ (AttrByName nm,) <$> def nm
             | (nm, def) <-
                 [ ("fold", defineComputMethod foldComput),
                   ("foldl", defineComputMethod foldlComput),
@@ -100,85 +96,82 @@ installDimBatteries !world = do
       !moduArts1 <-
         sequence
           [ (AttrByName "add",) . EdhObject
-              <$> edhWrapHostValue' ets "add" (FoldOp FoldingAdd),
+              <$> wrapM' "add" (FoldOp FoldingAdd),
             (AttrByName "add'valid",) . EdhObject
-              <$> edhWrapHostValue' ets "add'valid" (FoldOp FoldingAddV),
+              <$> wrapM' "add'valid" (FoldOp FoldingAddV),
             (AttrByName "multiply",) . EdhObject
-              <$> edhWrapHostValue' ets "multiply" (FoldOp FoldingMul),
+              <$> wrapM' "multiply" (FoldOp FoldingMul),
             (AttrByName "multiply'valid",) . EdhObject
-              <$> edhWrapHostValue' ets "multiply'valid" (FoldOp FoldingMulV)
+              <$> wrapM' "multiply'valid" (FoldOp FoldingMulV)
           ]
 
       let !moduArts = moduArts0 ++ moduArts1
 
-      iopdUpdate moduArts $ edh'scope'entity moduScope
-      prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
-        iopdUpdate moduArts esExps
-
-      exit
+      iopdUpdateEdh moduArts $ edh'scope'entity moduScope
+      prepareExpStoreM (edh'scope'this moduScope) >>= \ !esExps ->
+        iopdUpdateEdh moduArts esExps
 
   void $
-    installEdhModule world "dim/RT" $ \ !ets !exit -> do
+    installEdhModuleM world "dim/RT" $ do
+      !moduScope <- contextScope . edh'context <$> edhThreadState
       let !dtypesModuStore = case edh'obj'store moduDtypes of
             HashStore !hs -> hs
             _ -> error "bug: module not bearing hash store"
 
       {- HLINT ignore "Redundant <$>" -}
       !defaultDataType <-
-        fromJust <$> iopdLookup (AttrByName "float64") dtypesModuStore >>= \case
+        fromJust <$> iopdLookupEdh (AttrByName "float64") dtypesModuStore >>= \case
           EdhObject !dto -> return dto
           _ -> error "bug: dtype not object"
       !dtIntp <-
-        fromJust <$> iopdLookup (AttrByName "intp") dtypesModuStore >>= \case
+        fromJust <$> iopdLookupEdh (AttrByName "intp") dtypesModuStore >>= \case
           EdhObject !dto -> return dto
           _ -> error "bug: dtype not object"
       !dtBox <-
-        fromJust <$> iopdLookup (AttrByName "box") dtypesModuStore >>= \case
+        fromJust <$> iopdLookupEdh (AttrByName "box") dtypesModuStore >>= \case
           EdhObject !dto -> return dto
           _ -> error "bug: dtype not object"
       let !defaultRangeDataType = dtIntp
 
-      let !moduScope = contextScope $ edh'context ets
-
-      !clsColumn <- createColumnClass defaultDataType moduScope
-      !tableClass <- createTableClass dtBox clsColumn moduScope
-      !dbArrayClass <- createDbArrayClass clsColumn defaultDataType moduScope
+      !clsColumn <- createColumnClass defaultDataType
+      !tableClass <- createTableClass dtBox clsColumn
+      !dbArrayClass <- createDbArrayClass clsColumn defaultDataType
 
       !moduArts0 <-
         sequence $
-          [ (AttrByName nm,) <$> mkHostProc moduScope mc nm hp
+          [ (AttrByName nm,) <$> mkEdhProc mc nm hp
             | (mc, nm, hp) <-
                 [ ( EdhMethod,
                     "arange",
-                    wrapHostProc $ arangeProc defaultRangeDataType clsColumn
+                    wrapEdhProc $ arangeProc defaultRangeDataType clsColumn
                   ),
                   ( EdhMethod,
                     "random",
-                    wrapHostProc $ randomProc defaultDataType clsColumn
+                    wrapEdhProc $ randomProc defaultDataType clsColumn
                   ),
                   ( EdhMethod,
                     "where",
-                    wrapHostProc $ whereProc clsColumn dtIntp
+                    wrapEdhProc $ whereProc clsColumn dtIntp
                   ),
                   ( EdhMethod,
                     "pi",
-                    wrapHostProc $ piProc defaultDataType clsColumn
+                    wrapEdhProc $ piProc defaultDataType clsColumn
                   ),
-                  (EdhMethod, "exp", wrapHostProc $ floatOpProc exp),
-                  (EdhMethod, "log", wrapHostProc $ floatOpProc log),
-                  (EdhMethod, "sqrt", wrapHostProc $ floatOpProc sqrt),
-                  (EdhMethod, "sin", wrapHostProc $ floatOpProc sin),
-                  (EdhMethod, "cos", wrapHostProc $ floatOpProc cos),
-                  (EdhMethod, "tan", wrapHostProc $ floatOpProc tan),
-                  (EdhMethod, "asin", wrapHostProc $ floatOpProc asin),
-                  (EdhMethod, "acos", wrapHostProc $ floatOpProc acos),
-                  (EdhMethod, "atan", wrapHostProc $ floatOpProc atan),
-                  (EdhMethod, "sinh", wrapHostProc $ floatOpProc sinh),
-                  (EdhMethod, "cosh", wrapHostProc $ floatOpProc cosh),
-                  (EdhMethod, "tanh", wrapHostProc $ floatOpProc tanh),
-                  (EdhMethod, "asinh", wrapHostProc $ floatOpProc asinh),
-                  (EdhMethod, "acosh", wrapHostProc $ floatOpProc acosh),
-                  (EdhMethod, "atanh", wrapHostProc $ floatOpProc atanh)
+                  (EdhMethod, "exp", wrapEdhProc $ floatOpProc exp),
+                  (EdhMethod, "log", wrapEdhProc $ floatOpProc log),
+                  (EdhMethod, "sqrt", wrapEdhProc $ floatOpProc sqrt),
+                  (EdhMethod, "sin", wrapEdhProc $ floatOpProc sin),
+                  (EdhMethod, "cos", wrapEdhProc $ floatOpProc cos),
+                  (EdhMethod, "tan", wrapEdhProc $ floatOpProc tan),
+                  (EdhMethod, "asin", wrapEdhProc $ floatOpProc asin),
+                  (EdhMethod, "acos", wrapEdhProc $ floatOpProc acos),
+                  (EdhMethod, "atan", wrapEdhProc $ floatOpProc atan),
+                  (EdhMethod, "sinh", wrapEdhProc $ floatOpProc sinh),
+                  (EdhMethod, "cosh", wrapEdhProc $ floatOpProc cosh),
+                  (EdhMethod, "tanh", wrapEdhProc $ floatOpProc tanh),
+                  (EdhMethod, "asinh", wrapEdhProc $ floatOpProc asinh),
+                  (EdhMethod, "acosh", wrapEdhProc $ floatOpProc acosh),
+                  (EdhMethod, "atanh", wrapEdhProc $ floatOpProc atanh)
                 ]
           ]
 
@@ -188,20 +181,22 @@ installDimBatteries !world = do
                    (AttrByName "Table", EdhObject tableClass),
                    (AttrByName "DbArray", EdhObject dbArrayClass)
                  ]
-      iopdUpdate moduArts $ edh'scope'entity moduScope
-      prepareExpStore ets (edh'scope'this moduScope) $ \ !esExps ->
-        iopdUpdate moduArts esExps
+      iopdUpdateEdh moduArts $ edh'scope'entity moduScope
+      prepareExpStoreM (edh'scope'this moduScope) >>= \ !esExps ->
+        iopdUpdateEdh moduArts esExps
 
-      exit
+withColumnClass :: Edh Object
+withColumnClass =
+  importModuleM "dim/RT" >>= \ !moduRT ->
+    inlineSTM $
+      lookupEdhObjAttr moduRT (AttrByName "Column") >>= \case
+        (_, EdhObject !clsColumn) -> return clsColumn
+        _ -> error "bug: dim/RT provides no Column class"
 
-withColumnClass :: (Object -> EdhTx) -> EdhTx
-withColumnClass !act = importEdhModule "dim/RT" $ \ !moduRT !ets ->
-  lookupEdhObjAttr moduRT (AttrByName "Column") >>= \case
-    (_, EdhObject !clsColumn) -> runEdhTx ets $ act clsColumn
-    _ -> error "bug: dim/RT provides no Column class"
-
-withYesNoDtype :: (Object -> EdhTx) -> EdhTx
-withYesNoDtype !act = importEdhModule "dim/dtypes" $ \ !moduDtypes !ets ->
-  lookupEdhObjAttr moduDtypes (AttrByName "yesno") >>= \case
-    (_, EdhObject !clsDtype) -> runEdhTx ets $ act clsDtype
-    _ -> error "bug: dim/dtypes provides no `yesno` dtype"
+withYesNoDtype :: Edh Object
+withYesNoDtype =
+  importModuleM "dim/dtypes" >>= \ !moduDtypes ->
+    inlineSTM $
+      lookupEdhObjAttr moduDtypes (AttrByName "yesno") >>= \case
+        (_, EdhObject !clsDtype) -> return clsDtype
+        _ -> error "bug: dim/dtypes provides no `yesno` dtype"

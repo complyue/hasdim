@@ -34,7 +34,6 @@ mkYesNoSuperDt !dti = do
             edh'obj'class = dtCls,
             edh'obj'supers = supersVar
           }
-  !clsScope <- inlineSTM $ objectScope dtCls
   !clsMths <-
     sequence $
       [ (AttrByName nm,) <$> mkEdhProc vc nm hp
@@ -69,7 +68,8 @@ mkYesNoSuperDt !dti = do
             ]
       ]
   let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
-  inlineSTM $ iopdUpdate clsArts $ edh'scope'entity clsScope
+  !clsScope <- inlineSTM $ objectScope dtCls
+  iopdUpdateEdh clsArts $ edh'scope'entity clsScope
   return dtYesNo
   where
     !dtd = HostStore $ toDyn dt
@@ -219,7 +219,6 @@ mkBoxSuperDt !dti !defv = do
 
           withColumnOf' @EdhValue other elemOp <|> vecOp
 
-  !clsScope <- inlineSTM $ objectScope dtCls
   !clsMths <-
     sequence $
       [ (AttrByName nm,) <$> mkEdhProc vc nm hp
@@ -261,7 +260,8 @@ mkBoxSuperDt !dti !defv = do
       ]
 
   let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
-  inlineSTM $ iopdUpdate clsArts $ edh'scope'entity clsScope
+  !clsScope <- inlineSTM $ objectScope dtCls
+  iopdUpdateEdh clsArts $ edh'scope'entity clsScope
   return dtBox
   where
     !dtd = HostStore $ toDyn dt
@@ -281,7 +281,6 @@ mkRealFracSuperDt ::
   Edh Object
 mkRealFracSuperDt !dtYesNo !dti !defv !maybeFromDec = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
-    !clsScope <- contextScope . edh'context <$> edhThreadState
     !clsMths <-
       sequence $
         [ (AttrByName nm,) <$> mkEdhProc vc nm hp
@@ -413,7 +412,8 @@ mkRealFracSuperDt !dtYesNo !dti !defv !maybeFromDec = do
               ]
         ]
     let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
-    inlineSTM $ iopdUpdate clsArts $ edh'scope'entity clsScope
+    !clsScope <- contextScope . edh'context <$> edhThreadState
+    iopdUpdateEdh clsArts $ edh'scope'entity clsScope
   !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtObj =
@@ -447,7 +447,6 @@ mkFloatSuperDt ::
   Edh Object
 mkFloatSuperDt !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
-    !clsScope <- contextScope . edh'context <$> edhThreadState
     !clsMths <-
       sequence $
         [ (AttrByName nm,) <$> mkEdhProc vc nm hp
@@ -581,7 +580,8 @@ mkFloatSuperDt !dtYesNo !dti = do
               ]
         ]
     let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
-    inlineSTM $ iopdUpdate clsArts $ edh'scope'entity clsScope
+    !clsScope <- contextScope . edh'context <$> edhThreadState
+    iopdUpdateEdh clsArts $ edh'scope'entity clsScope
   !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtObj =
@@ -608,7 +608,6 @@ mkIntSuperDt ::
   Edh Object
 mkIntSuperDt !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
-    !clsScope <- contextScope . edh'context <$> edhThreadState
     !clsMths <-
       sequence $
         [ (AttrByName nm,) <$> mkEdhProc vc nm hp
@@ -761,7 +760,8 @@ mkIntSuperDt !dtYesNo !dti = do
               ]
         ]
     let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
-    inlineSTM $ iopdUpdate clsArts $ edh'scope'entity clsScope
+    !clsScope <- contextScope . edh'context <$> edhThreadState
+    iopdUpdateEdh clsArts $ edh'scope'entity clsScope
   !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtObj =
@@ -795,7 +795,6 @@ mkBitsSuperDt ::
   Edh Object
 mkBitsSuperDt !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
-    !clsScope <- contextScope . edh'context <$> edhThreadState
     !clsMths <-
       sequence $
         [ (AttrByName nm,) <$> mkEdhProc vc nm hp
@@ -876,7 +875,8 @@ mkBitsSuperDt !dtYesNo !dti = do
               ]
         ]
     let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
-    inlineSTM $ iopdUpdate clsArts $ edh'scope'entity clsScope
+    !clsScope <- contextScope . edh'context <$> edhThreadState
+    iopdUpdateEdh clsArts $ edh'scope'entity clsScope
   !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtObj =

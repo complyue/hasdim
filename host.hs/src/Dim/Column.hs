@@ -161,22 +161,23 @@ castColumn (SomeColumn _ (col :: c' a')) = case eqT of
 
 -- * Scripting helper utilities for columns
 
-withColumnSelf :: Edh (Object, SomeColumn)
-withColumnSelf = do
+withColumnSelf :: forall r. (Object -> SomeColumn -> Edh r) -> Edh r
+withColumnSelf withCol = do
   !that <- edh'scope'that . contextScope . edh'context <$> edhThreadState
-  withColumn that <|> throwEdhM EvalError "bug: not a Column self as expected"
+  withColumn that withCol
+    <|> throwEdhM EvalError "bug: not a Column self as expected"
 
 {- HLINT ignore "Redundant <$>" -}
 
-withColumn :: Object -> Edh (Object, SomeColumn)
-withColumn !obj = do
+withColumn :: forall r. Object -> (Object -> SomeColumn -> Edh r) -> Edh r
+withColumn !obj withCol = do
   (obj :) <$> readTVarEdh (edh'obj'supers obj) >>= withComposition
   where
-    withComposition :: [Object] -> Edh (Object, SomeColumn)
+    withComposition :: [Object] -> Edh r
     withComposition [] = naM "not an expected Column object"
     withComposition (o : rest) = case fromDynamic =<< dynamicHostData o of
       Nothing -> withComposition rest
-      Just col -> return (o, col)
+      Just col -> withCol o col
 
 asColumnOf ::
   forall a r.

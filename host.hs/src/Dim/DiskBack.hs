@@ -29,7 +29,7 @@ instance
   where
   view'column'data (DbColumn !dba !dbc'offs) =
     readTMVarEdh (db'array'store dba) >>= \case
-      Left !err -> inlineSTM $ throwSTM err
+      Left !err -> throwHostM err
       Right (_shape, !hdr, !dbcs) -> do
         !dba'len <- liftIO $ fromIntegral <$> readDbArrayLength hdr
         return
@@ -89,7 +89,7 @@ instance
 
   view'column'slice (DbColumn !dba !dbc'offs) !start !stop =
     readTMVarEdh (db'array'store dba) >>= \case
-      Left !err -> inlineSTM $ throwSTM err
+      Left !err -> throwHostM err
       Right (_shape, !hdr, DeviceArray _cap !fp0) -> do
         !dba'len <- liftIO $ fromIntegral <$> readDbArrayLength hdr
         let !cl = dba'len - dbc'offs
@@ -123,7 +123,7 @@ instance
     !stop
     !step =
       readTMVarEdh (db'array'store dba) >>= \case
-        Left !err -> inlineSTM $ throwSTM err
+        Left !err -> throwHostM err
         Right (_shape, !hdr, DeviceArray _cap (fp0 :: ForeignPtr a)) -> do
           !dba'len <- liftIO $ fromIntegral <$> readDbArrayLength hdr
           let fp :: ForeignPtr a =
@@ -190,7 +190,7 @@ instance
 
   extract'column'bool (DbColumn !dba !dbc'offs) !idxCol =
     readTMVarEdh (db'array'store dba) >>= \case
-      Left !err -> inlineSTM $ throwSTM err
+      Left !err -> throwHostM err
       Right (_shape, !hdr, DeviceArray _cap (fp0 :: ForeignPtr a)) -> do
         (!idxa, !idxl) <- view'column'data idxCol
         let !fp = plusForeignPtr fp0 $ dbc'offs * sizeOf (undefined :: a)
@@ -226,7 +226,7 @@ instance
 
   extract'column'fancy (DbColumn !dba !dbc'offs) !idxCol =
     readTMVarEdh (db'array'store dba) >>= \case
-      Left !err -> inlineSTM $ throwSTM err
+      Left !err -> throwHostM err
       Right (_shape, _hdr, DeviceArray _cap (fp0 :: ForeignPtr a)) -> do
         (!idxa, !idxl) <- view'column'data idxCol
         let !fp = plusForeignPtr fp0 $ dbc'offs * sizeOf (undefined :: a)

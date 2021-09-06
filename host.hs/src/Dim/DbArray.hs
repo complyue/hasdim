@@ -379,19 +379,20 @@ withDbArraySelfOf = do
       "not an expected self DbArray of type " <> T.pack (show $ typeRep @a)
 
 withDbArraySelf ::
+  forall r.
   ( forall a.
     (Eq a, Storable a, EdhXchg a, Typeable a) =>
     Object ->
     DbArray a ->
-    Edh ()
+    Edh r
   ) ->
-  Edh ()
+  Edh r
 withDbArraySelf !dbaExit = do
   that <- edh'scope'that . contextScope . edh'context <$> edhThreadState
   supers <- readTVarEdh $ edh'obj'supers that
   withComposition $ that : supers
   where
-    withComposition :: [Object] -> Edh ()
+    withComposition :: [Object] -> Edh r
     withComposition [] = naM "not an expected self DbArray"
     withComposition (o : rest) = case dynamicHostData o of
       Nothing -> withComposition rest
