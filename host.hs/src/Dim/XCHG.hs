@@ -9,6 +9,8 @@ module Dim.XCHG where
 
 -- import           Debug.Trace
 
+import Control.Applicative
+import Control.Monad
 import qualified Data.Lossless.Decimal as D
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -80,17 +82,17 @@ instance {-# OVERLAPPABLE #-} EdhXchg Char where
 instance {-# OVERLAPPABLE #-} EdhXchg Double where
   edhDefaultValue = 0 / 0
   toEdh !n = return $ EdhDecimal $ D.decimalFromRealFloat n
-  fromEdh' = coerceEdhToFloat
+  fromEdh' v = Just <$> coerceEdhToFloat v <|> return Nothing
 
 instance {-# OVERLAPPABLE #-} EdhXchg Float where
   edhDefaultValue = 0 / 0
   toEdh !n = return $ EdhDecimal $ D.decimalFromRealFloat n
-  fromEdh' = coerceEdhToFloat
+  fromEdh' v = Just <$> coerceEdhToFloat v <|> return Nothing
 
 instance {-# OVERLAPPABLE #-} (Integral a, Typeable a) => EdhXchg a where
   edhDefaultValue = 0
   toEdh !n = return $ EdhDecimal $ fromIntegral n
-  fromEdh' = coerceEdhToIntegral
+  fromEdh' v = Just <$> coerceEdhToIntegral v <|> return Nothing
 
 instance Random Decimal where
   -- assuming not too many bits are needed with host decimal arrays
@@ -111,18 +113,18 @@ coerceEdhToFloat ::
   forall a.
   (RealFloat a) =>
   EdhValue ->
-  Edh (Maybe a)
+  Edh a
 coerceEdhToFloat !v = case edhUltimate v of
-  EdhDecimal !d -> return $ Just $ convertDecimal d
+  EdhDecimal !d -> return $ convertDecimal d
   EdhObject !o -> do
     !magicRtn <- callMagicM o (AttrByName "__float__") (ArgsPack [] odEmpty)
     case edhUltimate magicRtn of
-      EdhDecimal !d -> return $ Just $ convertDecimal d
+      EdhDecimal !d -> return $ convertDecimal d
       _ ->
         edhSimpleDescM magicRtn >>= \ !badDesc ->
           throwEdhM UsageError $
             "bad value returned from __float__(): " <> badDesc
-  _ -> return Nothing
+  _ -> mzero
   where
     convertDecimal :: Decimal -> a
     convertDecimal !d
@@ -134,20 +136,20 @@ coerceEdhToIntegral ::
   forall a.
   (Integral a) =>
   EdhValue ->
-  Edh (Maybe a)
+  Edh a
 coerceEdhToIntegral !v = case edhUltimate v of
-  EdhDecimal !d -> return $ convertDecimal d
+  EdhDecimal !d -> convertDecimal d
   EdhObject !o -> do
     !magicRtn <- callMagicM o (AttrByName "__int__") (ArgsPack [] odEmpty)
     case edhUltimate magicRtn of
-      EdhDecimal !d -> return $ convertDecimal d
+      EdhDecimal !d -> convertDecimal d
       _ ->
         edhSimpleDescM magicRtn >>= \ !badDesc ->
           throwEdhM UsageError $
             "bad value returned from __int__(): " <> badDesc
-  _ -> return Nothing
+  _ -> mzero
   where
-    convertDecimal :: Decimal -> Maybe a
+    convertDecimal :: Decimal -> Edh a
     convertDecimal !d = case D.decimalToInteger d of
-      Just !i -> Just $ fromInteger i
-      Nothing -> Nothing
+      Just !i -> return $ fromInteger i
+      Nothing -> mzero
