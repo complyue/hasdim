@@ -33,7 +33,7 @@ data DeviceDataType a = (Eq a, Storable a, EdhXchg a, Typeable a) =>
     with'num'device'data'type ::
       forall m r.
       (MonadPlus m) =>
-      (forall a'. (a' ~ a, Num a') => m r) ->
+      (forall a'. (a' ~ a, Num a', Ord a') => m r) ->
       m r,
     with'float'device'data'type ::
       forall m r.
@@ -43,7 +43,7 @@ data DeviceDataType a = (Eq a, Storable a, EdhXchg a, Typeable a) =>
     with'random'device'data'type ::
       forall m r.
       (MonadPlus m) =>
-      (forall a'. (a' ~ a, Random a') => m r) ->
+      (forall a'. (a' ~ a, Random a', Ord a') => m r) ->
       m r
   }
 
@@ -58,12 +58,12 @@ data DirectDataType a = (Eq a, EdhXchg a, Typeable a) =>
     with'num'direct'data'type ::
       forall m r.
       (MonadPlus m) =>
-      (forall a'. (a' ~ a, Num a') => m r) ->
+      (forall a'. (a' ~ a, Num a', Ord a') => m r) ->
       m r,
     with'random'direct'data'type ::
       forall m r.
       (MonadPlus m) =>
-      (forall a'. (a' ~ a, Random a') => m r) ->
+      (forall a'. (a' ~ a, Random a', Ord a') => m r) ->
       m r,
     with'num'seed'direct'data'type ::
       forall m r.

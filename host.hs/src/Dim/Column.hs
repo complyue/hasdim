@@ -540,38 +540,35 @@ data Line2Show = Line2Show
     last'elem'idx :: Int
   }
 
-showColContent ::
-  ArrayLength ->
-  (ArrayIndex -> (Text -> IO ()) -> IO ()) ->
-  (Text -> IO ()) ->
-  IO ()
-showColContent !cl !readElem !exit = tryHeadLines [] 0 0 "" 0
+showColContent :: ArrayLength -> (ArrayIndex -> Edh Text) -> Edh Text
+showColContent !cl !readElem = tryHeadLines [] 0 0 "" 0
   where
     -- todo make these tunable
     lineWidth = 79
     maxHeadLines = 10
 
     tryHeadLines ::
-      [Line2Show] -> Int -> ArrayIndex -> Text2Show -> ArrayIndex -> IO ()
+      [Line2Show] -> Int -> ArrayIndex -> Text2Show -> ArrayIndex -> Edh Text
     tryHeadLines cumLines nLines i line lineFirstElemIdx
       -- got all elements
       | i >= cl =
         if nLines <= 0
-          then exit $ TL.toStrict $ text'to'show line
+          then return $ TL.toStrict $ text'to'show line
           else do
             let cumLines' =
                   if text'len line > 0
                     then Line2Show line lineFirstElemIdx (cl - 1) : cumLines
                     else cumLines
                 headLines = concat $ fancyLine <$> reverse cumLines'
-            exit $ TL.toStrict $ TL.unlines headLines
+            return $ TL.toStrict $ TL.unlines headLines
 
       -- more elements to show
       | nLines >= maxHeadLines = do
         showTailLines (reverse cumLines) (lineFirstElemIdx - 1)
 
       -- one more element to add
-      | otherwise = readElem i $ \ !elemTxt -> do
+      | otherwise = do
+        !elemTxt <- readElem i
         let elemFrag = text2Show elemTxt <> ", "
             line' = line <> elemFrag
         if text'len line' > lineWidth
@@ -586,28 +583,34 @@ showColContent !cl !readElem !exit = tryHeadLines [] 0 0 "" 0
               i
           else tryHeadLines cumLines nLines (i + 1) line' lineFirstElemIdx
 
-    showTailLines :: [Line2Show] -> ArrayIndex -> IO ()
+    showTailLines :: [Line2Show] -> ArrayIndex -> Edh Text
     showTailLines hls headIdxShown = go [] 0 (cl - 1) "" (cl - 1)
       where
         go ::
-          [Line2Show] -> Int -> ArrayIndex -> Text2Show -> ArrayIndex -> IO ()
+          [Line2Show] ->
+          Int ->
+          ArrayIndex ->
+          Text2Show ->
+          ArrayIndex ->
+          Edh Text
         go cumLines nLines i line lineLastElemIdx
           -- not that many elements, we can show its entirty
           | i <= headIdxShown = do
             let cumLines' = Line2Show line (i + 1) lineLastElemIdx : cumLines
                 headLines = concat $ fancyLine <$> hls
                 tailLines = concat $ fancyLine <$> cumLines'
-            exit $ TL.toStrict $ TL.unlines $ headLines ++ tailLines
+            return $ TL.toStrict $ TL.unlines $ headLines ++ tailLines
 
           -- more elements then we'd show
           | nLines >= maxHeadLines = do
             let headLines = concat $ fancyLine <$> hls
                 tailLines = concat $ fancyLine <$> cumLines
-            exit $
+            return $
               TL.toStrict $ TL.unlines $ headLines ++ [" ... "] ++ tailLines
 
           -- one more element to add
-          | otherwise = readElem i $ \ !elemTxt -> do
+          | otherwise = do
+            !elemTxt <- readElem i
             let elemFrag = text2Show elemTxt <> ", "
                 line' = elemFrag <> line
             if text'len line' > lineWidth
