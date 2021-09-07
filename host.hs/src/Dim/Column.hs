@@ -63,23 +63,23 @@ class
   -- changer attribute to a thread's identity before modifiying a column
   -- and check such a attribute to be `frozen` valued before allowing the
   -- STM tx to commit
-  view'column'data :: c a -> Edh (f a, ArrayLength)
+  view'column'data :: c a -> EIO (f a, ArrayLength)
 
   -- called when valid data length of the column is requested
-  read'column'length :: c a -> IO ArrayLength
+  read'column'length :: c a -> EIO ArrayLength
 
   -- called when a new capacity is requested for the column
-  grow'column'capacity :: c a -> ArrayCapacity -> Edh (f a, ArrayLength)
+  grow'column'capacity :: c a -> ArrayCapacity -> EIO (f a, ArrayLength)
 
   -- called when a new length is marked for the column
-  mark'column'length :: c a -> ArrayLength -> IO ()
+  mark'column'length :: c a -> ArrayLength -> EIO ()
 
   -- called when viewing-slicing is requested for the column
   view'column'slice ::
     c a ->
     Int -> -- start
     Int -> -- stop
-    Edh (InstanceDisposition, SomeColumn)
+    EIO (InstanceDisposition, SomeColumn)
 
   -- called when copying-slicing is requested for the column
   copy'column'slice ::
@@ -88,7 +88,7 @@ class
     Int -> -- start
     Int -> -- stop
     Int -> -- step
-    Edh (InstanceDisposition, SomeColumn)
+    EIO (InstanceDisposition, SomeColumn)
 
   -- generate another new column by custom deriver & receiver
   derive'new'column ::
@@ -98,9 +98,9 @@ class
       (FlatArray f' a, Typeable f') =>
       (f a, ArrayLength) ->
       (f' a, ArrayCapacity) ->
-      IO ArrayLength
+      EIO ArrayLength
     ) ->
-    IO SomeColumn
+    EIO SomeColumn
 
   -- extract elements by a mask column of the same shape
   extract'column'bool ::
@@ -108,7 +108,7 @@ class
     ManagedColumn c' f' YesNo =>
     c a ->
     c' YesNo ->
-    Edh SomeColumn
+    EIO SomeColumn
 
   -- extract elements by an index column
   extract'column'fancy ::
@@ -116,7 +116,7 @@ class
     ManagedColumn c' f' Int =>
     c a ->
     c' Int ->
-    Edh SomeColumn
+    EIO SomeColumn
 
 -- * Heterogeneous host wrapper of columns
 
@@ -264,14 +264,14 @@ sliceColumn ::
   Int ->
   Int ->
   Int ->
-  Edh (Object, SomeColumn)
+  EIO (Object, SomeColumn)
 sliceColumn !objCol (SomeColumn _ !col) !start !stop !step =
   withSliced
     =<< if stop >= start && step == 1
       then view'column'slice col start stop
       else copy'column'slice col stop start stop step
   where
-    withSliced (disp, col') = case disp of
+    withSliced (disp, col') = liftEdh $ case disp of
       StayComposed ->
         (,col') <$> mutCloneHostObjectM objCol objCol col'
       ExtractAlone -> do
@@ -285,11 +285,12 @@ extractColumnBool ::
   Object ->
   SomeColumn ->
   c' YesNo ->
-  Edh (Object, SomeColumn)
+  EIO (Object, SomeColumn)
 extractColumnBool !objCol (SomeColumn _ !col) !colMask = do
-  !dto <- getColumnDtype objCol
   !col' <- extract'column'bool col colMask
-  (,col') <$> createHostObjectM' clsCol (toDyn col') [dto]
+  liftEdh $ do
+    !dto <- getColumnDtype objCol
+    (,col') <$> createHostObjectM' clsCol (toDyn col') [dto]
   where
     clsCol = edh'obj'class objCol
 
@@ -299,17 +300,18 @@ extractColumnFancy ::
   Object ->
   SomeColumn ->
   c' Int ->
-  Edh (Object, SomeColumn)
+  EIO (Object, SomeColumn)
 extractColumnFancy !objCol (SomeColumn _ !col) !colIdxs = do
-  !dto <- getColumnDtype objCol
   !col' <- extract'column'fancy col colIdxs
-  (,col') <$> createHostObjectM' clsCol (toDyn col') [dto]
+  liftEdh $ do
+    !dto <- getColumnDtype objCol
+    (,col') <$> createHostObjectM' clsCol (toDyn col') [dto]
   where
     clsCol = edh'obj'class objCol
 
 idxAssignColumn :: SomeColumn -> EdhValue -> EdhValue -> Edh ()
 idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal =
-  view'column'data col >>= \(!cs, !cl) -> do
+  liftEIO (view'column'data col) >>= \(!cs, !cl) -> do
     let withScalarRHS :: Edh ()
         withScalarRHS =
           fromEdh @a tgtVal >>= \ !rhv -> do
@@ -319,24 +321,24 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal =
                   Object ->
                   c YesNo ->
                   Edh ()
-                byBoolIdx _ !idxCol =
-                  view'column'data idxCol >>= \(idxa, idxl) ->
-                    if idxl /= cl
-                      then
-                        throwEdhM UsageError $
-                          "bool index shape mismatch - "
-                            <> T.pack (show idxl)
-                            <> " vs "
-                            <> T.pack (show cl)
-                      else do
-                        let go :: Int -> IO ()
-                            go i
-                              | i >= idxl = return ()
-                              | otherwise = do
-                                YesNo yn <- array'reader idxa i
-                                when (yn /= 0) $ array'writer cs i rhv
-                                go (i + 1)
-                        liftIO $ go 0
+                byBoolIdx _ !idxCol = liftEIO $ do
+                  (idxa, idxl) <- view'column'data idxCol
+                  if idxl /= cl
+                    then
+                      throwEIO UsageError $
+                        "bool index shape mismatch - "
+                          <> T.pack (show idxl)
+                          <> " vs "
+                          <> T.pack (show cl)
+                    else do
+                      let go :: Int -> EIO ()
+                          go i
+                            | i >= idxl = return ()
+                            | otherwise = do
+                              YesNo yn <- liftIO $ array'reader idxa i
+                              when (yn /= 0) $ liftIO $ array'writer cs i rhv
+                              go (i + 1)
+                      go 0
 
                 byIntpIdx ::
                   forall c f.
@@ -344,16 +346,16 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal =
                   Object ->
                   c Int ->
                   Edh ()
-                byIntpIdx _ !idxCol =
-                  view'column'data idxCol >>= \(idxa, idxl) -> do
-                    let go :: Int -> IO ()
-                        go i
-                          | i >= idxl = return ()
-                          | otherwise = do
-                            idxi <- array'reader idxa i
-                            array'writer cs idxi rhv
-                            go (i + 1)
-                    liftIO $ go 0
+                byIntpIdx _ !idxCol = liftEIO $ do
+                  (idxa, idxl) <- view'column'data idxCol
+                  let go :: Int -> EIO ()
+                      go i
+                        | i >= idxl = return ()
+                        | otherwise = do
+                          idxi <- liftIO $ array'reader idxa i
+                          liftIO $ array'writer cs idxi rhv
+                          go (i + 1)
+                  go 0
 
                 byEdhIdx :: Edh ()
                 byEdhIdx =
@@ -390,7 +392,7 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal =
 
     (<|> withScalarRHS) $
       withColumnOf' @a tgtVal $ \_rhsColInst !rhsCol -> do
-        (cs'rhs, cl'rhs) <- view'column'data rhsCol
+        (cs'rhs, cl'rhs) <- liftEIO $ view'column'data rhsCol
         let byBoolIdx ::
               forall c f.
               ManagedColumn c f YesNo =>
@@ -405,26 +407,26 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal =
                       <> T.pack (show cl'rhs)
                       <> " vs "
                       <> T.pack (show cl)
-                else
-                  view'column'data idxCol >>= \(idxa, idxl) ->
-                    if idxl /= cl
-                      then
-                        throwEdhM UsageError $
-                          "bool index shape mismatch - "
-                            <> T.pack (show idxl)
-                            <> " vs "
-                            <> T.pack (show cl)
-                      else do
-                        let go :: Int -> IO ()
-                            go i
-                              | i >= idxl = return ()
-                              | otherwise = do
-                                YesNo yn <- array'reader idxa i
-                                when (yn /= 0) $
-                                  array'reader cs'rhs i
-                                    >>= array'writer cs i
-                                go (i + 1)
-                        liftIO $ go 0
+                else liftEIO $ do
+                  (idxa, idxl) <- view'column'data idxCol
+                  if idxl /= cl
+                    then
+                      throwEIO UsageError $
+                        "bool index shape mismatch - "
+                          <> T.pack (show idxl)
+                          <> " vs "
+                          <> T.pack (show cl)
+                    else do
+                      let go :: Int -> IO ()
+                          go i
+                            | i >= idxl = return ()
+                            | otherwise = do
+                              YesNo yn <- array'reader idxa i
+                              when (yn /= 0) $
+                                array'reader cs'rhs i
+                                  >>= array'writer cs i
+                              go (i + 1)
+                      liftIO $ go 0
 
             byIntpIdx ::
               forall c f.
@@ -432,25 +434,25 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal =
               Object ->
               c Int ->
               Edh ()
-            byIntpIdx _ !idxCol =
-              view'column'data idxCol >>= \(idxa, idxl) ->
-                if cl'rhs /= idxl
-                  then
-                    throwEdhM UsageError $
-                      "rhs column shape mismatch fancy index - "
-                        <> T.pack (show cl'rhs)
-                        <> " vs "
-                        <> T.pack (show idxl)
-                  else do
-                    let go :: Int -> IO ()
-                        go i
-                          | i >= idxl = return ()
-                          | otherwise = do
-                            idxi <- array'reader idxa i
-                            array'reader cs'rhs i
-                              >>= array'writer cs idxi
-                            go (i + 1)
-                    liftIO $ go 0
+            byIntpIdx _ !idxCol = liftEIO $ do
+              (idxa, idxl) <- view'column'data idxCol
+              if cl'rhs /= idxl
+                then
+                  throwEIO UsageError $
+                    "rhs column shape mismatch fancy index - "
+                      <> T.pack (show cl'rhs)
+                      <> " vs "
+                      <> T.pack (show idxl)
+                else do
+                  let go :: Int -> IO ()
+                      go i
+                        | i >= idxl = return ()
+                        | otherwise = do
+                          idxi <- array'reader idxa i
+                          array'reader cs'rhs i
+                            >>= array'writer cs idxi
+                          go (i + 1)
+                  liftIO $ go 0
 
             byEdhIdx :: Edh ()
             byEdhIdx =

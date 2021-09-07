@@ -64,18 +64,17 @@ foldComput
           $ self'fold fop dt $ \ !op ->
             (<|> throwEdhM EvalError "bug: Column mismatch its dtype") $
               withColumnOf @a colObj $ \_ col -> do
-                (cs, cl) <- view'column'data col
+                (cs, cl) <- liftEIO $ view'column'data col
                 if cl < 1
                   then return edhNA
-                  else (toEdh =<<) $
-                    liftIO $ do
-                      let go :: Int -> a -> IO a
-                          go i v
-                            | i >= cl = return v
-                            | otherwise = do
-                              e <- array'reader cs i
-                              go (i + 1) $ op v e
-                      go 1 =<< array'reader cs 0
+                  else (toEdh =<<) $ do
+                    let go :: Int -> a -> IO a
+                        go i v
+                          | i >= cl = return v
+                          | otherwise = do
+                            e <- array'reader cs i
+                            go (i + 1) $ op v e
+                    liftIO $ go 1 =<< array'reader cs 0
 
 foldlComput ::
   "fop" @: HostValue FoldOp ->
@@ -95,20 +94,19 @@ foldlComput
         )
           $ left'fold fop dt dt $ \ !op ->
             (<|> throwEdhM EvalError "bug: Column mismatch its dtype") $
-              withColumnOf @a colObj $ \_ col -> do
+              withColumnOf @a colObj $ \_ col -> liftEIO $ do
                 (cs, cl) <- view'column'data col
                 if cl < 1
                   then return edhNA
-                  else do
+                  else liftEdh $ do
                     start <- fromEdh startVal
-                    (toEdh =<<) $
-                      liftIO $ do
-                        let go i v
-                              | i >= cl = return v
-                              | otherwise = do
-                                e <- array'reader cs i
-                                go (i + 1) $ op v e
-                        go 0 start
+                    (toEdh =<<) $ do
+                      let go i v
+                            | i >= cl = return v
+                            | otherwise = do
+                              e <- array'reader cs i
+                              go (i + 1) $ op v e
+                      liftIO $ go 0 start
 
 foldrComput ::
   "fop" @: HostValue FoldOp ->
@@ -129,19 +127,18 @@ foldrComput
           $ right'fold fop dt dt $ \ !op ->
             (<|> throwEdhM EvalError "bug: Column mismatch its dtype") $
               withColumnOf @a colObj $ \_ col -> do
-                (cs, cl) <- view'column'data col
+                (cs, cl) <- liftEIO $ view'column'data col
                 if cl < 1
                   then return edhNA
                   else do
                     start <- fromEdh startVal
-                    (toEdh =<<) $
-                      liftIO $ do
-                        let go i v
-                              | i < 0 = return v
-                              | otherwise = do
-                                e <- array'reader cs i
-                                go (i - 1) $ op e v
-                        go (cl - 1) start
+                    (toEdh =<<) $ do
+                      let go i v
+                            | i < 0 = return v
+                            | otherwise = do
+                              e <- array'reader cs i
+                              go (i - 1) $ op e v
+                      liftIO $ go (cl - 1) start
 
 scanlComput ::
   "fop" @: HostValue FoldOp ->
@@ -164,7 +161,7 @@ scanlComput
               withColumnOf @a colObj $ \colInst col -> do
                 start <- fromEdh startVal
                 !col' <-
-                  liftIO $
+                  liftEIO $
                     derive'new'column
                       col
                       (\(_cs, cl, _cap) -> cl)
@@ -176,7 +173,7 @@ scanlComput
                                   let v' = op v e
                                   array'writer cs' i v'
                                   go (i + 1) v'
-                          go 0 start
+                          liftIO $ go 0 start
                       )
                 EdhObject
                   <$> createHostObjectM'
@@ -205,7 +202,7 @@ scanrComput
               withColumnOf @a colObj $ \colInst col -> do
                 start <- fromEdh startVal
                 !col' <-
-                  liftIO $
+                  liftEIO $
                     derive'new'column
                       col
                       (\(_cs, cl, _cap) -> cl)
@@ -217,7 +214,7 @@ scanrComput
                                   let v' = op v e
                                   array'writer cs' i v'
                                   go (i + 1) v'
-                          go 0 start
+                          liftIO $ go 0 start
                       )
                 EdhObject
                   <$> createHostObjectM'

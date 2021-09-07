@@ -316,10 +316,8 @@ mmapDbArray !asVar !dataDir !dataPath !maybeShape = case maybeShape of
             -- don't have a header long enough, most prolly not existing
             -- todo more care of abnormal situations
             _ ->
-              throwIO $
-                userError $
-                  "invalid disk file for array: "
-                    <> dataFilePath
+              throwHostIO UsageError $
+                "invalid disk file for array: " <> T.pack dataFilePath
   where
     !dataFilePath = T.unpack dataDir </> T.unpack (dataPath <> ".dba")
     !dataFileDir = takeDirectory dataFilePath

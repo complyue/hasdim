@@ -148,13 +148,13 @@ createColumnClass !defaultDt =
     colCapProc :: Edh EdhValue
     colCapProc =
       withThisColumn $ \_this (SomeColumn _ !col) ->
-        view'column'data col >>= \(cs, _cl) ->
+        liftEIO (view'column'data col) >>= \(cs, _cl) ->
           return $ EdhDecimal $ fromIntegral $ array'capacity cs
 
     colLenProc :: Edh EdhValue
     colLenProc =
       withThisColumn $ \_this (SomeColumn _ !col) ->
-        liftIO (read'column'length col) >>= \ !len ->
+        liftEIO (read'column'length col) >>= \ !len ->
           return $ EdhDecimal $ fromIntegral len
 
     colGrowProc :: "newCap" !: Int -> Edh EdhValue
@@ -164,20 +164,20 @@ createColumnClass !defaultDt =
           throwEdhM UsageError $
             "invalid newCap: " <> T.pack (show newCap)
         else withThisColumn $ \_this (SomeColumn _ !col) -> do
-          void $ grow'column'capacity col newCap
+          void $ liftEIO $ grow'column'capacity col newCap
           EdhObject . edh'scope'that . contextScope . edh'context
             <$> edhThreadState
 
     colMarkLenProc :: "newLen" !: Int -> Edh EdhValue
     colMarkLenProc (mandatoryArg -> !newLen) = withThisColumn $
       \_this (SomeColumn _ !col) -> do
-        void $ liftIO $ mark'column'length col newLen
+        void $ liftEIO $ mark'column'length col newLen
         EdhObject . edh'scope'that . contextScope . edh'context
           <$> edhThreadState
 
     colBlobProc :: Edh EdhValue
     colBlobProc = withThisColumn $ \_this (SomeColumn _ !col) -> do
-      (cs, cl) <- view'column'data col
+      (cs, cl) <- liftEIO $ view'column'data col
       (<|> return edhNA) $
         array'data'ptr cs $ \(fp :: ForeignPtr a) ->
           return $
@@ -189,7 +189,7 @@ createColumnClass !defaultDt =
 
     colJsonProc :: Edh EdhValue
     colJsonProc = withThisColumn $ \_this (SomeColumn _ !col) -> do
-      (cs, cl) <- view'column'data col
+      (cs, cl) <- liftEIO $ view'column'data col
       if cl < 1
         then return $ EdhString "[]"
         else do
@@ -208,7 +208,7 @@ createColumnClass !defaultDt =
 
     colReprProc :: Edh EdhValue
     colReprProc = withThisColumn $ \this (SomeColumn _ !col) -> do
-      (cs, cl) <- view'column'data col
+      (cs, cl) <- liftEIO $ view'column'data col
       !dto <- getColumnDtype this
       !dtRepr <- edhObjReprM dto
       let colRepr =
@@ -223,7 +223,7 @@ createColumnClass !defaultDt =
 
     colShowProc :: Edh EdhValue
     colShowProc = withThisColumn $ \this (SomeColumn _ !col) -> do
-      (cs, cl) <- view'column'data col
+      (cs, cl) <- liftEIO $ view'column'data col
       !dto <- getColumnDtype this
       !dtRepr <- edhObjReprM dto
       let colRepr =
@@ -246,7 +246,7 @@ createColumnClass !defaultDt =
     --      https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Series.describe.html
     colDescProc :: Edh EdhValue
     colDescProc = withThisColumn $ \this (SomeColumn _ !col) -> do
-      (cs, cl) <- view'column'data col
+      (cs, cl) <- liftEIO $ view'column'data col
       !dto <- getColumnDtype this
       !dtRepr <- edhObjReprM dto
       let colRepr =
@@ -273,7 +273,7 @@ createColumnClass !defaultDt =
             c YesNo ->
             Edh EdhValue
           withBoolIdx _ !idxCol =
-            extractColumnBool this col idxCol >>= \(!newColObj, _newCol) ->
+            liftEIO (extractColumnBool this col idxCol) >>= \(!newColObj, _newCol) ->
               return $ EdhObject newColObj
 
           withIntpIdx ::
@@ -283,7 +283,7 @@ createColumnClass !defaultDt =
             c Int ->
             Edh EdhValue
           withIntpIdx _ !idxCol =
-            extractColumnFancy this col idxCol >>= \(!newColObj, _newCol) ->
+            liftEIO (extractColumnFancy this col idxCol) >>= \(!newColObj, _newCol) ->
               return $ EdhObject newColObj
 
           withEdhIdx :: Edh EdhValue
@@ -296,18 +296,18 @@ createColumnClass !defaultDt =
               Right !idx -> case idx of
                 EdhIndex !i -> case col of
                   SomeColumn _ col' -> do
-                    (!cs, _cl) <- view'column'data col'
-                    !ev <- liftIO (array'reader cs i)
+                    (!cs, _cl) <- liftEIO $ view'column'data col'
+                    !ev <- liftIO $ array'reader cs i
                     toEdh ev
                 EdhAny -> return $ EdhObject that
                 EdhAll -> return $ EdhObject that
                 EdhSlice !start !stop !step -> case col of
                   SomeColumn _ col' -> do
-                    (_cs, !cl) <- view'column'data col'
+                    (_cs, !cl) <- liftEIO $ view'column'data col'
                     (!iStart, !iStop, !iStep) <-
                       regulateEdhSliceM cl (start, stop, step)
                     (!newColObj, _newCol) <-
-                      sliceColumn this col iStart iStop iStep
+                      liftEIO $ sliceColumn this col iStart iStop iStep
                     return $ EdhObject newColObj
 
       withColumnOf' @YesNo idxVal withBoolIdx
@@ -322,8 +322,9 @@ createColumnClass !defaultDt =
     colCopyProc :: "capacity" ?: Int -> Edh EdhValue
     colCopyProc (optionalArg -> !maybeCap) = withThisColumn $
       \this (SomeColumn _ !col) -> do
-        !cl <- liftIO $ read'column'length col
-        (disp, col') <- copy'column'slice col (fromMaybe cl maybeCap) 0 cl 1
+        !cl <- liftEIO $ read'column'length col
+        (disp, col') <-
+          liftEIO $ copy'column'slice col (fromMaybe cl maybeCap) 0 cl 1
         case disp of
           StayComposed -> do
             !newColObj <- mutCloneHostObjectM this this col'
@@ -571,7 +572,7 @@ whereProc :: Object -> Object -> ArgsPack -> Edh EdhValue
 whereProc !colClass !dtIntp (ArgsPack [EdhObject !colYesNo] !kwargs)
   | odNull kwargs = (<|> throwEdhM UsageError "not a `yesno` column") $
     withColumnOf @YesNo colYesNo $ \_ !col -> do
-      (cs, cl) <- view'column'data col
+      (cs, cl) <- liftEIO $ view'column'data col
       (!len, !fp) <- liftIO $ do
         !p <- callocArray @Int cl
         !fp <- newForeignPtr finalizerFree p

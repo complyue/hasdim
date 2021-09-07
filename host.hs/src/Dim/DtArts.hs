@@ -112,15 +112,17 @@ mkBoxSuperDt !dti !defv = do
         withColumnSelfOf @EdhValue $ \_objCol !col -> do
           let vecOp :: Edh ()
               vecOp =
-                view'column'data col >>= \(cs, cl) -> do
-                  let go i
-                        | i < 0 = return ()
-                        | otherwise = do
-                          lhev <- liftIO $ array'reader cs i
-                          !result <- evalOp flipOperands op lhev other
-                          liftIO $ array'writer cs i result
-                          go $ i - 1
-                  go $ cl - 1
+                liftEIO $
+                  view'column'data col >>= \(cs, cl) -> do
+                    let go i
+                          | i < 0 = return ()
+                          | otherwise = do
+                            lhev <- liftIO $ array'reader cs i
+                            !result <-
+                              liftEdh $ evalOp flipOperands op lhev other
+                            liftIO $ array'writer cs i result
+                            go $ i - 1
+                    go $ cl - 1
 
               elemOp ::
                 forall c' f'.
@@ -128,12 +130,12 @@ mkBoxSuperDt !dti !defv = do
                 Object ->
                 c' EdhValue ->
                 Edh ()
-              elemOp _ col' = do
+              elemOp _ col' = liftEIO $ do
                 (cs, cl) <- view'column'data col
                 (cs', cl') <- view'column'data col'
                 if cl' /= cl
                   then
-                    throwEdhM UsageError $
+                    throwEIO UsageError $
                       "column length mistmatch: "
                         <> T.pack (show cl)
                         <> " vs "
@@ -146,7 +148,8 @@ mkBoxSuperDt !dti !defv = do
                               lhev <- array'reader cs i
                               rhev <- array'reader cs' i
                               return (lhev, rhev)
-                            !result <- evalOp flipOperands op lhev rhev
+                            !result <-
+                              liftEdh $ evalOp flipOperands op lhev rhev
                             liftIO $ array'writer cs i result
                             go $ i - 1
                     go $ cl - 1
@@ -161,25 +164,27 @@ mkBoxSuperDt !dti !defv = do
           let exitWithResult ::
                 Typeable (InMemDirCol EdhValue) =>
                 InMemDirCol EdhValue ->
-                Edh EdhValue
+                EIO EdhValue
               exitWithResult !colResult =
-                EdhObject
-                  <$> createHostObjectM'
-                    (edh'obj'class objCol)
-                    (toDyn $ someColumn colResult)
-                    [dtBox]
+                liftEdh $
+                  EdhObject
+                    <$> createHostObjectM'
+                      (edh'obj'class objCol)
+                      (toDyn $ someColumn colResult)
+                      [dtBox]
 
-              vecOp = do
+              vecOp = liftEIO $ do
                 (cs, cl) <- view'column'data col
                 (iov, csResult) <- liftIO $ newDirectArray @EdhValue cl
                 let go i
                       | i < 0 = do
-                        csvResult <- newTMVarEdh csResult
-                        clvResult <- newTVarEdh cl
+                        csvResult <- newTMVarEIO csResult
+                        clvResult <- newTVarEIO cl
                         exitWithResult $ InMemDirCol csvResult clvResult
                       | otherwise = do
                         lhev <- liftIO $ array'reader cs i
-                        !result <- evalOp flipOperands op lhev other
+                        !result <-
+                          liftEdh $ evalOp flipOperands op lhev other
                         liftIO $ MV.unsafeWrite iov i result
                         go $ i - 1
                 go $ cl - 1
@@ -190,12 +195,12 @@ mkBoxSuperDt !dti !defv = do
                 Object ->
                 c' EdhValue ->
                 Edh EdhValue
-              elemOp _ col' = do
+              elemOp _ col' = liftEIO $ do
                 (cs, cl) <- view'column'data col
                 (cs', cl') <- view'column'data col'
                 if cl' /= cl
                   then
-                    throwEdhM UsageError $
+                    throwEIO UsageError $
                       "column length mistmatch: "
                         <> T.pack (show cl)
                         <> " vs "
@@ -204,15 +209,16 @@ mkBoxSuperDt !dti !defv = do
                     (iov, csResult) <- liftIO $ newDirectArray @EdhValue cl
                     let go i
                           | i < 0 = do
-                            csvResult <- newTMVarEdh csResult
-                            clvResult <- newTVarEdh cl
+                            csvResult <- newTMVarEIO csResult
+                            clvResult <- newTVarEIO cl
                             exitWithResult $ InMemDirCol csvResult clvResult
                           | otherwise = do
                             (lhev, rhev) <- liftIO $ do
                               lhev <- array'reader cs i
                               rhev <- array'reader cs' i
                               return (lhev, rhev)
-                            !result <- evalOp flipOperands op lhev rhev
+                            !result <-
+                              liftEdh $ evalOp flipOperands op lhev rhev
                             liftIO $ MV.unsafeWrite iov i result
                             go $ i - 1
                     go $ cl - 1
@@ -905,21 +911,22 @@ colCmpProc ::
 colCmpProc !dtYesNo !cmp !other =
   withColumnSelfOf @a $ \ !objCol !col -> do
     let exitWithResult ::
-          Typeable (InMemDevCol YesNo) => InMemDevCol YesNo -> Edh EdhValue
+          Typeable (InMemDevCol YesNo) => InMemDevCol YesNo -> EIO EdhValue
         exitWithResult !colResult =
-          EdhObject
-            <$> createHostObjectM'
-              (edh'obj'class objCol)
-              (toDyn $ someColumn colResult)
-              [dtYesNo]
+          liftEdh $
+            EdhObject
+              <$> createHostObjectM'
+                (edh'obj'class objCol)
+                (toDyn $ someColumn colResult)
+                [dtYesNo]
 
-        vecOp = do
+        vecOp = liftEIO $ do
           (cs, cl) <- view'column'data col
-          fromEdh' @a other >>= \case
+          liftEdh (fromEdh' @a other) >>= \case
             Nothing -> return edhNA
             Just !rhv -> do
-              csResult <- liftIO $ do
-                (fp, csResult) <- newDeviceArray @YesNo cl
+              csResult <- do
+                (fp, csResult) <- liftIO $ newDeviceArray @YesNo cl
                 let p = unsafeForeignPtrToPtr fp
                     go i
                       | i < 0 = return ()
@@ -927,27 +934,27 @@ colCmpProc !dtYesNo !cmp !other =
                         lhev <- array'reader cs i
                         pokeElemOff p i $ yesOrNo $ cmp lhev rhv
                         go $ i - 1
-                go $ cl - 1
+                liftIO $ go $ cl - 1
                 return csResult
-              csvResult <- newTMVarEdh csResult
-              clvResult <- newTVarEdh cl
+              csvResult <- newTMVarEIO csResult
+              clvResult <- newTVarEIO cl
               exitWithResult $ InMemDevCol csvResult clvResult
 
         elemOp ::
           forall c' f'. ManagedColumn c' f' a => Object -> c' a -> Edh EdhValue
-        elemOp _ col' = do
+        elemOp _ col' = liftEIO $ do
           (cs, cl) <- view'column'data col
           (cs', cl') <- view'column'data col'
           if cl' /= cl
             then
-              throwEdhM UsageError $
+              throwEIO UsageError $
                 "column length mistmatch: "
                   <> T.pack (show cl)
                   <> " vs "
                   <> T.pack (show cl')
             else do
-              csResult <- liftIO $ do
-                (fp, csResult) <- newDeviceArray @YesNo cl
+              csResult <- do
+                (fp, csResult) <- liftIO $ newDeviceArray @YesNo cl
                 let p = unsafeForeignPtrToPtr fp
                     go i
                       | i < 0 = return ()
@@ -956,10 +963,10 @@ colCmpProc !dtYesNo !cmp !other =
                         rhev <- array'reader cs' i
                         pokeElemOff p i $ yesOrNo $ cmp lhev rhev
                         go $ i - 1
-                go $ cl - 1
+                liftIO $ go $ cl - 1
                 return csResult
-              csvResult <- newTMVarEdh csResult
-              clvResult <- newTVarEdh cl
+              csvResult <- newTMVarEIO csResult
+              clvResult <- newTVarEIO cl
               exitWithResult $ InMemDevCol csvResult clvResult
 
     withColumnOf' @a other elemOp <|> vecOp
@@ -981,21 +988,22 @@ devColOpProc !op !other =
             Typeable f'
           ) =>
           c' a ->
-          Edh EdhValue
+          EIO EdhValue
         exitWithNewClone !colResult =
-          EdhObject
-            <$> mutCloneHostObjectM
-              objCol
-              objCol
-              (someColumn colResult)
+          liftEdh $
+            EdhObject
+              <$> mutCloneHostObjectM
+                objCol
+                objCol
+                (someColumn colResult)
 
-        vecOp = do
+        vecOp = liftEIO $ do
           (cs, cl) <- view'column'data col
-          fromEdh' @a other >>= \case
+          liftEdh (fromEdh' @a other) >>= \case
             Nothing -> return edhNA
             Just rhv -> do
-              csResult <- liftIO $ do
-                (fp, csResult) <- newDeviceArray @a cl
+              csResult <- do
+                (fp, csResult) <- liftIO $ newDeviceArray @a cl
                 let p = unsafeForeignPtrToPtr fp
                     go i
                       | i < 0 = return ()
@@ -1003,27 +1011,27 @@ devColOpProc !op !other =
                         lhev <- array'reader cs i
                         pokeElemOff p i $ op lhev rhv
                         go $ i - 1
-                go $ cl - 1
+                liftIO $ go $ cl - 1
                 return csResult
-              csvResult <- newTMVarEdh csResult
-              clvResult <- newTVarEdh cl
+              csvResult <- newTMVarEIO csResult
+              clvResult <- newTVarEIO cl
               exitWithNewClone $ InMemDevCol csvResult clvResult
 
         elemOp ::
           forall c' f'. ManagedColumn c' f' a => Object -> c' a -> Edh EdhValue
-        elemOp _ col' = do
+        elemOp _ col' = liftEIO $ do
           (cs, cl) <- view'column'data col
           (cs', cl') <- view'column'data col'
           if cl' /= cl
             then
-              throwEdhM UsageError $
+              throwEIO UsageError $
                 "column length mistmatch: "
                   <> T.pack (show cl)
                   <> " vs "
                   <> T.pack (show cl')
             else do
-              csResult <- liftIO $ do
-                (fp, csResult) <- newDeviceArray @a cl
+              csResult <- do
+                (fp, csResult) <- liftIO $ newDeviceArray @a cl
                 let p = unsafeForeignPtrToPtr fp
                     go i
                       | i < 0 = return ()
@@ -1032,10 +1040,10 @@ devColOpProc !op !other =
                         rhev <- array'reader cs' i
                         pokeElemOff p i $ op lhev rhev
                         go $ i - 1
-                go $ cl - 1
+                liftIO $ go $ cl - 1
                 return csResult
-              csvResult <- newTMVarEdh csResult
-              clvResult <- newTVarEdh cl
+              csvResult <- newTMVarEIO csResult
+              clvResult <- newTVarEIO cl
               exitWithNewClone $ InMemDevCol csvResult clvResult
 
     withColumnOf' @a other elemOp <|> vecOp
@@ -1057,48 +1065,49 @@ dirColOpProc !op !other =
             Typeable f'
           ) =>
           c' a ->
-          Edh EdhValue
+          EIO EdhValue
         exitWithNewClone !colResult =
-          EdhObject
-            <$> mutCloneHostObjectM
-              objCol
-              objCol
-              (someColumn colResult)
+          liftEdh $
+            EdhObject
+              <$> mutCloneHostObjectM
+                objCol
+                objCol
+                (someColumn colResult)
 
-        vecOp = do
+        vecOp = liftEIO $ do
           (cs, cl) <- view'column'data col
-          fromEdh' @a other >>= \case
+          liftEdh (fromEdh' @a other) >>= \case
             Nothing -> return edhNA
             Just rhv -> do
-              csResult <- liftIO $ do
-                (iov, csResult) <- newDirectArray @a cl
+              csResult <- do
+                (iov, csResult) <- liftIO $ newDirectArray @a cl
                 let go i
                       | i < 0 = return ()
                       | otherwise = do
                         lhev <- array'reader cs i
                         MV.unsafeWrite iov i $ op lhev rhv
                         go $ i - 1
-                go $ cl - 1
+                liftIO $ go $ cl - 1
                 return csResult
-              csvResult <- newTMVarEdh csResult
-              clvResult <- newTVarEdh cl
+              csvResult <- newTMVarEIO csResult
+              clvResult <- newTVarEIO cl
               exitWithNewClone $ InMemDirCol csvResult clvResult
 
         elemOp ::
           forall c' f'. ManagedColumn c' f' a => Object -> c' a -> Edh EdhValue
-        elemOp _ col' = do
+        elemOp _ col' = liftEIO $ do
           (cs, cl) <- view'column'data col
           (cs', cl') <- view'column'data col'
           if cl' /= cl
             then
-              throwEdhM UsageError $
+              throwEIO UsageError $
                 "column length mistmatch: "
                   <> T.pack (show cl)
                   <> " vs "
                   <> T.pack (show cl')
             else do
-              csResult <- liftIO $ do
-                (iov, csResult) <- newDirectArray @a cl
+              csResult <- do
+                (iov, csResult) <- liftIO $ newDirectArray @a cl
                 let go i
                       | i < 0 = return ()
                       | otherwise = do
@@ -1106,10 +1115,10 @@ dirColOpProc !op !other =
                         rhev <- array'reader cs' i
                         MV.unsafeWrite iov i $ op lhev rhev
                         go $ i - 1
-                go $ cl - 1
+                liftIO $ go $ cl - 1
                 return csResult
-              csvResult <- newTMVarEdh csResult
-              clvResult <- newTVarEdh cl
+              csvResult <- newTMVarEIO csResult
+              clvResult <- newTVarEIO cl
               exitWithNewClone $ InMemDirCol csvResult clvResult
 
     withColumnOf' @a other elemOp <|> vecOp
@@ -1123,24 +1132,23 @@ colInpProc ::
 colInpProc !op !other =
   withColumnSelfOf @a $ \_objCol !col -> do
     let vecOp = do
-          (cs, cl) <- view'column'data col
+          (cs, cl) <- liftEIO $ view'column'data col
           fromEdh' @a other >>= \case
             Nothing -> return ()
-            Just rhv ->
-              liftIO $ do
-                let go i
-                      | i < 0 = return ()
-                      | otherwise = do
-                        lhev <- array'reader cs i
-                        array'writer cs i $ op lhev rhv
-                        go $ i - 1
-                go $ cl - 1
+            Just rhv -> do
+              let go i
+                    | i < 0 = return ()
+                    | otherwise = do
+                      lhev <- array'reader cs i
+                      array'writer cs i $ op lhev rhv
+                      go $ i - 1
+              liftIO $ go $ cl - 1
 
         elemOp ::
           forall c' f'. ManagedColumn c' f' a => Object -> c' a -> Edh ()
         elemOp _ col' = do
-          (cs, cl) <- view'column'data col
-          (cs', cl') <- view'column'data col'
+          (cs, cl) <- liftEIO $ view'column'data col
+          (cs', cl') <- liftEIO $ view'column'data col'
           if cl' /= cl
             then
               throwEdhM UsageError $
@@ -1148,7 +1156,7 @@ colInpProc !op !other =
                   <> T.pack (show cl)
                   <> " vs "
                   <> T.pack (show cl')
-            else liftIO $ do
+            else do
               let go i
                     | i < 0 = return ()
                     | otherwise = do
@@ -1156,7 +1164,7 @@ colInpProc !op !other =
                       rhev <- array'reader cs' i
                       array'writer cs i $ op lhev rhev
                       go $ i - 1
-              go $ cl - 1
+              liftIO $ go $ cl - 1
 
     withColumnOf' @a other elemOp <|> vecOp
     EdhObject . edh'scope'that . contextScope . edh'context <$> edhThreadState

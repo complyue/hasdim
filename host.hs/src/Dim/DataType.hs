@@ -7,6 +7,7 @@ module Dim.DataType where
 
 import Control.Applicative
 import Control.Monad
+import Control.Monad.IO.Class
 import Data.Dynamic
 import Data.Lossless.Decimal as D
 import Data.Maybe
@@ -262,11 +263,11 @@ data DeviceArray a = (Storable a, EdhXchg a, Typeable a) =>
 instance FlatArray DeviceArray a where
   array'capacity = deviceArrayCapacity
   array'duplicate = dupDeviceArray
-  array'reader (DeviceArray _cap fp) = \ !i -> peekElemOff p i
+  array'reader (DeviceArray _cap fp) = \ !i -> liftIO $ peekElemOff p i
     where
       -- note: withForeignPtr can not be safer here
       p = unsafeForeignPtrToPtr fp
-  array'writer (DeviceArray _cap fp) = \ !i !a -> pokeElemOff p i a
+  array'writer (DeviceArray _cap fp) = \ !i !a -> liftIO $ pokeElemOff p i a
     where
       -- note: withForeignPtr can not be safer here
       p = unsafeForeignPtrToPtr fp
@@ -278,19 +279,19 @@ data DirectArray a
 instance FlatArray DirectArray a where
   array'capacity = directArrayCapacity
   array'duplicate = dupDirectArray
-  array'reader (DirectArray iov) = \ !i -> MV.unsafeRead iov i
-  array'writer (DirectArray iov) = \ !i !a -> MV.unsafeWrite iov i a
+  array'reader (DirectArray iov) = \ !i -> liftIO $ MV.unsafeRead iov i
+  array'writer (DirectArray iov) = \ !i !a -> liftIO $ MV.unsafeWrite iov i a
   array'data'ptr _a _ = mzero
 
 emptyDeviceArray ::
   forall a. (EdhXchg a, Typeable a, Storable a) => IO (DeviceArray a)
-emptyDeviceArray = do
+emptyDeviceArray = liftIO $ do
   !np <- newForeignPtr_ nullPtr
   return $ DeviceArray @a 0 np
 
 emptyDirectArray ::
   forall a. (Eq a, EdhXchg a, Typeable a) => IO (DirectArray a)
-emptyDirectArray = do
+emptyDirectArray = liftIO $ do
   !iov <- MV.new 0
   return $ DirectArray @a iov
 
@@ -299,7 +300,7 @@ newDeviceArray ::
   (Eq a, Storable a, EdhXchg a, Typeable a) =>
   ArrayCapacity ->
   IO (ForeignPtr a, DeviceArray a)
-newDeviceArray !cap = do
+newDeviceArray !cap = liftIO $ do
   !p <- callocArray @a cap
   !fp <- newForeignPtr finalizerFree p
   return (fp, DeviceArray @a cap fp)
@@ -317,14 +318,14 @@ newDirectArray' ::
   a ->
   ArrayCapacity ->
   IO (MV.IOVector a, DirectArray a)
-newDirectArray' !fill'val !cap = do
+newDirectArray' !fill'val !cap = liftIO $ do
   !iov <- MV.unsafeNew cap
   MV.set iov fill'val
   return (iov, DirectArray @a iov)
 
 dupDeviceArray ::
   DeviceArray a -> ArrayLength -> ArrayCapacity -> IO (DeviceArray a)
-dupDeviceArray (DeviceArray !capSrc !fpSrc) !lenSrc !capNew = do
+dupDeviceArray (DeviceArray !capSrc !fpSrc) !lenSrc !capNew = liftIO $ do
   !p' <- callocArray capNew
   !fp' <- newForeignPtr finalizerFree p'
   withForeignPtr fpSrc $
@@ -333,7 +334,7 @@ dupDeviceArray (DeviceArray !capSrc !fpSrc) !lenSrc !capNew = do
 
 dupDirectArray ::
   DirectArray a -> ArrayLength -> ArrayCapacity -> IO (DirectArray a)
-dupDirectArray (DirectArray !iovSrc) !lenSrc !capNew = do
+dupDirectArray (DirectArray !iovSrc) !lenSrc !capNew = liftIO $ do
   !iov' <- MV.new capNew
   let !cpLen = min lenSrc capNew
   when (cpLen > 0) $

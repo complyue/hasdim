@@ -4,6 +4,7 @@ module Dim.DiskBack where
 
 import Control.Concurrent.STM
 import Control.Exception
+import Control.Monad
 import Control.Monad.IO.Class
 import Data.Dynamic
 import Data.List.NonEmpty (NonEmpty (..))
@@ -28,8 +29,8 @@ instance
   ManagedColumn DbColumn DeviceArray a
   where
   view'column'data (DbColumn !dba !dbc'offs) =
-    readTMVarEdh (db'array'store dba) >>= \case
-      Left !err -> throwHostM err
+    readTMVarEIO (db'array'store dba) >>= \case
+      Left !err -> throwHostEIO err
       Right (_shape, !hdr, !dbcs) -> do
         !dba'len <- liftIO $ fromIntegral <$> readDbArrayLength hdr
         return
@@ -39,10 +40,10 @@ instance
           )
 
   read'column'length (DbColumn !dba !dbc'offs) =
-    atomically (readTMVar $ db'array'store dba) >>= \case
-      Left !err -> throwIO err
+    readTMVarEIO (db'array'store dba) >>= \case
+      Left !err -> throwHostEIO err
       Right (_shape, !hdr, _dbcs) -> do
-        !dba'len <- fromIntegral <$> readDbArrayLength hdr
+        !dba'len <- liftIO $ fromIntegral <$> readDbArrayLength hdr
         return $ dba'len - dbc'offs
 
   grow'column'capacity (DbColumn !dba !dbc'offs) !newCap =
@@ -70,32 +71,32 @@ instance
               )
 
   mark'column'length (DbColumn !dba !dbc'offs) !newLen =
-    atomically (readTMVar (db'array'store dba)) >>= \case
-      Left !err -> throwIO err
+    readTMVarEIO (db'array'store dba) >>= \case
+      Left !err -> throwHostEIO err
       Right (_shape, !hdr, !dbcs) -> do
         let !cap = deviceArrayCapacity dbcs
         if newLen' < 0 || newLen' > cap
           then
-            throwHostIO
+            throwEIO
               UsageError
               $ T.pack $
                 "column length out of range: " <> show newLen <> " vs "
                   <> show (cap - dbc'offs)
-          else do
-            writeDbArrayLength hdr $ fromIntegral newLen'
-            return ()
+          else
+            void $
+              liftIO $ writeDbArrayLength hdr $ fromIntegral newLen'
     where
       !newLen' = newLen + dbc'offs
 
   view'column'slice (DbColumn !dba !dbc'offs) !start !stop =
-    readTMVarEdh (db'array'store dba) >>= \case
-      Left !err -> throwHostM err
+    readTMVarEIO (db'array'store dba) >>= \case
+      Left !err -> throwHostEIO err
       Right (_shape, !hdr, DeviceArray _cap !fp0) -> do
         !dba'len <- liftIO $ fromIntegral <$> readDbArrayLength hdr
         let !cl = dba'len - dbc'offs
         if
             | stop > cl ->
-              throwEdhM
+              throwEIO
                 UsageError
                 $ T.pack $
                   "column slice range out of range: "
@@ -109,11 +110,11 @@ instance
                 (StayComposed, someColumn $ DbColumn dba $ dbc'offs + start)
             | otherwise -> do
               !csvNew <-
-                newTMVarEdh $
+                newTMVarEIO $
                   DeviceArray @a (stop - start) $
                     plusForeignPtr fp0 $
                       (dbc'offs + start) * sizeOf (undefined :: a)
-              !clvNew <- newTVarEdh $ stop - start
+              !clvNew <- newTVarEIO $ stop - start
               return (ExtractAlone, someColumn $ InMemDevCol csvNew clvNew)
 
   copy'column'slice
@@ -122,8 +123,8 @@ instance
     !start
     !stop
     !step =
-      readTMVarEdh (db'array'store dba) >>= \case
-        Left !err -> throwHostM err
+      readTMVarEIO (db'array'store dba) >>= \case
+        Left !err -> throwHostEIO err
         Right (_shape, !hdr, DeviceArray _cap (fp0 :: ForeignPtr a)) -> do
           !dba'len <- liftIO $ fromIntegral <$> readDbArrayLength hdr
           let fp :: ForeignPtr a =
@@ -131,7 +132,7 @@ instance
               !cl = dba'len - dbc'offs
           if stop < start || start < 0 || stop > cl
             then
-              throwEdhM
+              throwEIO
                 UsageError
                 $ T.pack $
                   "column slice range out of range: " <> show start <> ":"
@@ -143,7 +144,7 @@ instance
                   !len = if r == 0 then abs q else 1 + abs q
               if ccap < len
                 then
-                  throwEdhM
+                  throwEIO
                     UsageError
                     $ T.pack $
                       "capacity too small: " <> show ccap <> " vs "
@@ -166,31 +167,33 @@ instance
                                   peekElemOff p n >>= pokeElemOff p' i
                                   fillRng (n + step) (i + 1)
                         fillRng start 0
-                  !csvNew <- newTMVarEdh cs'
-                  !clvNew <- newTVarEdh len
+                  !csvNew <- newTMVarEIO cs'
+                  !clvNew <- newTVarEIO len
                   return
                     (ExtractAlone, someColumn $ InMemDevCol csvNew clvNew)
 
   derive'new'column (DbColumn !dba !dbc'offs) !sizer !deriver =
-    atomically (readTMVar $ db'array'store dba) >>= \case
-      Left !err -> throwIO err
+    readTMVarEIO (db'array'store dba) >>= \case
+      Left !err -> throwHostEIO err
       Right (_shape, !hdr, DeviceArray !cap (fp0 :: ForeignPtr a)) -> do
         let !cs =
               DeviceArray
                 (cap - dbc'offs)
                 (plusForeignPtr fp0 $ dbc'offs * sizeOf (undefined :: a))
-        !cl <- subtract dbc'offs . fromIntegral <$> readDbArrayLength hdr
+        !cl <-
+          liftIO $
+            subtract dbc'offs . fromIntegral <$> readDbArrayLength hdr
 
         let !cap' = sizer (cs, cl, deviceArrayCapacity cs)
-        (_, !cs') <- newDeviceArray cap'
+        (_, !cs') <- liftIO $ newDeviceArray cap'
         !cl' <- deriver (cs, cl) (cs', cap')
-        !csv' <- newTMVarIO cs'
-        !clv' <- newTVarIO cl'
+        !csv' <- newTMVarEIO cs'
+        !clv' <- newTVarEIO cl'
         return $ someColumn $ InMemDevCol csv' clv'
 
   extract'column'bool (DbColumn !dba !dbc'offs) !idxCol =
-    readTMVarEdh (db'array'store dba) >>= \case
-      Left !err -> throwHostM err
+    readTMVarEIO (db'array'store dba) >>= \case
+      Left !err -> throwHostEIO err
       Right (_shape, !hdr, DeviceArray _cap (fp0 :: ForeignPtr a)) -> do
         (!idxa, !idxl) <- view'column'data idxCol
         let !fp = plusForeignPtr fp0 $ dbc'offs * sizeOf (undefined :: a)
@@ -198,7 +201,7 @@ instance
           liftIO $ subtract dbc'offs . fromIntegral <$> readDbArrayLength hdr
         if idxl /= cl
           then
-            throwEdhM
+            throwEIO
               UsageError
               $ T.pack $
                 "bool index shape mismatch - " <> show idxl <> " vs "
@@ -216,17 +219,17 @@ instance
                           array'reader idxa i >>= \case
                             YesNo 0 -> extractAt (i + 1) n
                             _ -> do
-                              peekElemOff p i >>= pokeElemOff p' n
+                              liftIO $ peekElemOff p i >>= pokeElemOff p' n
                               extractAt (i + 1) (n + 1)
                 extractAt 0 0
             let !cs' = DeviceArray cl fp'
-            !csvNew <- newTMVarEdh cs'
-            !clvNew <- newTVarEdh cl'
+            !csvNew <- newTMVarEIO cs'
+            !clvNew <- newTVarEIO cl'
             return $ someColumn $ InMemDevCol csvNew clvNew
 
   extract'column'fancy (DbColumn !dba !dbc'offs) !idxCol =
-    readTMVarEdh (db'array'store dba) >>= \case
-      Left !err -> throwHostM err
+    readTMVarEIO (db'array'store dba) >>= \case
+      Left !err -> throwHostEIO err
       Right (_shape, _hdr, DeviceArray _cap (fp0 :: ForeignPtr a)) -> do
         (!idxa, !idxl) <- view'column'data idxCol
         let !fp = plusForeignPtr fp0 $ dbc'offs * sizeOf (undefined :: a)
@@ -245,6 +248,6 @@ instance
                       extractAt (i + 1)
             extractAt 0
         let !cs' = DeviceArray idxl fp'
-        !csvNew <- newTMVarEdh cs'
-        !clvNew <- newTVarEdh idxl
+        !csvNew <- newTMVarEIO cs'
+        !clvNew <- newTVarEIO idxl
         return $ someColumn $ InMemDevCol csvNew clvNew

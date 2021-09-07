@@ -66,10 +66,10 @@ readTableRow tbl@(Table _cv !rcv _tcols) !i = do
     let readCell ::
           (AttrKey, Object, SomeColumn) ->
           Edh (AttrKey, EdhValue)
-        readCell (colKey, _colInst, SomeColumn _ col) = do
+        readCell (colKey, _colInst, SomeColumn _ col) = liftEIO $ do
           (cs, _cl) <- view'column'data col
           !hv <- liftIO $ array'reader cs rowIdx
-          (colKey,) <$> toEdh hv
+          liftEdh $ (colKey,) <$> toEdh hv
     odFromList <$> sequence (readCell <$> cols)
 
 growTable :: ArrayCapacity -> Table -> Edh ()
@@ -87,12 +87,12 @@ growTable !newCap tbl@(Table cv rcv _tcols)
     when (newCap < rc) $ writeTVarEdh rcv newCap
     -- now shrink all columns
     -- TODO do we need such a reusable utility `seqContIO` ?
-    let growAll :: [(AttrKey, Object, SomeColumn)] -> Edh ()
+    let growAll :: [(AttrKey, Object, SomeColumn)] -> EIO ()
         growAll [] = return ()
         growAll ((_, _, SomeColumn _ !col) : rest) = do
           void $ grow'column'capacity col newCap
           growAll rest
-    growAll cols
+    liftEIO $ growAll cols
     -- update table capacity after all columns successfully updated
     writeTVarEdh cv newCap
 
@@ -109,7 +109,7 @@ markTable !newCnt tbl@(Table cv rcv _tcols) = withTblCols tbl $ \ !cols -> do
       -- update row count now in case it's being shortened
       when (newCnt < rc) $ writeTVarEdh rcv newCnt
       -- now mark all columns
-      liftIO $
+      liftEIO $
         sequence_ $
           (<$> cols) $ \(_, _, SomeColumn _ !col) ->
             mark'column'length col newCnt
@@ -176,24 +176,25 @@ createTableClass !dtBox !clsColumn =
             EdhObject !obj -> do
               let tryCol =
                     withColumn obj $ \_colInst (SomeColumn _ !col) ->
-                      view'column'data col >>= \(!cs, !cl) ->
-                        if array'capacity cs < ctorCap || cl < ctorCnt
-                          then
-                            throwEdhM UsageError $
-                              "Column "
-                                <> attrKeyStr colKey
-                                <> " is not long enough: "
-                                <> T.pack (show cl)
-                                <> "/"
-                                <> T.pack (show $ array'capacity cs)
-                                <> " vs "
-                                <> T.pack (show ctorCnt)
-                                <> "/"
-                                <> T.pack (show ctorCap)
-                          else do
-                            -- todo leave a longer column w/o truncating it?
-                            liftIO $ mark'column'length col ctorCnt
-                            return (colKey, obj)
+                      liftEIO $
+                        view'column'data col >>= \(!cs, !cl) ->
+                          if array'capacity cs < ctorCap || cl < ctorCnt
+                            then
+                              throwEIO UsageError $
+                                "Column "
+                                  <> attrKeyStr colKey
+                                  <> " is not long enough: "
+                                  <> T.pack (show cl)
+                                  <> "/"
+                                  <> T.pack (show $ array'capacity cs)
+                                  <> " vs "
+                                  <> T.pack (show ctorCnt)
+                                  <> "/"
+                                  <> T.pack (show ctorCap)
+                            else do
+                              -- todo leave a longer column w/o truncating it?
+                              mark'column'length col ctorCnt
+                              return (colKey, obj)
 
                   tryDt = withDataType obj $ \ !dt ->
                     createInMemColumn dt ctorCap ctorCnt >>= \ !col ->
@@ -328,25 +329,26 @@ createTableClass !dtBox !clsColumn =
               EdhObject !obj -> do
                 let tryCol =
                       withColumn obj $ \_colInst (SomeColumn _ !col) ->
-                        view'column'data col >>= \(!cs, !cl) ->
-                          if array'capacity cs < cap || cl < rc
-                            then
-                              throwEdhM UsageError $
-                                "Column "
-                                  <> attrKeyStr colKey
-                                  <> " is not long enough: "
-                                  <> T.pack (show cl)
-                                  <> "/"
-                                  <> T.pack (show $ array'capacity cs)
-                                  <> " vs "
-                                  <> T.pack (show rc)
-                                  <> "/"
-                                  <> T.pack (show cap)
-                            else do
-                              -- todo leave a longer column w/o truncating it?
-                              liftIO $ mark'column'length col rc
-                              iopdInsertEdh colKey obj tcols
-                              return $ EdhObject obj
+                        liftEIO $
+                          view'column'data col >>= \(!cs, !cl) ->
+                            if array'capacity cs < cap || cl < rc
+                              then
+                                throwEIO UsageError $
+                                  "Column "
+                                    <> attrKeyStr colKey
+                                    <> " is not long enough: "
+                                    <> T.pack (show cl)
+                                    <> "/"
+                                    <> T.pack (show $ array'capacity cs)
+                                    <> " vs "
+                                    <> T.pack (show rc)
+                                    <> "/"
+                                    <> T.pack (show cap)
+                              else do
+                                -- todo leave a longer column w/o truncating it?
+                                mark'column'length col rc
+                                atomicallyEIO $ iopdInsert colKey obj tcols
+                                return $ EdhObject obj
 
                     tryDt = withDataType obj $ \ !dt -> do
                       !col <- createInMemColumn dt cap rc
@@ -433,7 +435,7 @@ createTableClass !dtBox !clsColumn =
             idxCols ::
               ( Object ->
                 SomeColumn ->
-                Edh (Object, ArrayCapacity, ArrayLength)
+                EIO (Object, ArrayCapacity, ArrayLength)
               ) ->
               Edh EdhValue
             idxCols doCol = do
@@ -444,8 +446,8 @@ createTableClass !dtBox !clsColumn =
                     ArrayLength ->
                     [(AttrKey, Object)] ->
                     [(AttrKey, Object, SomeColumn)] ->
-                    Edh EdhValue
-                  go !rowCap' !rowCnt' rCols [] = do
+                    EIO EdhValue
+                  go !rowCap' !rowCnt' rCols [] = liftEdh $ do
                     !cv' <- newTVarEdh rowCap'
                     !rcv' <- newTVarEdh rowCnt'
                     !tcols' <- iopdFromListEdh $ reverse rCols
@@ -468,7 +470,7 @@ createTableClass !dtBox !clsColumn =
                           (min cl' rowCnt')
                           ((colKey, colObj') : rCols)
                           rest
-              go rowCap rowCnt [] tcols
+              liftEIO $ go rowCap rowCnt [] tcols
 
         withColumnOf' @YesNo idxVal withBoolIdx
           <|> withColumnOf' @Int idxVal withIntpIdx
@@ -601,7 +603,7 @@ createTableClass !dtBox !clsColumn =
                   specs
                   ((!colKey, _colObj, SomeColumn _ !col) : rest) =
                     specifiedColWidth colKey >>= \ !colWidth -> do
-                      (!cs, _cl) <- view'column'data col
+                      (!cs, _cl) <- liftEIO $ view'column'data col
                       let readCell !rowIdx = do
                             !hvCell <- liftIO $ array'reader cs rowIdx
                             !vCell <- toEdh hvCell
