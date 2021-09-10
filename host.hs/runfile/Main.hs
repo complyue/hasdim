@@ -3,7 +3,7 @@ module Main where
 -- import           Debug.Trace
 
 import Dim.EHI
-import Language.Edh.CHI
+import Language.Edh.MHI
 import Language.Edh.Net
 import Language.Edh.Run
 import System.Environment (getArgs)

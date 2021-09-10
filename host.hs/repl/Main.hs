@@ -3,7 +3,7 @@ module Main where
 -- import           Debug.Trace
 
 import Dim.EHI (installDimBatteries)
-import Language.Edh.CHI
+import Language.Edh.MHI
 import Language.Edh.Net (installNetBatteries)
 import Language.Edh.Repl
 import System.Environment (getArgs)
