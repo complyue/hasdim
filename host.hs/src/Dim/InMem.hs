@@ -360,16 +360,35 @@ createInMemColumn ::
   ArrayCapacity ->
   ArrayLength ->
   Edh SomeColumn
-createInMemColumn !gdt !cap !len = case gdt of
+createInMemColumn !gdt !cap !len =
+  createInMemColumn' gdt cap len $ return . someColumn
+
+createInMemColumn' ::
+  forall a r.
+  DataType a ->
+  ArrayCapacity ->
+  ArrayLength ->
+  ( forall c f.
+    ( ManagedColumn c f a,
+      Typeable (c a),
+      Typeable (f a),
+      Typeable c,
+      Typeable f
+    ) =>
+    c a ->
+    Edh r
+  ) ->
+  Edh r
+createInMemColumn' !gdt !cap !len exit = case gdt of
   DeviceDt dt -> case device'data'type dt of
     (_ :: TypeRep a) -> do
       (_fp, !cs) <- liftIO $ newDeviceArray @a cap
       !csv <- newTMVarEdh cs
       !clv <- newTVarEdh len
-      return $ someColumn $ InMemDevCol csv clv
+      exit $ InMemDevCol csv clv
   DirectDt dt -> do
     let defv = direct'data'default dt
     (_iov, !cs) <- liftIO $ newDirectArray' defv cap
     !csv <- newTMVarEdh cs
     !clv <- newTVarEdh len
-    return $ someColumn $ InMemDirCol csv clv
+    exit $ InMemDirCol csv clv

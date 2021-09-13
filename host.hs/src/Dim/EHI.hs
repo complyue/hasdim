@@ -1,7 +1,9 @@
 module Dim.EHI
   ( installDimBatteries,
-    withColumnClass,
-    withYesNoDtype,
+    getColumnClass,
+    getPredefinedDtype,
+    getPredefinedDtype',
+    createColumnObject,
     module Dim.XCHG,
     module Dim.DataType,
     module Dim.Column,
@@ -16,8 +18,11 @@ where
 -- import           Debug.Trace
 
 import Control.Monad.Reader
+import Data.Dynamic
 import Data.Lossless.Decimal as D
 import Data.Maybe
+import qualified Data.Text as T
+import Data.Typeable hiding (TypeRep, typeOf, typeRep)
 import Dim.ColArts
 import Dim.Column
 import Dim.DataType
@@ -31,6 +36,7 @@ import Dim.Table
 import Dim.XCHG
 import Foreign hiding (void)
 import Language.Edh.MHI
+import Type.Reflection
 import Prelude
 
 builtinDataTypes :: Edh [(DataTypeIdent, Object)]
@@ -185,16 +191,34 @@ installDimBatteries !world = do
       prepareExpStoreM (edh'scope'this moduScope) >>= \ !esExps ->
         iopdUpdateEdh moduArts esExps
 
-withColumnClass :: Edh Object
-withColumnClass =
+getColumnClass :: Edh Object
+getColumnClass =
   importModuleM "dim/RT" >>= \ !moduRT ->
     getObjPropertyM moduRT (AttrByName "Column") >>= \case
       EdhObject !clsColumn -> return clsColumn
       _ -> naM "bug: dim/RT provides no Column class"
 
-withYesNoDtype :: Edh Object
-withYesNoDtype =
+getPredefinedDtype :: AttrName -> Edh Object
+getPredefinedDtype !dti =
   importModuleM "dim/dtypes" >>= \ !moduDtypes ->
-    getObjPropertyM moduDtypes (AttrByName "yesno") >>= \case
+    getObjPropertyM moduDtypes (AttrByName dti) >>= \case
       EdhObject !clsDtype -> return clsDtype
-      _ -> naM "bug: dim/dtypes provides no `yesno` dtype"
+      _ -> naM $ "dim/dtypes provides no `" <> dti <> "` dtype"
+
+getPredefinedDtype' ::
+  forall a. (Typeable a) => AttrName -> Edh (DataType a, Object)
+getPredefinedDtype' !dti =
+  importModuleM "dim/dtypes" >>= \ !moduDtypes ->
+    getObjPropertyM moduDtypes (AttrByName dti) >>= \case
+      EdhObject !dto -> withDataType dto $ \(gdt :: DataType a') ->
+        case eqT of
+          Nothing ->
+            naM $
+              "requested dtype " <> dti <> " not compatible with host type: "
+                <> T.pack (show $ typeRep @a)
+          Just (Refl :: a' :~: a) -> return (gdt, dto)
+      _ -> naM $ "dim/dtypes provides no `" <> dti <> "` dtype"
+
+createColumnObject :: Object -> SomeColumn -> Object -> Edh Object
+createColumnObject !clsColumn !col !dto =
+  createHostObjectM' clsColumn (toDyn col) [dto]
