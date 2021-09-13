@@ -188,15 +188,13 @@ installDimBatteries !world = do
 withColumnClass :: Edh Object
 withColumnClass =
   importModuleM "dim/RT" >>= \ !moduRT ->
-    inlineSTM $
-      lookupEdhObjAttr moduRT (AttrByName "Column") >>= \case
-        (_, EdhObject !clsColumn) -> return clsColumn
-        _ -> error "bug: dim/RT provides no Column class"
+    getObjPropertyM moduRT (AttrByName "Column") >>= \case
+      EdhObject !clsColumn -> return clsColumn
+      _ -> naM "bug: dim/RT provides no Column class"
 
 withYesNoDtype :: Edh Object
 withYesNoDtype =
   importModuleM "dim/dtypes" >>= \ !moduDtypes ->
-    inlineSTM $
-      lookupEdhObjAttr moduDtypes (AttrByName "yesno") >>= \case
-        (_, EdhObject !clsDtype) -> return clsDtype
-        _ -> error "bug: dim/dtypes provides no `yesno` dtype"
+    getObjPropertyM moduDtypes (AttrByName "yesno") >>= \case
+      EdhObject !clsDtype -> return clsDtype
+      _ -> naM "bug: dim/dtypes provides no `yesno` dtype"
