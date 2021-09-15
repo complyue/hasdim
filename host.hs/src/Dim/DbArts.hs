@@ -57,6 +57,7 @@ createDbArrayClass !clsColumn !defaultDt =
       "dataPath" !: Text ->
       "dtype" ?: Object ->
       "shape" ?: EdhValue ->
+      "overwrite" ?: Bool ->
       ArgsPack -> -- allow/ignore arbitrary ctor args for descendant classes
       Edh (Maybe Unique, ObjectStore)
     arrayAllocator
@@ -64,6 +65,7 @@ createDbArrayClass !clsColumn !defaultDt =
       (mandatoryArg -> !dataPath)
       (defaultArg defaultDt -> !dto)
       (optionalArg -> !maybeShape)
+      (defaultArg False -> overwrite)
       _ctorOtherArgs = withDataType dto $ \case
         DirectDt _ ->
           throwEdhM UsageError "DbArray only works with device dtype"
@@ -80,7 +82,7 @@ createDbArrayClass !clsColumn !defaultDt =
             IO (Maybe Unique, ObjectStore)
           goMemMap !mmapShape = do
             !asVar <- newEmptyTMVarIO
-            mmapDbArray @a asVar dataDir dataPath mmapShape
+            mmapDbArray @a asVar dataDir dataPath mmapShape overwrite
             atomically $
               readTMVar asVar >>= \case
                 Left !err -> throwSTM err

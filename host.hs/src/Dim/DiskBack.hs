@@ -60,6 +60,7 @@ instance
           (db'array'dir dba)
           (db'array'path dba)
           (Just $ ArrayShape $ ("", newCap + dbc'offs) :| [])
+          False
         atomically (readTMVar dbas) >>= \case
           Left !err -> throwIO err
           Right (_shape, !hdr, !dbcs) -> do
