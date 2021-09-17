@@ -23,7 +23,7 @@ import Prelude
 
 data ColumnOf a = forall c f. ManagedColumn c f a => ColumnOf (c a) !Object
 
-instance Typeable a => ScriptArgAdapter (ColumnOf a) where
+instance Typeable a => ComputArgAdapter (ColumnOf a) where
   adaptEdhArg !v = (<|> badVal) $ case edhUltimate v of
     EdhObject o ->
       withColumnOf @a o $ \_colInst !col -> return $ ColumnOf @a col o
