@@ -247,17 +247,17 @@ withColumnSelfOf !withCol = mEdh $ \ !exit !ets -> do
 
 getColumnDtype :: Object -> Edh Object
 getColumnDtype !objCol = do
-  let findSuperDto :: [Object] -> Edh Object
-      findSuperDto [] =
+  let findColDto :: [Object] -> Edh Object
+      findColDto [] =
         edhSimpleDescM (EdhObject objCol) >>= \ !badDesc ->
           naM $ "not a Column with dtype: " <> badDesc
       -- this is right and avoids unnecessary checks in vastly usual cases
-      findSuperDto [dto] = return dto
+      findColDto [dto] = return dto
       -- safe guard in case a Column instance has been further extended
-      findSuperDto (maybeDto : rest) =
-        (<|> findSuperDto rest) $
+      findColDto (maybeDto : rest) =
+        (<|> findColDto rest) $
           withDataType maybeDto $ const $ return maybeDto
-  readTVarEdh (edh'obj'supers objCol) >>= findSuperDto
+  readTVarEdh (edh'obj'supers objCol) >>= findColDto
 
 sliceColumn ::
   Object ->

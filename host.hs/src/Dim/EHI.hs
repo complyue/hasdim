@@ -43,15 +43,15 @@ import Prelude
 
 builtinDataTypes :: Edh [(DataTypeIdent, Object)]
 builtinDataTypes = do
-  yesno <- mkYesNoSuperDt "yesno"
-  box <- mkBoxSuperDt "box" edhNA
-  decimal <- mkRealFracSuperDt @Decimal yesno "decimal" D.nan (Just id)
-  float64 <- mkFloatSuperDt @Double yesno "float64"
-  float32 <- mkFloatSuperDt @Float yesno "float32"
-  int64 <- mkIntSuperDt @Int64 yesno "int64"
-  int32 <- mkIntSuperDt @Int32 yesno "int32"
-  int8 <- mkIntSuperDt @Int8 yesno "int8"
-  intp <- mkIntSuperDt @Int yesno "intp"
+  yesno <- mkYesNoColDt "yesno"
+  box <- mkBoxColDt "box" edhNA
+  decimal <- mkRealFracColDt @Decimal yesno "decimal" D.nan (Just id)
+  float64 <- mkFloatColDt @Double yesno "float64"
+  float32 <- mkFloatColDt @Float yesno "float32"
+  int64 <- mkIntColDt @Int64 yesno "int64"
+  int32 <- mkIntColDt @Int32 yesno "int32"
+  int8 <- mkIntColDt @Int8 yesno "int8"
+  intp <- mkIntColDt @Int yesno "intp"
 
   return
     [ ("float64", float64),

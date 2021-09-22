@@ -23,8 +23,8 @@ import Language.Edh.MHI
 import System.Random
 import Prelude
 
-mkYesNoSuperDt :: DataTypeIdent -> Edh Object
-mkYesNoSuperDt !dti = do
+mkYesNoColDt :: DataTypeIdent -> Edh Object
+mkYesNoColDt !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ pure ()
   !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
@@ -80,8 +80,8 @@ mkYesNoSuperDt !dti = do
     dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
     dtypeAllocator = return (Nothing, dtd)
 
-mkBoxSuperDt :: DataTypeIdent -> EdhValue -> Edh Object
-mkBoxSuperDt !dti !defv = do
+mkBoxColDt :: DataTypeIdent -> EdhValue -> Edh Object
+mkBoxColDt !dti !defv = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ pure ()
   !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
@@ -278,7 +278,7 @@ mkBoxSuperDt !dti !defv = do
     dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
     dtypeAllocator = return (Nothing, dtd)
 
-mkRealFracSuperDt ::
+mkRealFracColDt ::
   forall a.
   (RealFrac a, Random a, Eq a, EdhXchg a, Typeable a) =>
   Object ->
@@ -286,7 +286,7 @@ mkRealFracSuperDt ::
   a ->
   Maybe (D.Decimal -> a) ->
   Edh Object
-mkRealFracSuperDt !dtYesNo !dti !defv !maybeFromDec = do
+mkRealFracColDt !dtYesNo !dti !defv !maybeFromDec = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
     !clsMths <-
       sequence $
@@ -446,13 +446,13 @@ mkRealFracSuperDt !dtYesNo !dti !defv !maybeFromDec = do
       | y < 0 = 0 -- to survive `Exception: Negative exponent`
       | otherwise = x ^ (floor y :: Integer)
 
-mkFloatSuperDt ::
+mkFloatColDt ::
   forall a.
   (RealFloat a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Edh Object
-mkFloatSuperDt !dtYesNo !dti = do
+mkFloatColDt !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
     !clsMths <-
       sequence $
@@ -607,13 +607,13 @@ mkFloatSuperDt !dtYesNo !dti = do
     dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
     dtypeAllocator = return (Nothing, dtd)
 
-mkIntSuperDt ::
+mkIntColDt ::
   forall a.
   (Bits a, Integral a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Edh Object
-mkIntSuperDt !dtYesNo !dti = do
+mkIntColDt !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
     !clsMths <-
       sequence $
@@ -794,13 +794,13 @@ mkIntSuperDt !dtYesNo !dti = do
       | y < 0 = 0 -- to survive `Exception: Negative exponent`
       | otherwise = x ^ y
 
-mkBitsSuperDt ::
+mkBitsColDt ::
   forall a.
   (Bits a, Ord a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Edh Object
-mkBitsSuperDt !dtYesNo !dti = do
+mkBitsColDt !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
     !clsMths <-
       sequence $

@@ -407,14 +407,14 @@ withDbArraySelf !dbaExit = do
         _ -> withComposition rest
 
 getDbArrayDtype :: Object -> Edh Object
-getDbArrayDtype !objAry = readTVarEdh (edh'obj'supers objAry) >>= findSuperDto
+getDbArrayDtype !objAry = readTVarEdh (edh'obj'supers objAry) >>= findColDto
   where
-    findSuperDto :: [Object] -> Edh Object
-    findSuperDto [] = do
+    findColDto :: [Object] -> Edh Object
+    findColDto [] = do
       badDesc <- edhSimpleDescM (EdhObject objAry)
       naM $ "not a DbArray with dtype: " <> badDesc
     -- this is right and avoids unnecessary checks in vastly usual cases
-    findSuperDto [dto] = return dto
+    findColDto [dto] = return dto
     -- safe guard in case a DbArray instance has been further extended
-    findSuperDto (maybeDto : rest) =
-      withDataType maybeDto (const $ return maybeDto) <|> findSuperDto rest
+    findColDto (maybeDto : rest) =
+      withDataType maybeDto (const $ return maybeDto) <|> findColDto rest
