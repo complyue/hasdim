@@ -3,7 +3,6 @@ module Dim.DataType where
 
 -- import           Debug.Trace
 
-import Control.Applicative
 import Control.Monad
 import Data.Dynamic
 import Data.Lossless.Decimal as D
@@ -202,15 +201,3 @@ withDataType !dto !withDto = case edh'obj'store dto of
         _ -> mzero
     _ -> mzero
   _ -> mzero
-
-dtypeEqProc :: EdhValue -> Edh EdhValue
-dtypeEqProc !other = do
-  !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
-  case edhUltimate other of
-    EdhObject !objOther -> (<|> rtnNeg) $
-      withDataType objOther $ \ !dtOther ->
-        withDataType this $ \ !dtSelf ->
-          return $ EdhBool $ isJust $ dtOther `eqDataType` dtSelf
-    _ -> rtnNeg
-  where
-    rtnNeg = return (EdhBool False)

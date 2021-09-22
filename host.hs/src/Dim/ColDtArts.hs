@@ -1169,3 +1169,15 @@ colInpProc !op !other =
 
     withColumnOf' @a other elemOp <|> vecOp
     EdhObject . edh'scope'that . contextScope . edh'context <$> edhThreadState
+
+dtypeEqProc :: EdhValue -> Edh EdhValue
+dtypeEqProc !other = do
+  !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
+  case edhUltimate other of
+    EdhObject !objOther -> (<|> rtnNeg) $
+      withDataType objOther $ \ !dtOther ->
+        withDataType this $ \ !dtSelf ->
+          return $ EdhBool $ isJust $ dtOther `eqDataType` dtSelf
+    _ -> rtnNeg
+  where
+    rtnNeg = return (EdhBool False)
