@@ -10,8 +10,8 @@ import Data.Dynamic
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Text as T
 import Dim.Column
-import Dim.DataType
 import Dim.DbArray
+import Dim.FlatArray
 import Dim.InMem
 import Dim.XCHG
 import Foreign hiding (void)

@@ -11,6 +11,7 @@ import Data.Maybe
 import Data.Typeable hiding (TypeRep, typeOf, typeRep)
 import Dim.Column
 import Dim.DataType
+import Dim.FlatArray
 import Dim.XCHG
 import Foreign as F
 import Language.Edh.MHI

@@ -11,6 +11,7 @@ import qualified Data.Text as T
 import qualified Data.Vector.Mutable as MV
 import Dim.Column
 import Dim.DataType
+import Dim.FlatArray
 import Dim.XCHG
 import Foreign hiding (void)
 import Language.Edh.MHI

@@ -13,6 +13,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import Data.Typeable hiding (TypeRep, typeRep)
 import Dim.DataType
+import Dim.FlatArray
 import Dim.XCHG
 import Foreign
 import Language.Edh.MHI

@@ -10,8 +10,9 @@ module Dim.EHI
     module Dim.Fold,
     module Dim.InMem,
     module Dim.Table,
-    module Dim.DtArts,
+    module Dim.ColDtArts,
     module Dim.DbArray,
+    module Dim.FlatArray,
   )
 where
 
@@ -24,11 +25,12 @@ import Data.Maybe
 import qualified Data.Text as T
 import Data.Typeable hiding (TypeRep, typeOf, typeRep)
 import Dim.ColArts
+import Dim.ColDtArts
 import Dim.Column
 import Dim.DataType
 import Dim.DbArray
 import Dim.DbArts
-import Dim.DtArts
+import Dim.FlatArray
 import Dim.Float
 import Dim.Fold
 import Dim.InMem

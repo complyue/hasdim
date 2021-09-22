@@ -7,6 +7,7 @@ import Control.Monad.IO.Class
 import Data.Dynamic
 import Dim.Column
 import Dim.DataType
+import Dim.FlatArray
 import Dim.InMem
 import Foreign
 import Language.Edh.MHI

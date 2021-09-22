@@ -16,6 +16,7 @@ import Dim.Column
 import Dim.DataType
 import Dim.DbArray
 import Dim.DiskBack
+import Dim.FlatArray
 import Dim.XCHG
 import Foreign hiding (void)
 import Language.Edh.MHI

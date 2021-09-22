@@ -15,6 +15,7 @@ import qualified Data.Lossless.Decimal as D
 import Data.Text (Text)
 import qualified Data.Text as T
 import Dim.DataType
+import Dim.FlatArray
 import Dim.XCHG
 import Foreign hiding (void)
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)

@@ -157,12 +157,13 @@ library
   exposed-modules:    Dim.EHI
   other-modules:
     Dim.ColArts
+    Dim.ColDtArts
     Dim.Column
     Dim.DataType
     Dim.DbArray
     Dim.DbArts
     Dim.DiskBack
-    Dim.DtArts
+    Dim.FlatArray
     Dim.Float
     Dim.Fold
     Dim.InMem
