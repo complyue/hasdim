@@ -559,12 +559,12 @@ mkFloatColDt !dtYesNo !dti = do
                 ( "(//)",
                   EdhMethod,
                   wrapEdhProc $
-                    dirColOpProc @a (\ !x !y -> fromInteger $ floor $ x / y)
+                    devColOpProc @a (\ !x !y -> fromInteger $ floor $ x / y)
                 ),
                 ( "(//.)",
                   EdhMethod,
                   wrapEdhProc $
-                    dirColOpProc @a (\ !x !y -> fromInteger $ floor $ y / x)
+                    devColOpProc @a (\ !x !y -> fromInteger $ floor $ y / x)
                 ),
                 ( "(//=)",
                   EdhMethod,
