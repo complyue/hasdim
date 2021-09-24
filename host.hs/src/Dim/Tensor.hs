@@ -18,7 +18,7 @@ data EventTensor t = forall s t0.
   EventTensor
   { -- | Source of the event tensor
     event'source :: !(s t0),
-    -- | Extract the event data as perceived
+    -- | Convert the event data as perceived
     event'perceiver :: t0 -> STM t
   }
 
