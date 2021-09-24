@@ -488,7 +488,7 @@ evtCmpProc !dtYesNo !cmp !other =
             >>= \(AnyEventSource (evs :: s t) _evso) -> case eqT of
               Just (Refl :: t :~: a) -> exitWithResult $
                 EventTensor src $ \evd0 ->
-                  atomicallyEIO (lingering evs) >>= \case
+                  lingering evs >>= \case
                     Nothing -> return $ yesOrNo False
                     Just !rhv -> do
                       evd <- perceiver evd0
@@ -527,7 +527,7 @@ devEvsOpProc !op !other =
             >>= \(AnyEventSource (evs :: s t) _evso) -> case eqT of
               Just (Refl :: t :~: a) -> exitWithNewClone $
                 EventTensor src $ \evd0 ->
-                  atomicallyEIO (lingering evs) >>= \case
+                  lingering evs >>= \case
                     Nothing -> perceiver evd0 -- TODO this okay??
                     Just !rhv -> do
                       evd <- perceiver evd0

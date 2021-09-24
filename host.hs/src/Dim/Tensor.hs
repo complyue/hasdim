@@ -3,6 +3,7 @@ module Dim.Tensor where
 -- import           Debug.Trace
 
 import Control.Applicative
+import Control.Concurrent.STM
 import Control.Monad
 import Data.Dynamic
 import Data.Maybe
@@ -18,7 +19,7 @@ data EventTensor t = forall s t0.
   { -- | Source of the event tensor
     event'source :: !(s t0),
     -- | Extract the event data as perceived
-    event'perceiver :: t0 -> EIO t
+    event'perceiver :: t0 -> STM t
   }
 
 asTensorOf ::
