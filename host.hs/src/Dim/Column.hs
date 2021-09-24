@@ -25,16 +25,10 @@ import Prelude
 data ColumnOf a = forall c f. ManagedColumn c f a => ColumnOf (c a) !Object
 
 instance Typeable a => ComputArgAdapter (ColumnOf a) where
-  adaptEdhArg !v = (<|> badVal) $ case edhUltimate v of
+  adaptEdhArg !v = case edhUltimate v of
     EdhObject o ->
       withColumnOf @a o $ \_colInst !col -> return $ ColumnOf @a col o
     _ -> mzero
-    where
-      badVal = do
-        !badDesc <- edhValueDescM v
-        throwEdhM UsageError $
-          T.pack (show $ typeRep @a) <> " Column expected but given: "
-            <> badDesc
 
   adaptedArgValue (ColumnOf _col !obj) = EdhObject obj
 
