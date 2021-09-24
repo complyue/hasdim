@@ -163,11 +163,14 @@ library
     Dim.DbArray
     Dim.DbArts
     Dim.DiskBack
+    Dim.EvsArts
+    Dim.EvsDtArts
     Dim.FlatArray
     Dim.Float
     Dim.Fold
     Dim.InMem
     Dim.Table
+    Dim.Tensor
     Dim.XCHG
 
   hs-source-dirs:     src
