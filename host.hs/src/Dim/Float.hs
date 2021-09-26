@@ -41,6 +41,8 @@ piProc !defaultDt !clsColumn !cap (defaultArg defaultDt -> !dto) =
               <$> createHostObjectM' clsColumn (toDyn $ someColumn col) [dto]
       DirectDt _dt ->
         throwEdhM UsageError "not implemented for direct dtype yet"
+      DummyDt _dti ->
+        throwEdhM UsageError "not implemented for dummy dtype yet"
   where
     badDtype =
       edhObjDescM dto >>= \ !badDesc ->
@@ -88,6 +90,8 @@ floatOpProc !fop (mandatoryArg -> !colObj) =
                         (someColumn col')
         DirectDt _dt ->
           throwEdhM UsageError "not implemented for direct dtype yet"
+        DummyDt _dti ->
+          throwEdhM UsageError "not implemented for dummy dtype yet"
   where
     notFloatDt dti = throwEdhM UsageError $ "not a floating dtype: " <> dti
     dtMismatch = throwEdhM EvalError "bug: dtype mismatch column"

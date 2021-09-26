@@ -498,6 +498,32 @@ mkBitsEvtDt clsEvs !dtYesNo !dti = do
     dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
     dtypeAllocator = return (Nothing, dtd)
 
+mkEvsDataType ::
+  forall a.
+  (Typeable a) =>
+  DataTypeIdent ->
+  Edh () ->
+  Edh Object
+mkEvsDataType !dti !clsInit = do
+  !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] clsInit
+  !idObj <- newUniqueEdh
+  !supersVar <- newTVarEdh []
+  let !dtObj =
+        Object
+          { edh'obj'ident = idObj,
+            edh'obj'store = dtd,
+            edh'obj'class = dtCls,
+            edh'obj'supers = supersVar
+          }
+  return dtObj
+  where
+    !dtd = HostStore $ toDyn dt
+    dt :: DataType a
+    dt = DummyDt @a dti
+
+    dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
+    dtypeAllocator = return (Nothing, dtd)
+
 evsCmpProc ::
   forall a.
   Object ->

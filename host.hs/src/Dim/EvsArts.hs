@@ -104,6 +104,12 @@ createSinkClass !defaultDt =
               ( Nothing,
                 HostStore $ toDyn $ SomeEventSink evs
               )
+        (DummyDt _dti :: DataType a) -> do
+          evs <- newEventSinkEdh @a
+          return
+            ( Nothing,
+              HostStore $ toDyn $ SomeEventSink evs
+            )
 
     evs__init__ ::
       "dtype" ?: Object ->

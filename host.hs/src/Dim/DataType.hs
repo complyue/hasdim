@@ -79,10 +79,12 @@ type DataTypeIdent = AttrName
 data DataType a
   = (Eq a, Storable a, EdhXchg a, Typeable a) => DeviceDt !(DeviceDataType a)
   | (Eq a, EdhXchg a, Typeable a) => DirectDt !(DirectDataType a)
+  | (Typeable a) => DummyDt !DataTypeIdent
 
 data'type'ident :: DataType a -> DataTypeIdent
 data'type'ident (DeviceDt dt) = device'data'type'ident dt
 data'type'ident (DirectDt dt) = direct'data'type'ident dt
+data'type'ident (DummyDt dti) = dti
 
 instance Eq (DataType a) where
   x == y = data'type'ident x == data'type'ident y
@@ -104,6 +106,11 @@ eqDataType x y = case x of
   DirectDt dt'x -> case y of
     DirectDt dt'y -> case eqT of
       Just (Refl :: a :~: b) | dt'x == dt'y -> Just Refl
+      _ -> Nothing
+    _ -> Nothing
+  DummyDt dti'x -> case y of
+    DummyDt dti'y -> case eqT of
+      Just (Refl :: a :~: b) | dti'x == dti'y -> Just Refl
       _ -> Nothing
     _ -> Nothing
 

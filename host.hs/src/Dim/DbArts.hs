@@ -68,13 +68,13 @@ createDbArrayClass !clsColumn !defaultDt =
       (optionalArg -> !maybeShape)
       (defaultArg False -> overwrite)
       _ctorOtherArgs = withDataType dto $ \case
-        DirectDt _ ->
-          throwEdhM UsageError "DbArray only works with device dtype"
         DeviceDt (_dt :: DeviceDataType a) -> case maybeShape of
           Nothing ->
             liftIO $ goMemMap @a Nothing
           Just !shapeVal ->
             liftIO . goMemMap @a . Just =<< parseArrayShape shapeVal
+        _ ->
+          throwEdhM UsageError "DbArray only works with device dtype"
         where
           goMemMap ::
             forall a.

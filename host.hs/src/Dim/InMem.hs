@@ -393,3 +393,4 @@ createInMemColumn' !gdt !cap !len exit = case gdt of
     !csv <- newTMVarEdh cs
     !clv <- newTVarEdh len
     exit $ InMemDirCol csv clv
+  DummyDt dti -> naM $ "you don't create Column from a dummy dtype: " <> dti

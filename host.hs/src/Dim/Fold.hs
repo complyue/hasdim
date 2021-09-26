@@ -231,6 +231,7 @@ instance Folding FoldingAdd where
   self'fold _ (gdt :: DataType a) act = case gdt of
     DeviceDt dt -> with'num'device'data'type dt $ act (+)
     DirectDt dt -> with'num'direct'data'type dt $ act (+)
+    DummyDt _dti -> mzero
 
   left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) act =
     case gdt'a `eqDataType` gdt'b of
@@ -243,6 +244,7 @@ instance Folding FoldingMul where
   self'fold _ (gdt :: DataType a) act = case gdt of
     DeviceDt dt -> with'num'device'data'type dt $ act (*)
     DirectDt dt -> with'num'direct'data'type dt $ act (*)
+    DummyDt _dti -> mzero
 
   left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) act =
     case gdt'a `eqDataType` gdt'b of
@@ -270,6 +272,7 @@ instance Folding FoldingAddV where
               | D.decimalIsNaN rhs -> lhs
               | otherwise -> lhs + rhs
       Nothing -> with'num'direct'data'type dt $ act (+)
+    DummyDt _dti -> mzero
 
   left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) act =
     case gdt'a `eqDataType` gdt'b of
@@ -297,6 +300,7 @@ instance Folding FoldingMulV where
               | D.decimalIsNaN rhs -> lhs
               | otherwise -> lhs * rhs
       Nothing -> with'num'direct'data'type dt $ act (*)
+    DummyDt _dti -> mzero
 
   left'fold f (gdt'a :: DataType a) (gdt'b :: DataType b) act =
     case gdt'a `eqDataType` gdt'b of

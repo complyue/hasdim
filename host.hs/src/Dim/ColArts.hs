@@ -110,6 +110,8 @@ createColumnClass !defaultDt =
                       SomeColumn (typeRep @DirectArray) $
                         InMemDirCol @a csv clv
                 )
+          DummyDt dti ->
+            naM $ "you don't create Column of dummy dtype: " <> dti
 
     col__init__ ::
       "capacity" !: Int ->
@@ -457,6 +459,8 @@ arangeProc
                             [dto]
 
                 tryNumDt <|> tryFromDec
+              DummyDt dti ->
+                naM $ "you don't create arange Column of dummy dtype: " <> dti
 
 randomProc ::
   Object ->
@@ -563,6 +567,8 @@ randomProc
                         colClass
                         (toDyn $ someColumn col)
                         [dto]
+          DummyDt dti ->
+            naM $ "you don't create random Column of dummy dtype: " <> dti
 
 -- TODO impl. `linspace` following:
 --      https://numpy.org/doc/stable/reference/generated/numpy.linspace.html
