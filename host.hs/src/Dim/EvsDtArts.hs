@@ -19,8 +19,8 @@ import System.Random
 import Type.Reflection
 import Prelude
 
-mkYesNoEvsDt :: DataTypeIdent -> Edh Object
-mkYesNoEvsDt !dti = do
+mkYesNoEvtDt :: DataTypeIdent -> Edh Object
+mkYesNoEvtDt !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ pure ()
   !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
@@ -55,10 +55,10 @@ mkYesNoEvsDt !dti = do
                 wrapEdhProc $
                   evtCmpProc dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
               ),
-              ("(&&)", EdhMethod, wrapEdhProc $ devEvsOpProc @YesNo (.&.)),
-              ("(&&.)", EdhMethod, wrapEdhProc $ devEvsOpProc @YesNo (.&.)),
-              ("(||)", EdhMethod, wrapEdhProc $ devEvsOpProc @YesNo (.|.)),
-              ("(||.)", EdhMethod, wrapEdhProc $ devEvsOpProc @YesNo (.|.)),
+              ("(&&)", EdhMethod, wrapEdhProc $ evtOpProc @YesNo (.&.)),
+              ("(&&.)", EdhMethod, wrapEdhProc $ evtOpProc @YesNo (.&.)),
+              ("(||)", EdhMethod, wrapEdhProc $ evtOpProc @YesNo (.|.)),
+              ("(||.)", EdhMethod, wrapEdhProc $ evtOpProc @YesNo (.|.)),
               ("__eq__", EdhMethod, wrapEdhProc evsDtypeEqProc)
             ]
       ]
@@ -74,13 +74,13 @@ mkYesNoEvsDt !dti = do
     dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
     dtypeAllocator = return (Nothing, dtd)
 
-mkFloatEvsDt ::
+mkFloatEvtDt ::
   forall a.
   (RealFloat a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Edh Object
-mkFloatEvsDt !dtYesNo !dti = do
+mkFloatEvtDt !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
     !clsMths <-
       sequence $
@@ -136,55 +136,55 @@ mkFloatEvsDt !dtYesNo !dti = do
                 ),
                 ( "(+)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (+)
+                  wrapEdhProc $ evtOpProc @a (+)
                 ),
                 ( "(+.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (+)
+                  wrapEdhProc $ evtOpProc @a (+)
                 ),
                 ( "(-)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (-)
+                  wrapEdhProc $ evtOpProc @a (-)
                 ),
                 ( "(-.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (flip (-))
+                  wrapEdhProc $ evtOpProc @a (flip (-))
                 ),
                 ( "(*)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (*)
+                  wrapEdhProc $ evtOpProc @a (*)
                 ),
                 ( "(*.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (*)
+                  wrapEdhProc $ evtOpProc @a (*)
                 ),
                 ( "(/)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (/)
+                  wrapEdhProc $ evtOpProc @a (/)
                 ),
                 ( "(/.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (flip (/))
+                  wrapEdhProc $ evtOpProc @a (flip (/))
                 ),
                 -- TODO reason about this:
                 -- https://stackoverflow.com/questions/38588815/rounding-errors-in-python-floor-division
                 ( "(//)",
                   EdhMethod,
                   wrapEdhProc $
-                    devEvsOpProc @a (\ !x !y -> fromInteger $ floor $ x / y)
+                    evtOpProc @a (\ !x !y -> fromInteger $ floor $ x / y)
                 ),
                 ( "(//.)",
                   EdhMethod,
                   wrapEdhProc $
-                    devEvsOpProc @a (\ !x !y -> fromInteger $ floor $ y / x)
+                    evtOpProc @a (\ !x !y -> fromInteger $ floor $ y / x)
                 ),
                 ( "(**)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (**)
+                  wrapEdhProc $ evtOpProc @a (**)
                 ),
                 ( "(**.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (flip (**))
+                  wrapEdhProc $ evtOpProc @a (flip (**))
                 ),
                 ("__eq__", EdhMethod, wrapEdhProc evsDtypeEqProc)
               ]
@@ -210,13 +210,13 @@ mkFloatEvsDt !dtYesNo !dti = do
     dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
     dtypeAllocator = return (Nothing, dtd)
 
-mkIntEvsDt ::
+mkIntEvtDt ::
   forall a.
   (Bits a, Integral a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Edh Object
-mkIntEvsDt !dtYesNo !dti = do
+mkIntEvtDt !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
     !clsMths <-
       sequence $
@@ -272,67 +272,67 @@ mkIntEvsDt !dtYesNo !dti = do
                 ),
                 ( "(+)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (+)
+                  wrapEdhProc $ evtOpProc @a (+)
                 ),
                 ( "(+.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (+)
+                  wrapEdhProc $ evtOpProc @a (+)
                 ),
                 ( "(-)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (-)
+                  wrapEdhProc $ evtOpProc @a (-)
                 ),
                 ( "(-.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (flip (-))
+                  wrapEdhProc $ evtOpProc @a (flip (-))
                 ),
                 ( "(*)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (*)
+                  wrapEdhProc $ evtOpProc @a (*)
                 ),
                 ( "(*.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (*)
+                  wrapEdhProc $ evtOpProc @a (*)
                 ),
                 ( "(/)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a div
+                  wrapEdhProc $ evtOpProc @a div
                 ),
                 ( "(/.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (flip div)
+                  wrapEdhProc $ evtOpProc @a (flip div)
                 ),
                 ( "(//)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a div
+                  wrapEdhProc $ evtOpProc @a div
                 ),
                 ( "(//.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (flip div)
+                  wrapEdhProc $ evtOpProc @a (flip div)
                 ),
                 ( "(**)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc intPow
+                  wrapEdhProc $ evtOpProc intPow
                 ),
                 ( "(**.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc $ flip intPow
+                  wrapEdhProc $ evtOpProc $ flip intPow
                 ),
                 ( "(&&)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (.&.)
+                  wrapEdhProc $ evtOpProc @a (.&.)
                 ),
                 ( "(&&.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (.&.)
+                  wrapEdhProc $ evtOpProc @a (.&.)
                 ),
                 ( "(||)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (.|.)
+                  wrapEdhProc $ evtOpProc @a (.|.)
                 ),
                 ( "(||.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (.|.)
+                  wrapEdhProc $ evtOpProc @a (.|.)
                 ),
                 ("__eq__", EdhMethod, wrapEdhProc evsDtypeEqProc)
               ]
@@ -365,13 +365,13 @@ mkIntEvsDt !dtYesNo !dti = do
       | y < 0 = 0 -- to survive `Exception: Negative exponent`
       | otherwise = x ^ y
 
-mkBitsEvsDt ::
+mkBitsEvtDt ::
   forall a.
   (Bits a, Ord a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Edh Object
-mkBitsEvsDt !dtYesNo !dti = do
+mkBitsEvtDt !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
     !clsMths <-
       sequence $
@@ -427,19 +427,19 @@ mkBitsEvsDt !dtYesNo !dti = do
                 ),
                 ( "(&&)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (.&.)
+                  wrapEdhProc $ evtOpProc @a (.&.)
                 ),
                 ( "(&&.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (.&.)
+                  wrapEdhProc $ evtOpProc @a (.&.)
                 ),
                 ( "(||)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (.|.)
+                  wrapEdhProc $ evtOpProc @a (.|.)
                 ),
                 ( "(||.)",
                   EdhMethod,
-                  wrapEdhProc $ devEvsOpProc @a (.|.)
+                  wrapEdhProc $ evtOpProc @a (.|.)
                 ),
                 ("__eq__", EdhMethod, wrapEdhProc evsDtypeEqProc)
               ]
@@ -510,13 +510,13 @@ evtCmpProc !dtYesNo !cmp !other =
 
     withEvs <|> withValue
 
-devEvsOpProc ::
+evtOpProc ::
   forall a.
-  (Storable a, Eq a, EdhXchg a, Typeable a) =>
+  (Eq a, EdhXchg a, Typeable a) =>
   (a -> a -> a) ->
   EdhValue ->
   Edh EdhValue
-devEvsOpProc !op !other =
+evtOpProc !op !other =
   withTensorSelfOf @a $ \ !objEvt (EventTensor src perceiver) -> do
     let exitWithNewClone :: EventTensor a -> Edh EdhValue
         exitWithNewClone !evtResult =

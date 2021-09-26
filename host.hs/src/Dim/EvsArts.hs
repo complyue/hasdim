@@ -17,8 +17,8 @@ import Prelude
 
 defineEvsArts :: Edh [(AttrKey, EdhValue)]
 defineEvsArts = do
-  dtYesNo <- mkYesNoEvsDt "YesNo"
-  dtDouble <- mkFloatEvsDt @Double dtYesNo "Double"
+  dtYesNo <- mkYesNoEvtDt "YesNo"
+  dtDouble <- mkFloatEvtDt @Double dtYesNo "Double"
   clsTensor <- createTensorClass
   clsSink <- createSinkClass clsTensor dtDouble
   return
@@ -38,7 +38,7 @@ createTensorClass =
     props <-
       sequence
         [ (AttrByName nm,) <$> mkEdhProperty nm getter setter
-          | (nm, getter, setter) <- [("src", evtSourceProc, Nothing)]
+          | (nm, getter, setter) <- [("sink", getSinkProc, Nothing)]
         ]
     let clsArts = mths ++ props
     !clsScope <- contextScope . edh'context <$> edhThreadState
@@ -70,8 +70,8 @@ createTensorClass =
       let evtRepr = "EventTensor( dtype= " <> dtRepr <> " )"
       return $ EdhString evtRepr
 
-    evtSourceProc :: Edh EdhValue
-    evtSourceProc = do
+    getSinkProc :: Edh EdhValue
+    getSinkProc = do
       !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
       EdhObject <$> getTensorSink this
 
@@ -82,13 +82,11 @@ createSinkClass !clsTensor !defaultDt =
     mthRepr <- mkEdhProc' EdhMethod "__repr__" evsReprProc
     mthShow <- mkEdhProc' EdhMethod "__show__" evsShowProc
     mthPerceive <- mkEdhProc' EdhIntrpr "__perceive__" evsPerceive
-    mthPublish <- mkEdhProc' EdhMethod "(<-)" evsPublish
     let mths =
           [ (AttrByName "__init__", mthInit),
             (AttrByName "__repr__", mthRepr),
             (AttrByName "__show__", mthShow),
-            (AttrByName "__perceive__", mthPerceive),
-            (AttrByName "(<-)", mthPublish)
+            (AttrByName "__perceive__", mthPerceive)
           ]
     props <-
       sequence
@@ -175,11 +173,6 @@ createSinkClass !clsTensor !defaultDt =
             (toDyn $ EventTensor @t evs return)
             [dto, this]
         caseValueOfM (EdhObject eto) pBody
-
-    evsPublish :: Edh EdhValue
-    evsPublish = withThisSink $ \_this (evs :: EventSink a) -> do
-      -- TODO impl.
-      return nil
 
     evsDtypeProc :: Edh EdhValue
     evsDtypeProc = do
