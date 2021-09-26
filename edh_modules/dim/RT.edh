@@ -548,4 +548,29 @@ TODO both bounds of the range are always treated as closed bound for now
 
   }
 
+
+  {## Host Event Sink
+   #
+High performance host even sink
+   #}
+  data Sink( dtype= Double ) pass
+
+  {## Host Event Source
+   #
+High performance host event source
+   #}
+  class EventSource pass
+
+  {## Event Source specific dtype
+   #
+The dtype providing super magic methods for event source objects
+   #}
+  Double := dtype()
+
+  {## Event Source specific dtype
+   #
+The dtype providing super magic methods for event source objects
+   #}
+  YesNo := dtype()
+
 }

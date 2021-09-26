@@ -4,6 +4,9 @@ module Dim.EHI
     getPredefinedDtype,
     getPredefinedDtype',
     createColumnObject,
+    getSinkClass,
+    getPredefinedEvsDtype,
+    getPredefinedEvsDtype',
     module Dim.XCHG,
     module Dim.DataType,
     module Dim.Column,
@@ -210,7 +213,7 @@ getPredefinedDtype :: AttrName -> Edh Object
 getPredefinedDtype !dti =
   importModuleM "dim/dtypes" >>= \ !moduDtypes ->
     getObjPropertyM moduDtypes (AttrByName dti) >>= \case
-      EdhObject !clsDtype -> return clsDtype
+      EdhObject !dto -> return dto
       _ -> naM $ "dim/dtypes provides no `" <> dti <> "` dtype"
 
 getPredefinedDtype' ::
@@ -230,3 +233,31 @@ getPredefinedDtype' !dti =
 createColumnObject :: Object -> SomeColumn -> Object -> Edh Object
 createColumnObject !clsColumn !col !dto =
   createHostObjectM' clsColumn (toDyn col) [dto]
+
+getSinkClass :: Edh Object
+getSinkClass =
+  importModuleM "dim/RT" >>= \ !moduRT ->
+    getObjPropertyM moduRT (AttrByName "Sink") >>= \case
+      EdhObject !clsSink -> return clsSink
+      _ -> naM "bug: dim/RT provides no Sink class"
+
+getPredefinedEvsDtype :: AttrName -> Edh Object
+getPredefinedEvsDtype !dti =
+  importModuleM "dim/RT" >>= \ !moduRT ->
+    getObjPropertyM moduRT (AttrByName dti) >>= \case
+      EdhObject !dto -> return dto
+      _ -> naM $ "dim/RT provides no `" <> dti <> "` event sink dtype"
+
+getPredefinedEvsDtype' ::
+  forall a. (Typeable a) => AttrName -> Edh (DataType a, Object)
+getPredefinedEvsDtype' !dti =
+  importModuleM "dim/RT" >>= \ !moduRT ->
+    getObjPropertyM moduRT (AttrByName dti) >>= \case
+      EdhObject !dto -> withDataType dto $ \(gdt :: DataType a') ->
+        case eqT of
+          Nothing ->
+            naM $
+              "requested dtype " <> dti <> " not compatible with host type: "
+                <> T.pack (show $ typeRep @a)
+          Just (Refl :: a' :~: a) -> return (gdt, dto)
+      _ -> naM $ "dim/RT provides no `" <> dti <> "` event sink dtype"
