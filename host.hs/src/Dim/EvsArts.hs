@@ -56,6 +56,15 @@ createEventSourceClass =
       let evtRepr = "EventSource( dtype= " <> dtRepr <> " )"
       return $ EdhString evtRepr
 
+withThisEventSource ::
+  forall r.
+  (forall s t. (EventSource s t, Typeable t) => Object -> s t -> Edh r) ->
+  Edh r
+withThisEventSource withEvs = do
+  !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
+  (<|> throwEdhM EvalError "this is not an EventSource") $
+    asEventSource this $ withEvs this
+
 createSinkClass :: Object -> Edh Object
 createSinkClass !defaultDt =
   mkEdhClass "Sink" (allocObjM evsAllocator) [] $ do

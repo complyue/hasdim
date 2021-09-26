@@ -11,6 +11,7 @@ module Dim.EHI
     module Dim.InMem,
     module Dim.Table,
     module Dim.ColDtArts,
+    module Dim.EvsDtArts,
     module Dim.DbArray,
     module Dim.FlatArray,
   )
@@ -30,6 +31,8 @@ import Dim.Column
 import Dim.DataType
 import Dim.DbArray
 import Dim.DbArts
+import Dim.EvsArts
+import Dim.EvsDtArts
 import Dim.FlatArray
 import Dim.Float
 import Dim.Fold
@@ -145,6 +148,8 @@ installDimBatteries !world = do
       !tableClass <- createTableClass dtBox clsColumn
       !dbArrayClass <- createDbArrayClass clsColumn defaultDataType
 
+      !evsArts <- defineEvsArts
+
       !moduArts0 <-
         sequence $
           [ (AttrByName nm,) <$> mkEdhProc mc nm hp
@@ -189,6 +194,7 @@ installDimBatteries !world = do
                    (AttrByName "Table", EdhObject tableClass),
                    (AttrByName "DbArray", EdhObject dbArrayClass)
                  ]
+              ++ evsArts
       iopdUpdateEdh moduArts $ edh'scope'entity moduScope
       prepareExpStoreM (edh'scope'this moduScope) >>= \ !esExps ->
         iopdUpdateEdh moduArts esExps

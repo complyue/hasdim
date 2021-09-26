@@ -18,24 +18,22 @@ import System.Random
 import Type.Reflection
 import Prelude
 
-withThisEvsTyped ::
+{- HLINT ignore "Redundant <$>" -}
+
+withEvsOf ::
   forall t r.
   (Typeable t) =>
+  Object ->
   (forall s. (EventSource s t) => Object -> s t -> Edh r) ->
   Edh r
-withThisEvsTyped withEvs = do
-  !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
-  withEventSource this $ \(evs :: s t') -> case eqT of
-    Nothing -> throwEdhM EvalError "this EventSource mismatch its dtype"
-    Just (Refl :: t' :~: t) -> withEvs this evs
-
-withThisEventSource ::
-  forall r.
-  (forall s t. (EventSource s t, Typeable t) => Object -> s t -> Edh r) ->
-  Edh r
-withThisEventSource withEvs = do
-  !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
-  withEventSource this $ withEvs this
+withEvsOf obj withEvs = go . (obj :) =<< readTVarEdh (edh'obj'supers obj)
+  where
+    go :: [Object] -> Edh r
+    go [] = throwEdhM EvalError "not an expected EventSource object"
+    go (inst : rest) = (<|> go rest) $
+      asEventSource inst $ \(evs :: s t') -> case eqT of
+        Nothing -> throwEdhM EvalError "this EventSource mismatches its dtype"
+        Just (Refl :: t' :~: t) -> withEvs inst evs
 
 getEvsDtype :: Object -> Edh Object
 getEvsDtype !objEvs = do
@@ -70,22 +68,22 @@ mkYesNoEvtDt clsEvs !dti = do
             [ ( "(==)",
                 EdhMethod,
                 wrapEdhProc $
-                  evsCmpProc dtYesNo ((==) :: YesNo -> YesNo -> Bool)
+                  evsCmpProc clsEvs dtYesNo ((==) :: YesNo -> YesNo -> Bool)
               ),
               ( "(==.)",
                 EdhMethod,
                 wrapEdhProc $
-                  evsCmpProc dtYesNo ((==) :: YesNo -> YesNo -> Bool)
+                  evsCmpProc clsEvs dtYesNo ((==) :: YesNo -> YesNo -> Bool)
               ),
               ( "(!=)",
                 EdhMethod,
                 wrapEdhProc $
-                  evsCmpProc dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
+                  evsCmpProc clsEvs dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
               ),
               ( "(!=.)",
                 EdhMethod,
                 wrapEdhProc $
-                  evsCmpProc dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
+                  evsCmpProc clsEvs dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
               ),
               ("(&&)", EdhMethod, wrapEdhProc $ evsOpProc @YesNo clsEvs (.&.)),
               ("(&&.)", EdhMethod, wrapEdhProc $ evsOpProc @YesNo clsEvs (.&.)),
@@ -121,51 +119,51 @@ mkFloatEvtDt clsEvs !dtYesNo !dti = do
           | (nm, vc, hp) <-
               [ ( "(==)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (==)
                 ),
                 ( "(==.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (==)
                 ),
                 ( "(!=)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (/=)
                 ),
                 ( "(!=.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (/=)
                 ),
                 ( "(>=)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>=)
                 ),
                 ( "(>=.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<=)
                 ),
                 ( "(<=)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<=)
                 ),
                 ( "(<=.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>=)
                 ),
                 ( "(>)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>)
                 ),
                 ( "(>.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<)
                 ),
                 ( "(<)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<)
                 ),
                 ( "(<.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>)
                 ),
                 ( "(+)",
                   EdhMethod,
@@ -258,51 +256,51 @@ mkIntEvtDt clsEvs !dtYesNo !dti = do
           | (nm, vc, hp) <-
               [ ( "(==)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (==)
                 ),
                 ( "(==.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (==)
                 ),
                 ( "(!=)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (/=)
                 ),
                 ( "(!=.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (/=)
                 ),
                 ( "(>=)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>=)
                 ),
                 ( "(>=.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<=)
                 ),
                 ( "(<=)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<=)
                 ),
                 ( "(<=.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>=)
                 ),
                 ( "(>)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>)
                 ),
                 ( "(>.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<)
                 ),
                 ( "(<)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<)
                 ),
                 ( "(<.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>)
                 ),
                 ( "(+)",
                   EdhMethod,
@@ -414,51 +412,51 @@ mkBitsEvtDt clsEvs !dtYesNo !dti = do
           | (nm, vc, hp) <-
               [ ( "(==)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (==)
                 ),
                 ( "(==.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (==)
                 ),
                 ( "(!=)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (/=)
                 ),
                 ( "(!=.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (/=)
                 ),
                 ( "(>=)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>=)
                 ),
                 ( "(>=.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<=)
                 ),
                 ( "(<=)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<=)
                 ),
                 ( "(<=.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>=)
                 ),
                 ( "(>)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>)
                 ),
                 ( "(>.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<)
                 ),
                 ( "(<)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (<)
                 ),
                 ( "(<.)",
                   EdhMethod,
-                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a clsEvs dtYesNo (>)
                 ),
                 ( "(&&)",
                   EdhMethod,
@@ -502,18 +500,20 @@ mkBitsEvtDt clsEvs !dtYesNo !dti = do
 
 evsCmpProc ::
   forall a.
+  Object ->
   (Eq a, EdhXchg a, Typeable a) =>
   Object ->
   (a -> a -> Bool) ->
   EdhValue ->
   Edh EdhValue
-evsCmpProc !dtYesNo !cmp !other =
-  withThisEvsTyped @a $ \ !thisEvsObj (thisEvs :: s a) -> do
+evsCmpProc clsEvs !dtYesNo !cmp !other = do
+  !that <- edh'scope'that . contextScope . edh'context <$> edhThreadState
+  withEvsOf @a that $ \_selfEvsObj (selfEvs :: s a) -> do
     let exitWithResult :: MappedEvs s a YesNo -> Edh EdhValue
         exitWithResult !evsResult = do
           EdhObject
             <$> createHostObjectM'
-              (edh'obj'class thisEvsObj)
+              clsEvs
               (toDyn $ SomeEventSource evsResult)
               [dtYesNo]
 
@@ -522,10 +522,10 @@ evsCmpProc !dtYesNo !cmp !other =
             >>= \(AnyEventSource (otherEvs :: s' t) _otherEvsObj) ->
               case eqT of
                 Just (Refl :: t :~: a) -> exitWithResult $
-                  MappedEvs thisEvs $ \ !thisEvd ->
+                  MappedEvs selfEvs $ \ !selfEvd ->
                     lingering otherEvs >>= \case
                       Nothing -> return $ yesOrNo False
-                      Just !rhv -> return $ yesOrNo $ cmp thisEvd rhv
+                      Just !rhv -> return $ yesOrNo $ cmp selfEvd rhv
                 Nothing ->
                   throwEdhM UsageError $
                     T.pack $
@@ -537,8 +537,8 @@ evsCmpProc !dtYesNo !cmp !other =
           fromEdh' @a other >>= \case
             Nothing -> return edhNA
             Just !rhv -> exitWithResult $
-              MappedEvs thisEvs $ \ !thisEvd ->
-                return $ yesOrNo $ cmp thisEvd rhv
+              MappedEvs selfEvs $ \ !selfEvd ->
+                return $ yesOrNo $ cmp selfEvd rhv
 
     withEvs <|> withValue
 
@@ -549,11 +549,12 @@ evsOpProc ::
   (a -> a -> a) ->
   EdhValue ->
   Edh EdhValue
-evsOpProc clsEvs !op !other =
-  withThisEvsTyped @a $ \ !thisEvsObj (thisEvs :: s a) -> do
+evsOpProc clsEvs !op !other = do
+  !that <- edh'scope'that . contextScope . edh'context <$> edhThreadState
+  withEvsOf @a that $ \ !selfEvsObj (selfEvs :: s a) -> do
     let exitWithResult :: MappedEvs s a a -> Edh EdhValue
         exitWithResult !evsResult = do
-          dto <- getEvsDtype thisEvsObj
+          dto <- getEvsDtype selfEvsObj
           EdhObject
             <$> createHostObjectM'
               clsEvs
@@ -564,10 +565,10 @@ evsOpProc clsEvs !op !other =
           adaptEdhArg @AnyEventSource other
             >>= \(AnyEventSource (evs :: s' t) _evso) -> case eqT of
               Just (Refl :: t :~: a) -> exitWithResult $
-                MappedEvs thisEvs $ \thisEvd ->
+                MappedEvs selfEvs $ \selfEvd ->
                   lingering evs >>= \case
-                    Nothing -> return thisEvd -- TODO this okay??
-                    Just !rhv -> return $ op thisEvd rhv
+                    Nothing -> return selfEvd -- TODO this okay??
+                    Just !rhv -> return $ op selfEvd rhv
               Nothing ->
                 throwEdhM UsageError $
                   T.pack $
@@ -579,7 +580,7 @@ evsOpProc clsEvs !op !other =
           fromEdh' @a other >>= \case
             Nothing -> return edhNA
             Just !rhv -> exitWithResult $
-              MappedEvs thisEvs $ \thisEvd -> return $ op thisEvd rhv
+              MappedEvs selfEvs $ \selfEvd -> return $ op selfEvd rhv
 
     withEvs <|> withValue
 
