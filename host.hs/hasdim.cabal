@@ -170,7 +170,6 @@ library
     Dim.Fold
     Dim.InMem
     Dim.Table
-    Dim.Tensor
     Dim.XCHG
 
   hs-source-dirs:     src

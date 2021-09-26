@@ -729,11 +729,11 @@ mkIntColDt !dtYesNo !dti = do
                 ),
                 ( "(**)",
                   EdhMethod,
-                  wrapEdhProc $ devColOpProc intPow
+                  wrapEdhProc $ devColOpProc @a intPow
                 ),
                 ( "(**.)",
                   EdhMethod,
-                  wrapEdhProc $ devColOpProc $ flip intPow
+                  wrapEdhProc $ devColOpProc @a $ flip intPow
                 ),
                 ( "(**=)",
                   EdhMethod,

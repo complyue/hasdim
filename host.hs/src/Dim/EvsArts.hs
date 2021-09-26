@@ -10,27 +10,28 @@ import qualified Data.Text as T
 import Data.Unique
 import Dim.DataType
 import Dim.EvsDtArts
-import Dim.Tensor
 import Language.Edh.MHI
 import Type.Reflection
 import Prelude
 
 defineEvsArts :: Edh [(AttrKey, EdhValue)]
 defineEvsArts = do
-  dtYesNo <- mkYesNoEvtDt "YesNo"
-  dtDouble <- mkFloatEvtDt @Double dtYesNo "Double"
-  clsTensor <- createTensorClass
-  clsSink <- createSinkClass clsTensor dtDouble
+  clsEventSource <- createEventSourceClass
+
+  dtYesNo <- mkYesNoEvtDt clsEventSource "YesNo"
+  dtDouble <- mkFloatEvtDt @Double clsEventSource dtYesNo "Double"
+
+  clsSink <- createSinkClass dtDouble
   return
     [ (AttrByName "Sink", EdhObject clsSink),
-      (AttrByName "EventTensor", EdhObject clsTensor),
+      (AttrByName "EventSource", EdhObject clsEventSource),
       (AttrByName "Double", EdhObject dtDouble),
       (AttrByName "YesNo", EdhObject dtYesNo)
     ]
 
-createTensorClass :: Edh Object
-createTensorClass =
-  mkEdhClass "EventTensor" (allocObjM evtAllocator) [] $ do
+createEventSourceClass :: Edh Object
+createEventSourceClass =
+  mkEdhClass "EventSource" (allocObjM evtAllocator) [] $ do
     mthRepr <- mkEdhProc' EdhMethod "__repr__" evtReprProc
     let mths =
           [ (AttrByName "__repr__", mthRepr)
@@ -38,7 +39,7 @@ createTensorClass =
     props <-
       sequence
         [ (AttrByName nm,) <$> mkEdhProperty nm getter setter
-          | (nm, getter, setter) <- [("sink", getSinkProc, Nothing)]
+          | (nm, getter, setter) <- [("dtype", evsDtypeProc, Nothing)]
         ]
     let clsArts = mths ++ props
     !clsScope <- contextScope . edh'context <$> edhThreadState
@@ -46,47 +47,25 @@ createTensorClass =
   where
     evtAllocator :: ArgsPack -> Edh (Maybe Unique, ObjectStore)
     evtAllocator _ =
-      throwEdhM UsageError "EventTensor not constructable by script"
-
-    withThisTensor ::
-      forall r.
-      (forall a. Typeable a => Object -> EventTensor a -> Edh r) ->
-      Edh r
-    withThisTensor withEvs = do
-      !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
-      case dynamicHostData this of
-        Nothing -> throwEdhM EvalError "bug: this is not an EventTensor"
-        Just (Dynamic trEvs evt) -> case trEvs of
-          App trTensor trEvt ->
-            case trTensor `eqTypeRep` typeRep @EventTensor of
-              Just HRefl -> withTypeable trEvt $ withEvs this evt
-              Nothing -> throwEdhM EvalError "bug: this is not an EventTensor"
-          _ -> throwEdhM EvalError "bug: this is not an EventTensor"
+      throwEdhM UsageError "EventSource not constructable by script"
 
     evtReprProc :: Edh EdhValue
-    evtReprProc = withThisTensor $ \this (_evt :: EventTensor a) -> do
-      !dto <- getTensorDtype this
+    evtReprProc = withThisEventSource $ \this (_evs :: s t) -> do
+      !dto <- getEvsDtype this
       !dtRepr <- edhObjReprM dto
-      let evtRepr = "EventTensor( dtype= " <> dtRepr <> " )"
+      let evtRepr = "EventSource( dtype= " <> dtRepr <> " )"
       return $ EdhString evtRepr
 
-    getSinkProc :: Edh EdhValue
-    getSinkProc = do
-      !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
-      EdhObject <$> getTensorSink this
-
-createSinkClass :: Object -> Object -> Edh Object
-createSinkClass !clsTensor !defaultDt =
+createSinkClass :: Object -> Edh Object
+createSinkClass !defaultDt =
   mkEdhClass "Sink" (allocObjM evsAllocator) [] $ do
     mthInit <- mkEdhProc' EdhMethod "__init__" evs__init__
     mthRepr <- mkEdhProc' EdhMethod "__repr__" evsReprProc
     mthShow <- mkEdhProc' EdhMethod "__show__" evsShowProc
-    mthPerceive <- mkEdhProc' EdhIntrpr "__perceive__" evsPerceive
     let mths =
           [ (AttrByName "__init__", mthInit),
             (AttrByName "__repr__", mthRepr),
-            (AttrByName "__show__", mthShow),
-            (AttrByName "__perceive__", mthPerceive)
+            (AttrByName "__show__", mthShow)
           ]
     props <-
       sequence
@@ -145,36 +124,36 @@ createSinkClass !clsTensor !defaultDt =
       Edh r
     withThisSink withEvs = do
       !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
-      asSink this (withEvs this)
-        <|> throwEdhM EvalError "bug: this is not a Sink"
+      (<|> throwEdhM EvalError "bug: this is not a Sink") $
+        case dynamicHostData this of
+          Nothing -> naM "not a Sink"
+          Just (Dynamic trEvs evs) ->
+            case trEvs `eqTypeRep` typeRep @SomeEventSink of
+              Just HRefl -> case evs of
+                SomeEventSink evs' -> withEvs this evs'
+              Nothing -> case trEvs of
+                App trSink trEvt ->
+                  case trSink `eqTypeRep` typeRep @EventSink of
+                    Just HRefl -> withTypeable trEvt $ withEvs this evs
+                    Nothing -> naM "not a Sink"
+                _ -> naM "not a Sink"
 
     evsReprProc :: Edh EdhValue
     evsReprProc = withThisSink $ \this (_evs :: EventSink a) -> do
-      !dto <- getSinkDtype this
+      !dto <- getEvsDtype this
       !dtRepr <- edhObjReprM dto
       let evsRepr = "Sink( dtype= " <> dtRepr <> " )"
       return $ EdhString evsRepr
 
     evsShowProc :: Edh EdhValue
     evsShowProc = withThisSink $ \this (_evs :: EventSink a) -> do
-      !dto <- getSinkDtype this
+      !dto <- getEvsDtype this
       !dtRepr <- edhObjReprM dto
       let evsRepr = "Sink( dtype= " <> dtRepr <> " )"
       return $
         EdhString $ evsRepr <> " {# " <> T.pack (show $ typeRep @a) <> " #}"
 
-    evsPerceive :: "perceiverBody" !: ExprDefi -> Edh EdhValue
-    evsPerceive (mandatoryArg -> pBody) =
-      withThisSink $ \this (evs :: EventSink t) -> do
-        dto <- getSinkDtype this
-        eto <-
-          createHostObjectM'
-            clsTensor
-            (toDyn $ EventTensor @t evs return)
-            [dto, this]
-        caseValueOfM (EdhObject eto) pBody
-
-    evsDtypeProc :: Edh EdhValue
-    evsDtypeProc = do
-      !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
-      EdhObject <$> getSinkDtype this
+evsDtypeProc :: Edh EdhValue
+evsDtypeProc = do
+  !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
+  EdhObject <$> getEvsDtype this

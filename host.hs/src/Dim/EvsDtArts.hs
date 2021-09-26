@@ -10,7 +10,6 @@ import qualified Data.Text as T
 import Data.Typeable hiding (typeRep)
 import Data.Unique
 import Dim.DataType
-import Dim.Tensor
 import Dim.XCHG
 import Foreign hiding (void)
 import GHC.Float
@@ -19,8 +18,41 @@ import System.Random
 import Type.Reflection
 import Prelude
 
-mkYesNoEvtDt :: DataTypeIdent -> Edh Object
-mkYesNoEvtDt !dti = do
+withThisEvsTyped ::
+  forall t r.
+  (Typeable t) =>
+  (forall s. (EventSource s t) => Object -> s t -> Edh r) ->
+  Edh r
+withThisEvsTyped withEvs = do
+  !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
+  withEventSource this $ \(evs :: s t') -> case eqT of
+    Nothing -> throwEdhM EvalError "this EventSource mismatch its dtype"
+    Just (Refl :: t' :~: t) -> withEvs this evs
+
+withThisEventSource ::
+  forall r.
+  (forall s t. (EventSource s t, Typeable t) => Object -> s t -> Edh r) ->
+  Edh r
+withThisEventSource withEvs = do
+  !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
+  withEventSource this $ withEvs this
+
+getEvsDtype :: Object -> Edh Object
+getEvsDtype !objEvs = do
+  let findEvsDto :: [Object] -> Edh Object
+      findEvsDto [] =
+        edhSimpleDescM (EdhObject objEvs) >>= \ !badDesc ->
+          naM $ "not a Sink/EventSource with dtype: " <> badDesc
+      -- this is right and avoids unnecessary checks in vastly usual cases
+      findEvsDto [dto] = return dto
+      -- safe guard in case an evs instance has been further extended
+      findEvsDto (maybeDto : rest) =
+        (<|> findEvsDto rest) $
+          withDataType maybeDto $ const $ return maybeDto
+  readTVarEdh (edh'obj'supers objEvs) >>= findEvsDto
+
+mkYesNoEvtDt :: Object -> DataTypeIdent -> Edh Object
+mkYesNoEvtDt clsEvs !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ pure ()
   !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
@@ -38,27 +70,27 @@ mkYesNoEvtDt !dti = do
             [ ( "(==)",
                 EdhMethod,
                 wrapEdhProc $
-                  evtCmpProc dtYesNo ((==) :: YesNo -> YesNo -> Bool)
+                  evsCmpProc dtYesNo ((==) :: YesNo -> YesNo -> Bool)
               ),
               ( "(==.)",
                 EdhMethod,
                 wrapEdhProc $
-                  evtCmpProc dtYesNo ((==) :: YesNo -> YesNo -> Bool)
+                  evsCmpProc dtYesNo ((==) :: YesNo -> YesNo -> Bool)
               ),
               ( "(!=)",
                 EdhMethod,
                 wrapEdhProc $
-                  evtCmpProc dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
+                  evsCmpProc dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
               ),
               ( "(!=.)",
                 EdhMethod,
                 wrapEdhProc $
-                  evtCmpProc dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
+                  evsCmpProc dtYesNo ((/=) :: YesNo -> YesNo -> Bool)
               ),
-              ("(&&)", EdhMethod, wrapEdhProc $ evtOpProc @YesNo (.&.)),
-              ("(&&.)", EdhMethod, wrapEdhProc $ evtOpProc @YesNo (.&.)),
-              ("(||)", EdhMethod, wrapEdhProc $ evtOpProc @YesNo (.|.)),
-              ("(||.)", EdhMethod, wrapEdhProc $ evtOpProc @YesNo (.|.)),
+              ("(&&)", EdhMethod, wrapEdhProc $ evsOpProc @YesNo clsEvs (.&.)),
+              ("(&&.)", EdhMethod, wrapEdhProc $ evsOpProc @YesNo clsEvs (.&.)),
+              ("(||)", EdhMethod, wrapEdhProc $ evsOpProc @YesNo clsEvs (.|.)),
+              ("(||.)", EdhMethod, wrapEdhProc $ evsOpProc @YesNo clsEvs (.|.)),
               ("__eq__", EdhMethod, wrapEdhProc evsDtypeEqProc)
             ]
       ]
@@ -76,11 +108,12 @@ mkYesNoEvtDt !dti = do
 
 mkFloatEvtDt ::
   forall a.
+  Object ->
   (RealFloat a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Edh Object
-mkFloatEvtDt !dtYesNo !dti = do
+mkFloatEvtDt clsEvs !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
     !clsMths <-
       sequence $
@@ -88,103 +121,103 @@ mkFloatEvtDt !dtYesNo !dti = do
           | (nm, vc, hp) <-
               [ ( "(==)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
                 ),
                 ( "(==.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
                 ),
                 ( "(!=)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
                 ),
                 ( "(!=.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
                 ),
                 ( "(>=)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
                 ),
                 ( "(>=.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
                 ),
                 ( "(<=)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
                 ),
                 ( "(<=.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
                 ),
                 ( "(>)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
                 ),
                 ( "(>.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
                 ),
                 ( "(<)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
                 ),
                 ( "(<.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
                 ),
                 ( "(+)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (+)
+                  wrapEdhProc $ evsOpProc @a clsEvs (+)
                 ),
                 ( "(+.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (+)
+                  wrapEdhProc $ evsOpProc @a clsEvs (+)
                 ),
                 ( "(-)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (-)
+                  wrapEdhProc $ evsOpProc @a clsEvs (-)
                 ),
                 ( "(-.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (flip (-))
+                  wrapEdhProc $ evsOpProc @a clsEvs (flip (-))
                 ),
                 ( "(*)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (*)
+                  wrapEdhProc $ evsOpProc @a clsEvs (*)
                 ),
                 ( "(*.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (*)
+                  wrapEdhProc $ evsOpProc @a clsEvs (*)
                 ),
                 ( "(/)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (/)
+                  wrapEdhProc $ evsOpProc @a clsEvs (/)
                 ),
                 ( "(/.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (flip (/))
+                  wrapEdhProc $ evsOpProc @a clsEvs (flip (/))
                 ),
                 -- TODO reason about this:
                 -- https://stackoverflow.com/questions/38588815/rounding-errors-in-python-floor-division
                 ( "(//)",
                   EdhMethod,
                   wrapEdhProc $
-                    evtOpProc @a (\ !x !y -> fromInteger $ floor $ x / y)
+                    evsOpProc @a clsEvs (\ !x !y -> fromInteger $ floor $ x / y)
                 ),
                 ( "(//.)",
                   EdhMethod,
                   wrapEdhProc $
-                    evtOpProc @a (\ !x !y -> fromInteger $ floor $ y / x)
+                    evsOpProc @a clsEvs (\ !x !y -> fromInteger $ floor $ y / x)
                 ),
                 ( "(**)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (**)
+                  wrapEdhProc $ evsOpProc @a clsEvs (**)
                 ),
                 ( "(**.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (flip (**))
+                  wrapEdhProc $ evsOpProc @a clsEvs (flip (**))
                 ),
                 ("__eq__", EdhMethod, wrapEdhProc evsDtypeEqProc)
               ]
@@ -212,11 +245,12 @@ mkFloatEvtDt !dtYesNo !dti = do
 
 mkIntEvtDt ::
   forall a.
+  Object ->
   (Bits a, Integral a, Random a, Num a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Edh Object
-mkIntEvtDt !dtYesNo !dti = do
+mkIntEvtDt clsEvs !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
     !clsMths <-
       sequence $
@@ -224,115 +258,115 @@ mkIntEvtDt !dtYesNo !dti = do
           | (nm, vc, hp) <-
               [ ( "(==)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
                 ),
                 ( "(==.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
                 ),
                 ( "(!=)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
                 ),
                 ( "(!=.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
                 ),
                 ( "(>=)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
                 ),
                 ( "(>=.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
                 ),
                 ( "(<=)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
                 ),
                 ( "(<=.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
                 ),
                 ( "(>)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
                 ),
                 ( "(>.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
                 ),
                 ( "(<)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
                 ),
                 ( "(<.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
                 ),
                 ( "(+)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (+)
+                  wrapEdhProc $ evsOpProc @a clsEvs (+)
                 ),
                 ( "(+.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (+)
+                  wrapEdhProc $ evsOpProc @a clsEvs (+)
                 ),
                 ( "(-)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (-)
+                  wrapEdhProc $ evsOpProc @a clsEvs (-)
                 ),
                 ( "(-.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (flip (-))
+                  wrapEdhProc $ evsOpProc @a clsEvs (flip (-))
                 ),
                 ( "(*)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (*)
+                  wrapEdhProc $ evsOpProc @a clsEvs (*)
                 ),
                 ( "(*.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (*)
+                  wrapEdhProc $ evsOpProc @a clsEvs (*)
                 ),
                 ( "(/)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a div
+                  wrapEdhProc $ evsOpProc @a clsEvs div
                 ),
                 ( "(/.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (flip div)
+                  wrapEdhProc $ evsOpProc @a clsEvs (flip div)
                 ),
                 ( "(//)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a div
+                  wrapEdhProc $ evsOpProc @a clsEvs div
                 ),
                 ( "(//.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (flip div)
+                  wrapEdhProc $ evsOpProc @a clsEvs (flip div)
                 ),
                 ( "(**)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc intPow
+                  wrapEdhProc $ evsOpProc @a clsEvs intPow
                 ),
                 ( "(**.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc $ flip intPow
+                  wrapEdhProc $ evsOpProc @a clsEvs $ flip intPow
                 ),
                 ( "(&&)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (.&.)
+                  wrapEdhProc $ evsOpProc @a clsEvs (.&.)
                 ),
                 ( "(&&.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (.&.)
+                  wrapEdhProc $ evsOpProc @a clsEvs (.&.)
                 ),
                 ( "(||)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (.|.)
+                  wrapEdhProc $ evsOpProc @a clsEvs (.|.)
                 ),
                 ( "(||.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (.|.)
+                  wrapEdhProc $ evsOpProc @a clsEvs (.|.)
                 ),
                 ("__eq__", EdhMethod, wrapEdhProc evsDtypeEqProc)
               ]
@@ -367,11 +401,12 @@ mkIntEvtDt !dtYesNo !dti = do
 
 mkBitsEvtDt ::
   forall a.
+  Object ->
   (Bits a, Ord a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Edh Object
-mkBitsEvtDt !dtYesNo !dti = do
+mkBitsEvtDt clsEvs !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
     !clsMths <-
       sequence $
@@ -379,67 +414,67 @@ mkBitsEvtDt !dtYesNo !dti = do
           | (nm, vc, hp) <-
               [ ( "(==)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
                 ),
                 ( "(==.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (==)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (==)
                 ),
                 ( "(!=)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
                 ),
                 ( "(!=.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (/=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (/=)
                 ),
                 ( "(>=)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
                 ),
                 ( "(>=.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
                 ),
                 ( "(<=)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<=)
                 ),
                 ( "(<=.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>=)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>=)
                 ),
                 ( "(>)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
                 ),
                 ( "(>.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
                 ),
                 ( "(<)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (<)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (<)
                 ),
                 ( "(<.)",
                   EdhMethod,
-                  wrapEdhProc $ evtCmpProc @a dtYesNo (>)
+                  wrapEdhProc $ evsCmpProc @a dtYesNo (>)
                 ),
                 ( "(&&)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (.&.)
+                  wrapEdhProc $ evsOpProc @a clsEvs (.&.)
                 ),
                 ( "(&&.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (.&.)
+                  wrapEdhProc $ evsOpProc @a clsEvs (.&.)
                 ),
                 ( "(||)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (.|.)
+                  wrapEdhProc $ evsOpProc @a clsEvs (.|.)
                 ),
                 ( "(||.)",
                   EdhMethod,
-                  wrapEdhProc $ evtOpProc @a (.|.)
+                  wrapEdhProc $ evsOpProc @a clsEvs (.|.)
                 ),
                 ("__eq__", EdhMethod, wrapEdhProc evsDtypeEqProc)
               ]
@@ -465,34 +500,74 @@ mkBitsEvtDt !dtYesNo !dti = do
     dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
     dtypeAllocator = return (Nothing, dtd)
 
-evtCmpProc ::
+evsCmpProc ::
   forall a.
   (Eq a, EdhXchg a, Typeable a) =>
   Object ->
   (a -> a -> Bool) ->
   EdhValue ->
   Edh EdhValue
-evtCmpProc !dtYesNo !cmp !other =
-  withTensorSelfOf @a $ \ !objEvt (EventTensor src perceiver) -> do
-    let exitWithResult :: EventTensor YesNo -> Edh EdhValue
-        exitWithResult !evtResult = do
-          evs <- getTensorSink objEvt
+evsCmpProc !dtYesNo !cmp !other =
+  withThisEvsTyped @a $ \ !thisEvsObj (thisEvs :: s a) -> do
+    let exitWithResult :: MappedEvs s a YesNo -> Edh EdhValue
+        exitWithResult !evsResult = do
           EdhObject
             <$> createHostObjectM'
-              (edh'obj'class objEvt)
-              (toDyn evtResult)
-              [dtYesNo, evs]
+              (edh'obj'class thisEvsObj)
+              (toDyn $ SomeEventSource evsResult)
+              [dtYesNo]
 
         withEvs =
           adaptEdhArg @AnyEventSource other
-            >>= \(AnyEventSource (evs :: s t) _evso) -> case eqT of
+            >>= \(AnyEventSource (otherEvs :: s' t) _otherEvsObj) ->
+              case eqT of
+                Just (Refl :: t :~: a) -> exitWithResult $
+                  MappedEvs thisEvs $ \ !thisEvd ->
+                    lingering otherEvs >>= \case
+                      Nothing -> return $ yesOrNo False
+                      Just !rhv -> return $ yesOrNo $ cmp thisEvd rhv
+                Nothing ->
+                  throwEdhM UsageError $
+                    T.pack $
+                      "incompatible event data type: " <> show (typeRep @t)
+                        <> " vs "
+                        <> show (typeRep @a)
+
+        withValue =
+          fromEdh' @a other >>= \case
+            Nothing -> return edhNA
+            Just !rhv -> exitWithResult $
+              MappedEvs thisEvs $ \ !thisEvd ->
+                return $ yesOrNo $ cmp thisEvd rhv
+
+    withEvs <|> withValue
+
+evsOpProc ::
+  forall a.
+  Object ->
+  (Eq a, EdhXchg a, Typeable a) =>
+  (a -> a -> a) ->
+  EdhValue ->
+  Edh EdhValue
+evsOpProc clsEvs !op !other =
+  withThisEvsTyped @a $ \ !thisEvsObj (thisEvs :: s a) -> do
+    let exitWithResult :: MappedEvs s a a -> Edh EdhValue
+        exitWithResult !evsResult = do
+          dto <- getEvsDtype thisEvsObj
+          EdhObject
+            <$> createHostObjectM'
+              clsEvs
+              (toDyn $ SomeEventSource evsResult)
+              [dto]
+
+        withEvs =
+          adaptEdhArg @AnyEventSource other
+            >>= \(AnyEventSource (evs :: s' t) _evso) -> case eqT of
               Just (Refl :: t :~: a) -> exitWithResult $
-                EventTensor src $ \evd0 ->
+                MappedEvs thisEvs $ \thisEvd ->
                   lingering evs >>= \case
-                    Nothing -> return $ yesOrNo False
-                    Just !rhv -> do
-                      evd <- perceiver evd0
-                      return $ yesOrNo $ cmp evd rhv
+                    Nothing -> return thisEvd -- TODO this okay??
+                    Just !rhv -> return $ op thisEvd rhv
               Nothing ->
                 throwEdhM UsageError $
                   T.pack $
@@ -504,48 +579,7 @@ evtCmpProc !dtYesNo !cmp !other =
           fromEdh' @a other >>= \case
             Nothing -> return edhNA
             Just !rhv -> exitWithResult $
-              EventTensor src $ \evd0 -> do
-                evd <- perceiver evd0
-                return $ yesOrNo $ cmp evd rhv
-
-    withEvs <|> withValue
-
-evtOpProc ::
-  forall a.
-  (Eq a, EdhXchg a, Typeable a) =>
-  (a -> a -> a) ->
-  EdhValue ->
-  Edh EdhValue
-evtOpProc !op !other =
-  withTensorSelfOf @a $ \ !objEvt (EventTensor src perceiver) -> do
-    let exitWithNewClone :: EventTensor a -> Edh EdhValue
-        exitWithNewClone !evtResult =
-          EdhObject <$> mutCloneHostObjectM objEvt objEvt evtResult
-
-        withEvs =
-          adaptEdhArg @AnyEventSource other
-            >>= \(AnyEventSource (evs :: s t) _evso) -> case eqT of
-              Just (Refl :: t :~: a) -> exitWithNewClone $
-                EventTensor src $ \evd0 ->
-                  lingering evs >>= \case
-                    Nothing -> perceiver evd0 -- TODO this okay??
-                    Just !rhv -> do
-                      evd <- perceiver evd0
-                      return $ op evd rhv
-              Nothing ->
-                throwEdhM UsageError $
-                  T.pack $
-                    "incompatible event data type: " <> show (typeRep @t)
-                      <> " vs "
-                      <> show (typeRep @a)
-
-        withValue =
-          fromEdh' @a other >>= \case
-            Nothing -> return edhNA
-            Just !rhv -> exitWithNewClone $
-              EventTensor src $ \evd0 -> do
-                evd <- perceiver evd0
-                return $ op evd rhv
+              MappedEvs thisEvs $ \thisEvd -> return $ op thisEvd rhv
 
     withEvs <|> withValue
 
