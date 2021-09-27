@@ -29,10 +29,19 @@ withEvsOf ::
 withEvsOf obj withEvs = go . (obj :) =<< readTVarEdh (edh'obj'supers obj)
   where
     go :: [Object] -> Edh r
-    go [] = throwEdhM EvalError "not an expected EventSource object"
+    go [] =
+      naM $
+        T.pack $
+          "not an expected EventSource of event type: " <> show (typeRep @t)
     go (inst : rest) = (<|> go rest) $
       asEventSource inst $ \(evs :: s t') -> case eqT of
-        Nothing -> throwEdhM EvalError "this EventSource mismatches its dtype"
+        Nothing ->
+          naM $
+            T.pack $
+              "event type of the EventSource mismatches expection: "
+                <> show (typeRep @t')
+                <> " vs "
+                <> show (typeRep @t)
         Just (Refl :: t' :~: t) -> withEvs inst evs
 
 getEvsDtype :: Object -> Edh Object
@@ -40,7 +49,7 @@ getEvsDtype !objEvs = do
   let findEvsDto :: [Object] -> Edh Object
       findEvsDto [] =
         edhSimpleDescM (EdhObject objEvs) >>= \ !badDesc ->
-          naM $ "not a Sink/EventSource with dtype: " <> badDesc
+          naM $ "not a Sink/EventSource os dtype: " <> badDesc
       -- this is right and avoids unnecessary checks in vastly usual cases
       findEvsDto [dto] = return dto
       -- safe guard in case an evs instance has been further extended
@@ -48,6 +57,37 @@ getEvsDtype !objEvs = do
         (<|> findEvsDto rest) $
           withDataType maybeDto $ const $ return maybeDto
   readTVarEdh (edh'obj'supers objEvs) >>= findEvsDto
+
+defineEvtFieldProperty ::
+  forall t s.
+  (Typeable s, Typeable t) =>
+  (s -> t) ->
+  Object ->
+  AttrName ->
+  Edh EdhValue
+defineEvtFieldProperty fg dto nm = do
+  clsEvs <- getEventSourceClass
+  let getter :: Edh EdhValue
+      getter = do
+        !that <- edh'scope'that . contextScope . edh'context <$> edhThreadState
+        withEvsOf @s that $ \_selfEvsObj (selfEvs :: s' s) -> do
+          let exitWithResult :: MappedEvs s' s t -> Edh EdhValue
+              exitWithResult !evsResult =
+                EdhObject
+                  <$> createHostObjectM'
+                    clsEvs
+                    (toDyn $ SomeEventSource evsResult)
+                    [dto]
+          exitWithResult $ MappedEvs selfEvs $ return . fg
+  withDataType dto $
+    \(_ :: DataType a) -> case eqT of
+      Just (Refl :: a :~: t) -> mkEdhProperty nm getter Nothing
+      Nothing ->
+        throwEdhM UsageError $
+          T.pack $
+            "incompatible field type with dtype: " <> show (typeRep @t)
+              <> " vs "
+              <> show (typeRep @a)
 
 mkYesNoEvtDt :: Object -> DataTypeIdent -> Edh Object
 mkYesNoEvtDt clsEvs !dti = do
@@ -621,3 +661,38 @@ evsDtypeEqProc !other = do
     _ -> rtnNeg
   where
     rtnNeg = return (EdhBool False)
+
+getSinkClass :: Edh Object
+getSinkClass =
+  importModuleM "dim/RT" >>= \ !moduRT ->
+    getObjPropertyM moduRT (AttrByName "Sink") >>= \case
+      EdhObject !clsSink -> return clsSink
+      _ -> naM "bug: dim/RT provides no Sink class"
+
+getEventSourceClass :: Edh Object
+getEventSourceClass =
+  importModuleM "dim/RT" >>= \ !moduRT ->
+    getObjPropertyM moduRT (AttrByName "EventSource") >>= \case
+      EdhObject !clsEventSource -> return clsEventSource
+      _ -> naM "bug: dim/RT provides no EventSource class"
+
+getPredefinedEvsDtype :: AttrName -> Edh Object
+getPredefinedEvsDtype !dti =
+  importModuleM "dim/RT" >>= \ !moduRT ->
+    getObjPropertyM moduRT (AttrByName dti) >>= \case
+      EdhObject !dto -> return dto
+      _ -> naM $ "dim/RT provides no `" <> dti <> "` event sink dtype"
+
+getPredefinedEvsDtype' ::
+  forall a. (Typeable a) => AttrName -> Edh (DataType a, Object)
+getPredefinedEvsDtype' !dti =
+  importModuleM "dim/RT" >>= \ !moduRT ->
+    getObjPropertyM moduRT (AttrByName dti) >>= \case
+      EdhObject !dto -> withDataType dto $ \(gdt :: DataType a') ->
+        case eqT of
+          Nothing ->
+            naM $
+              "requested dtype " <> dti <> " not compatible with host type: "
+                <> T.pack (show $ typeRep @a)
+          Just (Refl :: a' :~: a) -> return (gdt, dto)
+      _ -> naM $ "dim/RT provides no `" <> dti <> "` event sink dtype"
