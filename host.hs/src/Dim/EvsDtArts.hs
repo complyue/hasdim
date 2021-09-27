@@ -545,7 +545,12 @@ mkEvsDataType ::
   Edh () ->
   Edh Object
 mkEvsDataType !dti !clsInit = do
-  !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] clsInit
+  !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
+    let !clsArts = [(AttrByName "__repr__", EdhString dti)]
+    !clsScope <- contextScope . edh'context <$> edhThreadState
+    iopdUpdateEdh clsArts $ edh'scope'entity clsScope
+
+    clsInit
   !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtObj =
