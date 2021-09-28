@@ -13,11 +13,10 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Unique
 import Dim.Column
-import Dim.DataType
 import Dim.DbArray
 import Dim.DiskBack
 import Dim.FlatArray
-import Dim.XCHG
+import Event.Analytics.EHI
 import Foreign hiding (void)
 import Language.Edh.MHI
 import Prelude

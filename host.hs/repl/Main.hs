@@ -3,6 +3,7 @@ module Main where
 -- import           Debug.Trace
 
 import Dim.EHI (installDimBatteries)
+import Event.Analytics.EHI
 import Language.Edh.MHI
 import Language.Edh.Net (installNetBatteries)
 import Language.Edh.Repl
@@ -26,6 +27,7 @@ main =
         -- install all necessary batteries
         installEdhBatteries world
         installNetBatteries world
+        installEasBatteries world
         installDimBatteries world
 
         consoleOut $

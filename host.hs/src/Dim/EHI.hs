@@ -4,14 +4,11 @@ module Dim.EHI
     getPredefinedDtype,
     getPredefinedDtype',
     createColumnObject,
-    module Dim.XCHG,
-    module Dim.DataType,
     module Dim.Column,
     module Dim.Fold,
     module Dim.InMem,
     module Dim.Table,
     module Dim.ColDtArts,
-    module Dim.EvsDtArts,
     module Dim.DbArray,
     module Dim.FlatArray,
   )
@@ -19,7 +16,7 @@ where
 
 -- import           Debug.Trace
 
-import Control.Monad.Reader
+import Control.Monad
 import Data.Dynamic
 import Data.Lossless.Decimal as D
 import Data.Maybe
@@ -28,17 +25,14 @@ import Data.Typeable hiding (TypeRep, typeOf, typeRep)
 import Dim.ColArts
 import Dim.ColDtArts
 import Dim.Column
-import Dim.DataType
 import Dim.DbArray
 import Dim.DbArts
-import Dim.EvsArts
-import Dim.EvsDtArts
 import Dim.FlatArray
 import Dim.Float
 import Dim.Fold
 import Dim.InMem
 import Dim.Table
-import Dim.XCHG
+import Event.Analytics.EHI
 import Foreign hiding (void)
 import Language.Edh.MHI
 import Type.Reflection
@@ -148,8 +142,6 @@ installDimBatteries !world = do
       !tableClass <- createTableClass dtBox clsColumn
       !dbArrayClass <- createDbArrayClass clsColumn defaultDataType
 
-      !evsArts <- defineEvsArts
-
       !moduArts0 <-
         sequence $
           [ (AttrByName nm,) <$> mkEdhProc mc nm hp
@@ -194,7 +186,6 @@ installDimBatteries !world = do
                    (AttrByName "Table", EdhObject tableClass),
                    (AttrByName "DbArray", EdhObject dbArrayClass)
                  ]
-              ++ evsArts
       iopdUpdateEdh moduArts $ edh'scope'entity moduScope
       prepareExpStoreM (edh'scope'this moduScope) >>= \ !esExps ->
         iopdUpdateEdh moduArts esExps

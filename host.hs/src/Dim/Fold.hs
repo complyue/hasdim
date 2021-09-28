@@ -10,9 +10,8 @@ import qualified Data.Lossless.Decimal as D
 import Data.Maybe
 import Data.Typeable hiding (TypeRep, typeOf, typeRep)
 import Dim.Column
-import Dim.DataType
 import Dim.FlatArray
-import Dim.XCHG
+import Event.Analytics.EHI
 import Foreign as F
 import Language.Edh.MHI
 import Prelude

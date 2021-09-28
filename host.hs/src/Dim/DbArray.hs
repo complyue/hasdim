@@ -14,9 +14,8 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Lossless.Decimal as D
 import Data.Text (Text)
 import qualified Data.Text as T
-import Dim.DataType
 import Dim.FlatArray
-import Dim.XCHG
+import Event.Analytics.EHI
 import Foreign hiding (void)
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import Language.Edh.MHI

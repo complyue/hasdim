@@ -6,9 +6,9 @@ import Control.Applicative
 import Control.Monad.IO.Class
 import Data.Dynamic
 import Dim.Column
-import Dim.DataType
 import Dim.FlatArray
 import Dim.InMem
+import Event.Analytics.EHI
 import Foreign
 import Language.Edh.MHI
 import Prelude

@@ -10,9 +10,8 @@ import Data.Dynamic
 import qualified Data.Text as T
 import qualified Data.Vector.Mutable as MV
 import Dim.Column
-import Dim.DataType
 import Dim.FlatArray
-import Dim.XCHG
+import Event.Analytics.EHI
 import Foreign hiding (void)
 import Language.Edh.MHI
 import Type.Reflection

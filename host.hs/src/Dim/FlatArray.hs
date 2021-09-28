@@ -12,7 +12,7 @@ import Data.Dynamic
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as MVS
-import Dim.XCHG
+import Event.Analytics.EHI
 import Foreign
 import Foreign.ForeignPtr.Unsafe
 import Prelude

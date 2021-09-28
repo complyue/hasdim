@@ -56,6 +56,7 @@ executable hasdim
   build-depends:
     , base              >=4.12
     , bytestring
+    , eas
     , edh
     , hasdim
     , lossless-decimal
@@ -100,6 +101,7 @@ executable rundim
   build-depends:
     , base              >=4.12
     , bytestring
+    , eas
     , edh
     , hasdim
     , lossless-decimal
@@ -144,6 +146,7 @@ executable rundimm
   build-depends:
     , base              >=4.12
     , bytestring
+    , eas
     , edh
     , hasdim
     , lossless-decimal
@@ -159,18 +162,14 @@ library
     Dim.ColArts
     Dim.ColDtArts
     Dim.Column
-    Dim.DataType
     Dim.DbArray
     Dim.DbArts
     Dim.DiskBack
-    Dim.EvsArts
-    Dim.EvsDtArts
     Dim.FlatArray
     Dim.Float
     Dim.Fold
     Dim.InMem
     Dim.Table
-    Dim.XCHG
 
   hs-source-dirs:     src
   default-language:   Haskell2010
@@ -209,6 +208,7 @@ library
     , clock
     , containers
     , directory
+    , eas
     , edh
     , filepath
     , hashable

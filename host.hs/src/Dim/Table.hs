@@ -13,10 +13,9 @@ import qualified Data.Text as T
 import Data.Unique
 import qualified Data.Vector.Mutable as MV
 import Dim.Column
-import Dim.DataType
 import Dim.FlatArray
 import Dim.InMem
-import Dim.XCHG
+import Event.Analytics.EHI
 import Language.Edh.MHI
 import Prelude
 

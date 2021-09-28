@@ -13,7 +13,7 @@ import Dim.Column
 import Dim.DbArray
 import Dim.FlatArray
 import Dim.InMem
-import Dim.XCHG
+import Event.Analytics.EHI
 import Foreign hiding (void)
 import Language.Edh.MHI
 import Prelude
