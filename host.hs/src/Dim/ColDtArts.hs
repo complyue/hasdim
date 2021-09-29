@@ -135,7 +135,7 @@ mkBoxColDt !dti !defv = do
                 (cs', cl') <- view'column'data col'
                 if cl' /= cl
                   then
-                    throwEIO UsageError $
+                    throwEdhM UsageError $
                       "column length mistmatch: "
                         <> T.pack (show cl)
                         <> " vs "
@@ -200,7 +200,7 @@ mkBoxColDt !dti !defv = do
                 (cs', cl') <- view'column'data col'
                 if cl' /= cl
                   then
-                    throwEIO UsageError $
+                    throwEdhM UsageError $
                       "column length mistmatch: "
                         <> T.pack (show cl)
                         <> " vs "
@@ -947,7 +947,7 @@ colCmpProc !dtYesNo !cmp !other =
           (cs', cl') <- view'column'data col'
           if cl' /= cl
             then
-              throwEIO UsageError $
+              throwEdhM UsageError $
                 "column length mistmatch: "
                   <> T.pack (show cl)
                   <> " vs "
@@ -1024,7 +1024,7 @@ devColOpProc !op !other =
           (cs', cl') <- view'column'data col'
           if cl' /= cl
             then
-              throwEIO UsageError $
+              throwEdhM UsageError $
                 "column length mistmatch: "
                   <> T.pack (show cl)
                   <> " vs "
@@ -1100,7 +1100,7 @@ dirColOpProc !op !other =
           (cs', cl') <- view'column'data col'
           if cl' /= cl
             then
-              throwEIO UsageError $
+              throwEdhM UsageError $
                 "column length mistmatch: "
                   <> T.pack (show cl)
                   <> " vs "

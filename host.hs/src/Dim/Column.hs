@@ -319,7 +319,7 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal =
                   (idxa, idxl) <- view'column'data idxCol
                   if idxl /= cl
                     then
-                      throwEIO UsageError $
+                      throwEdhM UsageError $
                         "bool index shape mismatch - "
                           <> T.pack (show idxl)
                           <> " vs "
@@ -405,7 +405,7 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal =
                   (idxa, idxl) <- view'column'data idxCol
                   if idxl /= cl
                     then
-                      throwEIO UsageError $
+                      throwEdhM UsageError $
                         "bool index shape mismatch - "
                           <> T.pack (show idxl)
                           <> " vs "
@@ -432,7 +432,7 @@ idxAssignColumn (SomeColumn _ (col :: c0 a)) !idxVal !tgtVal =
               (idxa, idxl) <- view'column'data idxCol
               if cl'rhs /= idxl
                 then
-                  throwEIO UsageError $
+                  throwEdhM UsageError $
                     "rhs column shape mismatch fancy index - "
                       <> T.pack (show cl'rhs)
                       <> " vs "

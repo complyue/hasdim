@@ -78,7 +78,7 @@ instance
         let !cap = deviceArrayCapacity dbcs
         if newLen' < 0 || newLen' > cap
           then
-            throwEIO
+            throwEdhM
               UsageError
               $ T.pack $
                 "column length out of range: " <> show newLen <> " vs "
@@ -97,7 +97,7 @@ instance
         let !cl = dba'len - dbc'offs
         if
             | stop > cl ->
-              throwEIO
+              throwEdhM
                 UsageError
                 $ T.pack $
                   "column slice range out of range: "
@@ -133,7 +133,7 @@ instance
               !cl = dba'len - dbc'offs
           if stop < start || start < 0 || stop > cl
             then
-              throwEIO
+              throwEdhM
                 UsageError
                 $ T.pack $
                   "column slice range out of range: " <> show start <> ":"
@@ -145,7 +145,7 @@ instance
                   !len = if r == 0 then abs q else 1 + abs q
               if ccap < len
                 then
-                  throwEIO
+                  throwEdhM
                     UsageError
                     $ T.pack $
                       "capacity too small: " <> show ccap <> " vs "
@@ -202,7 +202,7 @@ instance
           liftIO $ subtract dbc'offs . fromIntegral <$> readDbArrayLength hdr
         if idxl /= cl
           then
-            throwEIO
+            throwEdhM
               UsageError
               $ T.pack $
                 "bool index shape mismatch - " <> show idxl <> " vs "

@@ -180,7 +180,7 @@ createTableClass !dtBox !clsColumn =
                         view'column'data col >>= \(!cs, !cl) ->
                           if array'capacity cs < ctorCap || cl < ctorCnt
                             then
-                              throwEIO UsageError $
+                              throwEdhM UsageError $
                                 "Column "
                                   <> attrKeyStr colKey
                                   <> " is not long enough: "
@@ -333,7 +333,7 @@ createTableClass !dtBox !clsColumn =
                           view'column'data col >>= \(!cs, !cl) ->
                             if array'capacity cs < cap || cl < rc
                               then
-                                throwEIO UsageError $
+                                throwEdhM UsageError $
                                   "Column "
                                     <> attrKeyStr colKey
                                     <> " is not long enough: "

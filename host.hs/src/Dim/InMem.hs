@@ -52,7 +52,7 @@ instance
     let !cap = deviceArrayCapacity cs
     if newLen < 0 || newLen > cap
       then
-        throwEIO UsageError $
+        throwEdhM UsageError $
           T.pack $
             "column length out of range: " <> show newLen <> " vs " <> show cap
       else writeTVarEIO clv newLen
@@ -63,7 +63,7 @@ instance
     !cl <- readTVarEIO clv
     if stop < start || start < 0 || stop > cap
       then
-        throwEIO UsageError $
+        throwEdhM UsageError $
           T.pack $
             "column slice range out of range: "
               <> show start
@@ -83,7 +83,7 @@ instance
     !cl <- readTVarEIO clv
     if stop < start || start < 0 || stop > cl
       then
-        throwEIO UsageError $
+        throwEdhM UsageError $
           T.pack $
             "column slice range out of range: "
               <> show start
@@ -96,7 +96,7 @@ instance
             !len = if r == 0 then abs q else 1 + abs q
         if ccap < len
           then
-            throwEIO UsageError $
+            throwEdhM UsageError $
               T.pack $
                 "capacity too small: " <> show ccap <> " vs "
                   <> show start
@@ -141,7 +141,7 @@ instance
     (!idxa, !idxl) <- view'column'data idxCol
     if idxl /= cl
       then
-        throwEIO UsageError $
+        throwEdhM UsageError $
           T.pack $
             "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
       else do
@@ -223,7 +223,7 @@ instance
     let !cap = directArrayCapacity cs
     if newLen < 0 || newLen > cap
       then
-        throwEIO UsageError $
+        throwEdhM UsageError $
           T.pack $
             "column length out of range: " <> show newLen <> " vs " <> show cap
       else writeTVarEIO clv newLen
@@ -234,7 +234,7 @@ instance
     !cl <- readTVarEIO clv
     if stop < start || start < 0 || stop > cap
       then
-        throwEIO UsageError $
+        throwEdhM UsageError $
           T.pack $
             "column slice range out of range: "
               <> show start
@@ -255,7 +255,7 @@ instance
 
     if stop < start || start < 0 || stop > cl
       then
-        throwEIO UsageError $
+        throwEdhM UsageError $
           T.pack $
             "column slice range out of range: "
               <> show start
@@ -268,7 +268,7 @@ instance
             !len = if r == 0 then abs q else 1 + abs q
         if ccap < len
           then
-            throwEIO UsageError $
+            throwEdhM UsageError $
               T.pack $
                 "capacity too small: " <> show ccap <> " vs "
                   <> show start
@@ -312,7 +312,7 @@ instance
     (!idxa, !idxl) <- view'column'data idxCol
     if idxl /= cl
       then
-        throwEIO UsageError $
+        throwEdhM UsageError $
           T.pack $
             "bool index shape mismatch - " <> show idxl <> " vs " <> show cl
       else do
