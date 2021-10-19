@@ -2,10 +2,10 @@
  # Resemble Numpy vectorized operations, with folding operations
  #}
 
+import * 'dim/primitive/ops'
+
 
 export {
-
-  import * 'dim/primitive/ops'
 
   method sum( col ) fold( add, col )
   method nansum( col ) fold( add'valid, col )
