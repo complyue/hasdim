@@ -141,11 +141,11 @@ createColumnClass !defaultDt =
         return nil
 
     withThisColumn :: forall r. (Object -> SomeColumn -> Edh r) -> Edh r
-    withThisColumn withTbl = do
+    withThisColumn withCol = do
       !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
       case fromDynamic =<< dynamicHostData this of
         Nothing -> throwEdhM EvalError "bug: this is not a Column"
-        Just !col -> withTbl this col
+        Just !col -> withCol this col
 
     colCapProc :: Edh EdhValue
     colCapProc =
