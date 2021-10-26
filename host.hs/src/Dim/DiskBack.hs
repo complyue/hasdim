@@ -15,7 +15,7 @@ import Dim.FlatArray
 import Dim.InMem
 import Event.Analytics.EHI
 import Foreign hiding (void)
-import Language.Edh.MHI
+import Language.Edh.EHI
 import Prelude
 
 data DbColumn a = (Eq a, Storable a, EdhXchg a, Typeable a) =>

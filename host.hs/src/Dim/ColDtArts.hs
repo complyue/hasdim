@@ -18,7 +18,7 @@ import Event.Analytics.EHI
 import Foreign hiding (void)
 import Foreign.ForeignPtr.Unsafe
 import GHC.Float
-import Language.Edh.MHI
+import Language.Edh.EHI
 import System.Random
 import Prelude
 

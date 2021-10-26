@@ -15,7 +15,7 @@ import Data.Typeable hiding (TypeRep, typeRep)
 import Dim.FlatArray
 import Event.Analytics.EHI
 import Foreign
-import Language.Edh.MHI
+import Language.Edh.EHI
 import Type.Reflection
 import Prelude
 

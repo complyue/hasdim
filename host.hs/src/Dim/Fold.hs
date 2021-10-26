@@ -13,7 +13,7 @@ import Dim.Column
 import Dim.FlatArray
 import Event.Analytics.EHI
 import Foreign as F
-import Language.Edh.MHI
+import Language.Edh.EHI
 import Prelude
 
 -- * Support of Folding

@@ -17,7 +17,7 @@ import Dim.FlatArray
 import Dim.InMem
 import Event.Analytics.EHI
 import Foreign hiding (void)
-import Language.Edh.MHI
+import Language.Edh.EHI
 import System.Random
 import Type.Reflection
 import Prelude

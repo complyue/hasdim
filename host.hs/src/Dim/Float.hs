@@ -10,7 +10,7 @@ import Dim.FlatArray
 import Dim.InMem
 import Event.Analytics.EHI
 import Foreign
-import Language.Edh.MHI
+import Language.Edh.EHI
 import Prelude
 
 piProc :: Object -> Object -> Int -> "dtype" ?: Object -> Edh EdhValue

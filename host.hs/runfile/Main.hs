@@ -4,7 +4,7 @@ module Main where
 
 import Dim.EHI
 import Event.Analytics.EHI
-import Language.Edh.MHI
+import Language.Edh.EHI
 import Language.Edh.Net
 import Language.Edh.Run
 import System.Environment (getArgs)

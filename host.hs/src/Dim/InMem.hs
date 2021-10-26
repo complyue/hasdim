@@ -13,7 +13,7 @@ import Dim.Column
 import Dim.FlatArray
 import Event.Analytics.EHI
 import Foreign hiding (void)
-import Language.Edh.MHI
+import Language.Edh.EHI
 import Type.Reflection
 import Prelude
 

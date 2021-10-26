@@ -16,7 +16,7 @@ import Dim.Column
 import Dim.FlatArray
 import Dim.InMem
 import Event.Analytics.EHI
-import Language.Edh.MHI
+import Language.Edh.EHI
 import Prelude
 
 {- HLINT ignore "Redundant <$>" -}

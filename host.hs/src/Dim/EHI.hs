@@ -34,7 +34,7 @@ import Dim.InMem
 import Dim.Table
 import Event.Analytics.EHI
 import Foreign hiding (void)
-import Language.Edh.MHI
+import Language.Edh.EHI
 import Type.Reflection
 import Prelude
 

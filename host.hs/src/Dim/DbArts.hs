@@ -18,7 +18,7 @@ import Dim.DiskBack
 import Dim.FlatArray
 import Event.Analytics.EHI
 import Foreign hiding (void)
-import Language.Edh.MHI
+import Language.Edh.EHI
 import Prelude
 
 createDbArrayClass :: Object -> Object -> Edh Object

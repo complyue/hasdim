@@ -18,7 +18,7 @@ import Dim.FlatArray
 import Event.Analytics.EHI
 import Foreign hiding (void)
 import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
-import Language.Edh.MHI
+import Language.Edh.EHI
 import System.Directory
 import System.FilePath
 import System.IO
