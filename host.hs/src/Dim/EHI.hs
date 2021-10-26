@@ -71,7 +71,7 @@ builtinDataTypes = do
 
 installDimBatteries :: EdhWorld -> IO ()
 installDimBatteries !world = do
-  !moduDtypes <- installEdhModuleM world "dim/dtypes" $ do
+  !moduDtypes <- installModuleM world "dim/dtypes" $ do
     !moduScope <- contextScope . edh'context <$> edhThreadState
 
     !dtAlias <- builtinDataTypes
@@ -83,7 +83,7 @@ installDimBatteries !world = do
     iopdUpdateEdh moduArts esExps
 
   void $
-    installEdhModuleM world "dim/primitive/ops" $ do
+    installModuleM world "dim/primitive/ops" $ do
       !moduScope <- contextScope . edh'context <$> edhThreadState
 
       !moduArts0 <-
@@ -117,7 +117,7 @@ installDimBatteries !world = do
         iopdUpdateEdh moduArts esExps
 
   void $
-    installEdhModuleM world "dim/RT" $ do
+    installModuleM world "dim/RT" $ do
       !moduScope <- contextScope . edh'context <$> edhThreadState
       let !dtypesModuStore = case edh'obj'store moduDtypes of
             HashStore !hs -> hs
