@@ -48,7 +48,6 @@ createColumnClass !defaultDt =
                 ("([*=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "*"),
                 ("([/=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "/"),
                 ("([//=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "//"),
-                ("([%=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "%"),
                 ("([**=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "**"),
                 ("([&&=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "&&"),
                 ("([||=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "||"),
