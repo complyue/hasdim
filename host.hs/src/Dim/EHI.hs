@@ -84,37 +84,20 @@ installDimBatteries !world = do
 
   void $
     installModuleM world "dim/primitive/ops" $ do
-      !moduScope <- contextScope . edh'context <$> edhThreadState
+      let defFoldOp :: forall t. Typeable t => AttrName -> t -> Edh ()
+          defFoldOp nm t = defEdhArt nm . EdhObject =<< wrapM' nm t
 
-      !moduArts0 <-
-        sequence $
-          [ (AttrByName nm,) <$> def nm
-            | (nm, def) <-
-                [ ("fold", defineComputMethod foldComput),
-                  ("foldl", defineComputMethod foldlComput),
-                  ("foldr", defineComputMethod foldrComput),
-                  ("scanl", defineComputMethod scanlComput),
-                  ("scanr", defineComputMethod scanrComput)
-                ]
-          ]
+      exportM_ $ do
+        defineComputMethod_ "fold" foldComput
+        defineComputMethod_ "foldl" foldlComput
+        defineComputMethod_ "foldr" foldrComput
+        defineComputMethod_ "scanl" scanlComput
+        defineComputMethod_ "scanr" scanrComput
 
-      !moduArts1 <-
-        sequence
-          [ (AttrByName "add",) . EdhObject
-              <$> wrapM' "add" (FoldOp FoldingAdd),
-            (AttrByName "add'valid",) . EdhObject
-              <$> wrapM' "add'valid" (FoldOp FoldingAddV),
-            (AttrByName "multiply",) . EdhObject
-              <$> wrapM' "multiply" (FoldOp FoldingMul),
-            (AttrByName "multiply'valid",) . EdhObject
-              <$> wrapM' "multiply'valid" (FoldOp FoldingMulV)
-          ]
-
-      let !moduArts = moduArts0 ++ moduArts1
-
-      iopdUpdateEdh moduArts $ edh'scope'entity moduScope
-      prepareExpStoreM (edh'scope'this moduScope) >>= \ !esExps ->
-        iopdUpdateEdh moduArts esExps
+        defFoldOp "add" (FoldOp FoldingAdd)
+        defFoldOp "add'valid" (FoldOp FoldingAddV)
+        defFoldOp "multiply" (FoldOp FoldingMul)
+        defFoldOp "multiply'valid" (FoldOp FoldingMulV)
 
   void $
     installModuleM world "dim/RT" $ do

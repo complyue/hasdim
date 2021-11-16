@@ -793,96 +793,36 @@ mkIntColDt !dtYesNo !dti = do
       | y < 0 = 0 -- to survive `Exception: Negative exponent`
       | otherwise = x ^ y
 
-mkBitsColDt ::
+defBitsColDt ::
   forall a.
   (Bits a, Ord a, Storable a, EdhXchg a, Typeable a) =>
   Object ->
   DataTypeIdent ->
   Edh Object
-mkBitsColDt !dtYesNo !dti = do
+defBitsColDt !dtYesNo !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
-    !clsMths <-
-      sequence $
-        [ (AttrByName nm,) <$> mkEdhProc vc nm hp
-          | (nm, vc, hp) <-
-              [ ( "(==)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (==)
-                ),
-                ( "(==.)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (==)
-                ),
-                ( "(!=)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (/=)
-                ),
-                ( "(!=.)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (/=)
-                ),
-                ( "(>=)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (>=)
-                ),
-                ( "(>=.)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (<=)
-                ),
-                ( "(<=)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (<=)
-                ),
-                ( "(<=.)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (>=)
-                ),
-                ( "(>)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (>)
-                ),
-                ( "(>.)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (<)
-                ),
-                ( "(<)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (<)
-                ),
-                ( "(<.)",
-                  EdhMethod,
-                  wrapEdhProc $ colCmpProc @a dtYesNo (>)
-                ),
-                ( "(&&)",
-                  EdhMethod,
-                  wrapEdhProc $ devColOpProc @a (.&.)
-                ),
-                ( "(&&.)",
-                  EdhMethod,
-                  wrapEdhProc $ devColOpProc @a (.&.)
-                ),
-                ( "(||)",
-                  EdhMethod,
-                  wrapEdhProc $ devColOpProc @a (.|.)
-                ),
-                ( "(||.)",
-                  EdhMethod,
-                  wrapEdhProc $ devColOpProc @a (.|.)
-                ),
-                ( "(&&=)",
-                  EdhMethod,
-                  wrapEdhProc $ colInpProc @a (.&.)
-                ),
-                ( "(||=)",
-                  EdhMethod,
-                  wrapEdhProc $ colInpProc @a (.|.)
-                ),
-                ("__eq__", EdhMethod, wrapEdhProc dtypeEqProc)
-              ]
-        ]
-    let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
-    !clsScope <- contextScope . edh'context <$> edhThreadState
-    iopdUpdateEdh clsArts $ edh'scope'entity clsScope
+    defEdhProc'_ EdhMethod "(==)" $ colCmpProc @a dtYesNo (==)
+    defEdhProc'_ EdhMethod "(==.)" $ colCmpProc @a dtYesNo (==)
+    defEdhProc'_ EdhMethod "(!=)" $ colCmpProc @a dtYesNo (/=)
+    defEdhProc'_ EdhMethod "(!=.)" $ colCmpProc @a dtYesNo (/=)
+    defEdhProc'_ EdhMethod "(>=)" $ colCmpProc @a dtYesNo (>=)
+    defEdhProc'_ EdhMethod "(>=.)" $ colCmpProc @a dtYesNo (<=)
+    defEdhProc'_ EdhMethod "(<=)" $ colCmpProc @a dtYesNo (<=)
+    defEdhProc'_ EdhMethod "(<=.)" $ colCmpProc @a dtYesNo (>=)
+    defEdhProc'_ EdhMethod "(>)" $ colCmpProc @a dtYesNo (>)
+    defEdhProc'_ EdhMethod "(>.)" $ colCmpProc @a dtYesNo (<)
+    defEdhProc'_ EdhMethod "(<)" $ colCmpProc @a dtYesNo (<)
+    defEdhProc'_ EdhMethod "(<.)" $ colCmpProc @a dtYesNo (>)
+    defEdhProc'_ EdhMethod "(&&)" $ devColOpProc @a (.&.)
+    defEdhProc'_ EdhMethod "(&&.)" $ devColOpProc @a (.&.)
+    defEdhProc'_ EdhMethod "(||)" $ devColOpProc @a (.|.)
+    defEdhProc'_ EdhMethod "(||.)" $ devColOpProc @a (.|.)
+    defEdhProc'_ EdhMethod "(&&=)" $ colInpProc @a (.&.)
+    defEdhProc'_ EdhMethod "(||=)" $ colInpProc @a (.|.)
+
+    defEdhProc'_ EdhMethod "__eq__" evsDtypeEqProc
+    defEdhArt "__repr__" $ EdhString dti
+
   !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtObj =
@@ -892,6 +832,7 @@ mkBitsColDt !dtYesNo !dti = do
             edh'obj'class = dtCls,
             edh'obj'supers = supersVar
           }
+  defEdhArt dti $ EdhObject dtObj
   return dtObj
   where
     !dtd = HostStore $ toDyn dt
