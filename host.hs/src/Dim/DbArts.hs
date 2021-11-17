@@ -21,36 +21,25 @@ import Foreign hiding (void)
 import Language.Edh.EHI
 import Prelude
 
-createDbArrayClass :: Object -> Object -> Edh Object
-createDbArrayClass !clsColumn !defaultDt =
-  mkEdhClass "DbArray" (allocObjM arrayAllocator) [] $ do
-    !mths <-
-      sequence $
-        [ (AttrByName nm,) <$> mkEdhProc vc nm hp
-          | (nm, vc, hp) <-
-              [ ("__init__", EdhMethod, wrapEdhProc col__init__),
-                ("__len__", EdhMethod, wrapEdhProc aryLen1dGetter),
-                ("__mark__", EdhMethod, wrapEdhProc aryLen1dSetter),
-                ("__repr__", EdhMethod, wrapEdhProc aryReprProc),
-                ("__show__", EdhMethod, wrapEdhProc aryShowProc),
-                ("([])", EdhMethod, wrapEdhProc aryIdxReadProc),
-                ("([=])", EdhMethod, wrapEdhProc aryIdxWriteProc),
-                ("(@<-)", EdhMethod, wrapEdhProc aryDeleAttrProc),
-                ("asColumn", EdhMethod, wrapEdhProc aryAsColProc)
-              ]
-        ]
-          ++ [ (AttrByName nm,) <$> mkEdhProperty nm getter setter
-               | (nm, getter, setter) <-
-                   [ ("dir", aryDirGetter, Nothing),
-                     ("path", aryPathGetter, Nothing),
-                     ("dtype", aryDtypeGetter, Nothing),
-                     ("size", arySizeGetter, Nothing),
-                     ("shape", aryShapeGetter, Nothing),
-                     ("len1d", aryLen1dGetter, Just aryLen1dSetter)
-                   ]
-             ]
-    !clsScope <- contextScope . edh'context <$> edhThreadState
-    iopdUpdateEdh mths $ edh'scope'entity clsScope
+defineDbArrayClass :: Object -> Object -> Edh Object
+defineDbArrayClass !clsColumn !defaultDt =
+  defEdhClass "DbArray" (allocObjM arrayAllocator) [] $ do
+    defEdhProc'_ EdhMethod "__init__" col__init__
+    defEdhProc'_ EdhMethod "__len__" aryLen1dGetter
+    defEdhProc'_ EdhMethod "__mark__" aryLen1dSetter
+    defEdhProc'_ EdhMethod "__repr__" aryReprProc
+    defEdhProc'_ EdhMethod "__show__" aryShowProc
+    defEdhProc'_ EdhMethod "([])" aryIdxReadProc
+    defEdhProc'_ EdhMethod "([=])" aryIdxWriteProc
+    defEdhProc'_ EdhMethod "(@<-)" aryDeleAttrProc
+    defEdhProc'_ EdhMethod "asColumn" aryAsColProc
+
+    defEdhProperty_ "dir" aryDirGetter Nothing
+    defEdhProperty_ "path" aryPathGetter Nothing
+    defEdhProperty_ "dtype" aryDtypeGetter Nothing
+    defEdhProperty_ "size" arySizeGetter Nothing
+    defEdhProperty_ "shape" aryShapeGetter Nothing
+    defEdhProperty_ "len1d" aryLen1dGetter $ Just aryLen1dSetter
   where
     arrayAllocator ::
       "dataDir" !: Text ->

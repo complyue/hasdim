@@ -116,33 +116,21 @@ markTable !newCnt tbl@(Table cv rcv _tcols) = withTblCols tbl $ \ !cols -> do
       -- update table row count after all columns successfully updated
       writeTVarEdh rcv newCnt
 
-createTableClass :: Object -> Object -> Edh Object
-createTableClass !dtBox !clsColumn =
-  mkEdhClass "Table" (allocObjM tblAllocator) [] $ do
-    !mths <-
-      sequence $
-        [ (AttrByName nm,) <$> mkEdhProc vc nm hp
-          | (nm, vc, hp) <-
-              [ ("__cap__", EdhMethod, wrapEdhProc tblCapProc),
-                ("__len__", EdhMethod, wrapEdhProc tblLenProc),
-                ("__grow__", EdhMethod, wrapEdhProc tblGrowProc),
-                ("__mark__", EdhMethod, wrapEdhProc tblMarkRowCntProc),
-                ("(@)", EdhMethod, wrapEdhProc tblAttrReadProc),
-                ("(@=)", EdhMethod, wrapEdhProc tblAttrWriteProc),
-                ("([])", EdhMethod, wrapEdhProc tblIdxReadProc),
-                ("([=])", EdhMethod, wrapEdhProc tblIdxWriteProc),
-                ("__repr__", EdhMethod, wrapEdhProc tblReprProc),
-                ("__show__", EdhMethod, wrapEdhProc tblShowProc),
-                ("__desc__", EdhMethod, wrapEdhProc tblDescProc)
-              ]
-        ]
-          ++ [ (AttrByName nm,) <$> mkEdhProperty nm getter setter
-               | (nm, getter, setter) <-
-                   [ ("columns", tblColsGetterProc, Nothing)
-                   ]
-             ]
-    !clsScope <- contextScope . edh'context <$> edhThreadState
-    iopdUpdateEdh mths $ edh'scope'entity clsScope
+defineTableClass :: Object -> Object -> Edh Object
+defineTableClass !dtBox !clsColumn =
+  defEdhClass "Table" (allocObjM tblAllocator) [] $ do
+    defEdhProc'_ EdhMethod "__cap__" tblCapProc
+    defEdhProc'_ EdhMethod "__len__" tblLenProc
+    defEdhProc'_ EdhMethod "__grow__" tblGrowProc
+    defEdhProc'_ EdhMethod "__mark__" tblMarkRowCntProc
+    defEdhProc'_ EdhMethod "(@)" tblAttrReadProc
+    defEdhProc'_ EdhMethod "(@=)" tblAttrWriteProc
+    defEdhProc'_ EdhMethod "([])" tblIdxReadProc
+    defEdhProc'_ EdhMethod "([=])" tblIdxWriteProc
+    defEdhProc'_ EdhMethod "__repr__" tblReprProc
+    defEdhProc'_ EdhMethod "__show__" tblShowProc
+    defEdhProc'_ EdhMethod "__desc__" tblDescProc
+    defEdhProperty_ "columns" tblColsGetterProc Nothing
   where
     tblAllocator ::
       "capacity" !: Int ->

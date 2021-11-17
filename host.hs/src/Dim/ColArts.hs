@@ -22,44 +22,34 @@ import System.Random
 import Type.Reflection
 import Prelude
 
-createColumnClass :: Object -> Edh Object
-createColumnClass !defaultDt =
-  mkEdhClass "Column" (allocObjM columnAllocator) [] $ do
-    !mths <-
-      sequence $
-        [ (AttrByName nm,) <$> mkEdhProc vc nm hp
-          | (nm, vc, hp) <-
-              [ ("__init__", EdhMethod, wrapEdhProc col__init__),
-                ("__cap__", EdhMethod, wrapEdhProc colCapProc),
-                ("__len__", EdhMethod, wrapEdhProc colLenProc),
-                ("__grow__", EdhMethod, wrapEdhProc colGrowProc),
-                ("__mark__", EdhMethod, wrapEdhProc colMarkLenProc),
-                ("__blob__", EdhMethod, wrapEdhProc colBlobProc),
-                ("__json__", EdhMethod, wrapEdhProc colJsonProc),
-                ("__repr__", EdhMethod, wrapEdhProc colReprProc),
-                ("__show__", EdhMethod, wrapEdhProc colShowProc),
-                ("__desc__", EdhMethod, wrapEdhProc colDescProc),
-                ("([])", EdhMethod, wrapEdhProc colIdxReadProc),
-                ("([=])", EdhMethod, wrapEdhProc colIdxWriteProc),
-                {- -- TODO impl. following by super dtypes
-                ("([++=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "++"),
-                ("([+=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "+"),
-                ("([-=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "-"),
-                ("([*=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "*"),
-                ("([/=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "/"),
-                ("([//=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "//"),
-                ("([**=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "**"),
-                ("([&&=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "&&"),
-                ("([||=])", EdhMethod, wrapEdhProc $ colIdxUpdWithOpProc "||"),
-                -}
-                ("copy", EdhMethod, wrapEdhProc colCopyProc)
-              ]
-        ]
-          ++ [ (AttrByName nm,) <$> mkEdhProperty nm getter setter
-               | (nm, getter, setter) <- [("dtype", colDtypeProc, Nothing)]
-             ]
-    !clsScope <- contextScope . edh'context <$> edhThreadState
-    iopdUpdateEdh mths $ edh'scope'entity clsScope
+defineColumnClass :: Object -> Edh Object
+defineColumnClass !defaultDt =
+  defEdhClass "Column" (allocObjM columnAllocator) [] $ do
+    defEdhProc'_ EdhMethod "__init__" col__init__
+    defEdhProc'_ EdhMethod "__cap__" colCapProc
+    defEdhProc'_ EdhMethod "__len__" colLenProc
+    defEdhProc'_ EdhMethod "__grow__" colGrowProc
+    defEdhProc'_ EdhMethod "__mark__" colMarkLenProc
+    defEdhProc'_ EdhMethod "__blob__" colBlobProc
+    defEdhProc'_ EdhMethod "__json__" colJsonProc
+    defEdhProc'_ EdhMethod "__repr__" colReprProc
+    defEdhProc'_ EdhMethod "__show__" colShowProc
+    defEdhProc'_ EdhMethod "__desc__" colDescProc
+    defEdhProc'_ EdhMethod "([])" colIdxReadProc
+    defEdhProc'_ EdhMethod "([=])" colIdxWriteProc
+    {- -- TODO impl. following by super dtypes
+    defEdhProc'_ EdhMethod "([++=])"  $ colIdxUpdWithOpProc "++"
+    defEdhProc'_ EdhMethod "([+=])"  $ colIdxUpdWithOpProc "+"
+    defEdhProc'_ EdhMethod "([-=])"  $ colIdxUpdWithOpProc "-"
+    defEdhProc'_ EdhMethod "([*=])"  $ colIdxUpdWithOpProc "*"
+    defEdhProc'_ EdhMethod "([/=])"  $ colIdxUpdWithOpProc "/"
+    defEdhProc'_ EdhMethod "([//=])"  $ colIdxUpdWithOpProc "//"
+    defEdhProc'_ EdhMethod "([**=])"  $ colIdxUpdWithOpProc "**"
+    defEdhProc'_ EdhMethod "([&&=])"  $ colIdxUpdWithOpProc "&&"
+    defEdhProc'_ EdhMethod "([||=])"  $ colIdxUpdWithOpProc "||"
+    -}
+    defEdhProc'_ EdhMethod "copy" colCopyProc
+    defEdhProperty_ "dtype" colDtypeProc Nothing
   where
     columnAllocator ::
       "capacity" !: Int ->
