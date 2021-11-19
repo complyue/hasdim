@@ -50,24 +50,25 @@ installDimBatteries !world = runProgramM_ world $ do
   int8 <- mkIntColDt @Int8 yesno "int8"
   intp <- mkIntColDt @Int yesno "intp"
 
-  installModuleM_ "dim/dtypes" $ do
-    defEdhArt "float64" $ EdhObject float64
-    defEdhArt "f8" $ EdhObject float64
-    defEdhArt "float32" $ EdhObject float32
-    defEdhArt "f4" $ EdhObject float32
-    defEdhArt "int64" $ EdhObject int64
-    defEdhArt "i8" $ EdhObject int64
-    defEdhArt "int32" $ EdhObject int32
-    defEdhArt "i4" $ EdhObject int32
-    defEdhArt "int8" $ EdhObject int8
-    defEdhArt "byte" $ EdhObject int8
-    defEdhArt "intp" $ EdhObject intp
-    defEdhArt "yesno" $ EdhObject yesno
-    defEdhArt "bool" $ EdhObject yesno
-    defEdhArt "box" $ EdhObject box
-    -- for numpy compat, not all values are objects in Edh
-    defEdhArt "object" $ EdhObject box
-    defEdhArt "decimal" $ EdhObject decimal
+  installModuleM_ "dim/dtypes" $
+    exportM_ $ do
+      defEdhArt "yesno" $ EdhObject yesno
+      defEdhArt "box" $ EdhObject box
+      defEdhArt "decimal" $ EdhObject decimal
+      defEdhArt "float64" $ EdhObject float64
+      defEdhArt "f8" $ EdhObject float64
+      defEdhArt "float32" $ EdhObject float32
+      defEdhArt "f4" $ EdhObject float32
+      defEdhArt "int64" $ EdhObject int64
+      defEdhArt "i8" $ EdhObject int64
+      defEdhArt "int32" $ EdhObject int32
+      defEdhArt "i4" $ EdhObject int32
+      defEdhArt "int8" $ EdhObject int8
+      defEdhArt "byte" $ EdhObject int8
+      defEdhArt "intp" $ EdhObject intp
+      defEdhArt "bool" $ EdhObject yesno
+      -- for numpy compat, not all values are objects in Edh
+      defEdhArt "object" $ EdhObject box
 
   installModuleM_ "dim/primitive/ops" $ do
     let defFoldOp :: forall t. Typeable t => AttrName -> t -> Edh ()
