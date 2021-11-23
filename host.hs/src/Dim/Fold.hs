@@ -5,7 +5,6 @@ module Dim.Fold where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.IO.Class
-import Data.Dynamic
 import qualified Data.Lossless.Decimal as D
 import Data.Maybe
 import Data.Typeable hiding (TypeRep, typeOf, typeRep)
@@ -48,11 +47,11 @@ class Folding f where
 data FoldOp = forall f. (Folding f) => FoldOp f
 
 foldComput ::
-  "fop" @: HostValue FoldOp ->
+  "fop" @: HostVal FoldOp ->
   "colObj" @: Object ->
   Edh EdhValue
 foldComput
-  (appliedArg -> HostValue (FoldOp !fop) _)
+  (appliedArg -> HostVal (FoldOp !fop) _)
   (appliedArg -> !colObj) =
     getColumnDtype colObj >>= \ !dto ->
       withDataType dto $ \(dt :: DataType a) ->
@@ -77,12 +76,12 @@ foldComput
                     liftIO $ go 1 =<< array'reader cs 0
 
 foldlComput ::
-  "fop" @: HostValue FoldOp ->
+  "fop" @: HostVal FoldOp ->
   "start" @: EdhValue ->
   "colObj" @: Object ->
   Edh EdhValue
 foldlComput
-  (appliedArg -> HostValue (FoldOp !fop) _)
+  (appliedArg -> HostVal (FoldOp !fop) _)
   (appliedArg -> !startVal)
   (appliedArg -> !colObj) =
     getColumnDtype colObj >>= \ !dto ->
@@ -109,12 +108,12 @@ foldlComput
                       liftIO $ go 0 start
 
 foldrComput ::
-  "fop" @: HostValue FoldOp ->
+  "fop" @: HostVal FoldOp ->
   "start" @: EdhValue ->
   "colObj" @: Object ->
   Edh EdhValue
 foldrComput
-  (appliedArg -> HostValue (FoldOp !fop) _)
+  (appliedArg -> HostVal (FoldOp !fop) _)
   (appliedArg -> !startVal)
   (appliedArg -> !colObj) =
     getColumnDtype colObj >>= \ !dto ->
@@ -141,12 +140,12 @@ foldrComput
                       liftIO $ go (cl - 1) start
 
 scanlComput ::
-  "fop" @: HostValue FoldOp ->
+  "fop" @: HostVal FoldOp ->
   "start" @: EdhValue ->
   "colObj" @: Object ->
   Edh EdhValue
 scanlComput
-  (appliedArg -> HostValue (FoldOp !fop) _)
+  (appliedArg -> HostVal (FoldOp !fop) _)
   (appliedArg -> !startVal)
   (appliedArg -> !colObj) =
     getColumnDtype colObj >>= \ !dto ->
@@ -176,18 +175,18 @@ scanlComput
                           liftIO $ go 0 start
                       )
                 EdhObject
-                  <$> createHostObjectM'
+                  <$> createArbiHostObjectM'
                     (edh'obj'class colInst)
-                    (toDyn col')
+                    col'
                     [dto]
 
 scanrComput ::
-  "fop" @: HostValue FoldOp ->
+  "fop" @: HostVal FoldOp ->
   "start" @: EdhValue ->
   "colObj" @: Object ->
   Edh EdhValue
 scanrComput
-  (appliedArg -> HostValue (FoldOp !fop) _)
+  (appliedArg -> HostVal (FoldOp !fop) _)
   (appliedArg -> !startVal)
   (appliedArg -> !colObj) =
     getColumnDtype colObj >>= \ !dto ->
@@ -217,9 +216,9 @@ scanrComput
                           liftIO $ go 0 start
                       )
                 EdhObject
-                  <$> createHostObjectM'
+                  <$> createArbiHostObjectM'
                     (edh'obj'class colInst)
-                    (toDyn col')
+                    col'
                     [dto]
 
 -- * Implemented Folding Operations

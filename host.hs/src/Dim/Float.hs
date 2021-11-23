@@ -4,7 +4,6 @@ module Dim.Float where
 
 import Control.Applicative
 import Control.Monad.IO.Class
-import Data.Dynamic
 import Dim.Column
 import Dim.FlatArray
 import Dim.InMem
@@ -38,7 +37,7 @@ piProc !defaultDt !clsColumn !cap (defaultArg defaultDt -> !dto) =
             !clv <- newTVarEdh cap
             let !col = InMemDevCol csv clv
             EdhObject
-              <$> createHostObjectM' clsColumn (toDyn $ someColumn col) [dto]
+              <$> createArbiHostObjectM' clsColumn (someColumn col) [dto]
       DirectDt _dt ->
         throwEdhM UsageError "not implemented for direct dtype yet"
       DummyDt _dti ->
@@ -84,7 +83,7 @@ floatOpProc !fop (mandatoryArg -> !colObj) =
                   let !col' = InMemDevCol csv clv
                   liftEdh $
                     EdhObject
-                      <$> mutCloneHostObjectM
+                      <$> mutCloneArbiHostObjectM
                         colObj
                         colInst
                         (someColumn col')

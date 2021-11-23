@@ -6,11 +6,9 @@ import Control.Applicative
 import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.IO.Class
-import Data.Dynamic
 import Data.Lossless.Decimal as D
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Unique
 import qualified Data.Vector.Mutable as MV
 import Dim.Column
 import Dim.FlatArray
@@ -36,27 +34,16 @@ data Table = Table
     -- todo add column labels
   }
 
-withTable :: forall r. Object -> (Object -> Table -> Edh r) -> Edh r
-withTable !obj !withTbl = do
-  supers <- readTVarEdh $ edh'obj'supers obj
-  withComposition $ obj : supers
-  where
-    withComposition :: [Object] -> Edh r
-    withComposition [] = naM "not an expected Table object"
-    withComposition (o : rest) = case fromDynamic =<< dynamicHostData o of
-      Nothing -> withComposition rest
-      Just (tbl :: Table) -> withTbl o tbl
-
 withTblCols ::
   forall r. Table -> ([(AttrKey, Object, SomeColumn)] -> Edh r) -> Edh r
 withTblCols (Table _cv _rcv !tcols) !withCols = do
   !colObjs <- iopdToListEdh tcols
   sequence (extractCol <$> colObjs) >>= withCols
   where
-    extractCol ::
-      (AttrKey, Object) -> Edh (AttrKey, Object, SomeColumn)
-    extractCol (!colKey, !colObj) = withColumn colObj $
-      \ !colInst !col -> return (colKey, colInst, col)
+    extractCol :: (AttrKey, Object) -> Edh (AttrKey, Object, SomeColumn)
+    extractCol (!colKey, !colObj) =
+      hostObjectOf colObj >>= \(!colInst, !col) ->
+        return (colKey, colInst, col)
 
 readTableRow :: Table -> Int -> Edh KwArgs
 readTableRow tbl@(Table _cv !rcv _tcols) !i = do
@@ -137,7 +124,7 @@ defineTableClass !dtBox !clsColumn =
       "row'count" ?: Int ->
       "columns" !: KeywordArgs ->
       ArgsPack -> -- allow/ignore arbitrary ctor args for descendant classes
-      Edh (Maybe Unique, ObjectStore)
+      Edh ObjectStore
     tblAllocator
       (mandatoryArg -> !ctorCap)
       (defaultArg ctorCap -> !ctorCnt)
@@ -156,14 +143,14 @@ defineTableClass !dtBox !clsColumn =
             !cv <- newTVarEdh ctorCap
             !rcv <- newTVarEdh ctorCnt
             !tcols <- iopdFromListEdh ces
-            return (Nothing, HostStore $ toDyn $ Table cv rcv tcols)
+            pinAndStoreHostValue $ Table cv rcv tcols
         where
           adaptColSpec ::
             (AttrKey, EdhValue) -> Edh (AttrKey, Object)
           adaptColSpec (colKey, colSpec) = case edhUltimate colSpec of
             EdhObject !obj -> do
               let tryCol =
-                    withColumn obj $ \_colInst (SomeColumn _ !col) ->
+                    hostObjectOf obj >>= \(_colInst, SomeColumn _ !col) ->
                       liftEIO $
                         view'column'data col >>= \(!cs, !cl) ->
                           if array'capacity cs < ctorCap || cl < ctorCnt
@@ -186,10 +173,9 @@ defineTableClass !dtBox !clsColumn =
 
                   tryDt = withDataType obj $ \ !dt ->
                     createInMemColumn dt ctorCap ctorCnt >>= \ !col ->
-                      (colKey,)
-                        <$> createHostObjectM' clsColumn (toDyn col) [obj]
+                      (colKey,) <$> createArbiHostObjectM' clsColumn col [obj]
 
-                  trySeq = case fromDynamic =<< dynamicHostData obj of
+                  trySeq = case unwrapHostValue =<< objHostValue obj of
                     Nothing -> badSpec
                     Just (vec :: MV.IOVector EdhValue) ->
                       if MV.length vec < ctorCnt
@@ -205,9 +191,9 @@ defineTableClass !dtBox !clsColumn =
                           !csv <- newTMVarEdh $ DirectArray vec
                           !clv <- newTVarEdh ctorCnt
                           (colKey,)
-                            <$> createHostObjectM'
+                            <$> createArbiHostObjectM'
                               clsColumn
-                              (toDyn $ someColumn $ InMemDirCol csv clv)
+                              (someColumn $ InMemDirCol csv clv)
                               [dtBox]
 
               tryCol <|> tryDt <|> trySeq
@@ -249,18 +235,18 @@ defineTableClass !dtBox !clsColumn =
               return iov
             !csv <- newTMVarEdh $ DirectArray iov
             !clv <- newTVarEdh ctorCnt
-            createHostObjectM'
+            createArbiHostObjectM'
               clsColumn
-              (toDyn $ someColumn $ InMemDirCol csv clv)
+              (someColumn $ InMemDirCol csv clv)
               [dtBox]
 
     withThisTable :: forall r. (Object -> Table -> Edh r) -> Edh r
     withThisTable !tblExit = do
       this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
-      case dynamicHostData this of
+      case objHostValue this of
         Nothing ->
           throwEdhM EvalError "bug: not even a host value for Table"
-        Just !dd -> case fromDynamic dd of
+        Just !dd -> case unwrapHostValue dd of
           Nothing ->
             throwEdhM EvalError $
               "bug: this is not a Table but " <> T.pack (show dd)
@@ -316,7 +302,7 @@ defineTableClass !dtBox !clsColumn =
             case edhUltimate attrVal of
               EdhObject !obj -> do
                 let tryCol =
-                      withColumn obj $ \_colInst (SomeColumn _ !col) ->
+                      hostObjectOf obj >>= \(_colInst, SomeColumn _ !col) ->
                         liftEIO $
                           view'column'data col >>= \(!cs, !cl) ->
                             if array'capacity cs < cap || cl < rc
@@ -340,11 +326,11 @@ defineTableClass !dtBox !clsColumn =
 
                     tryDt = withDataType obj $ \ !dt -> do
                       !col <- createInMemColumn dt cap rc
-                      !colObj <- createHostObjectM' clsColumn (toDyn col) [obj]
+                      !colObj <- createArbiHostObjectM' clsColumn col [obj]
                       iopdInsertEdh colKey colObj tcols
                       return $ EdhObject colObj
 
-                    trySeq = case fromDynamic =<< dynamicHostData obj of
+                    trySeq = case unwrapHostValue =<< objHostValue obj of
                       Nothing -> badColSrc
                       Just (vec :: MV.IOVector EdhValue) ->
                         if MV.length vec < rc
@@ -360,9 +346,9 @@ defineTableClass !dtBox !clsColumn =
                             !csv <- newTMVarEdh $ DirectArray vec
                             !clv <- newTVarEdh rc
                             !colObj <-
-                              createHostObjectM'
+                              createArbiHostObjectM'
                                 clsColumn
-                                (toDyn $ someColumn $ InMemDirCol csv clv)
+                                (someColumn $ InMemDirCol csv clv)
                                 [dtBox]
                             iopdInsertEdh colKey colObj tcols
                             return $ EdhObject colObj
@@ -443,7 +429,7 @@ defineTableClass !dtBox !clsColumn =
                       edh'scope'that . contextScope . edh'context
                         <$> edhThreadState
                     EdhObject
-                      <$> mutCloneHostObjectM
+                      <$> mutCloneArbiHostObjectM
                         that
                         thisTbl
                         (Table cv' rcv' tcols')
@@ -478,11 +464,12 @@ defineTableClass !dtBox !clsColumn =
               -- assign with an apk
               EdhArgsPack (ArgsPack !tgts !kwtgts) ->
                 matchApk [] cols tgts kwtgts
-              EdhObject !obj -> (<|> broadcastMatch) $
-                withTable obj $ \_ (Table _ _ !tcolsOther) -> do
-                  -- todo validate shape match here?
-                  !colsOther <- iopdSnapshotEdh tcolsOther
-                  matchTbl [] cols colsOther
+              EdhObject !obj ->
+                (<|> broadcastMatch) $
+                  hostObjectOf obj >>= \(_, Table _ _ !tcolsOther) -> do
+                    -- todo validate shape match here?
+                    !colsOther <- iopdSnapshotEdh tcolsOther
+                    matchTbl [] cols colsOther
               _ -> broadcastMatch
               where
                 broadcastMatch :: Edh EdhValue

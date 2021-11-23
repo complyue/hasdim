@@ -9,7 +9,6 @@ import Data.Dynamic
 import Data.Lossless.Decimal as D
 import Data.Maybe
 import qualified Data.Text as T
-import Data.Unique
 import qualified Data.Vector.Mutable as MV
 import Dim.Column
 import Dim.FlatArray
@@ -25,12 +24,10 @@ import Prelude
 mkYesNoColDt :: DataTypeIdent -> Edh Object
 mkYesNoColDt !dti = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ pure ()
-  !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtYesNo =
         Object
-          { edh'obj'ident = idObj,
-            edh'obj'store = dtd,
+          { edh'obj'store = dtd,
             edh'obj'class = dtCls,
             edh'obj'supers = supersVar
           }
@@ -72,22 +69,20 @@ mkYesNoColDt !dti = do
   iopdUpdateEdh clsArts $ edh'scope'entity clsScope
   return dtYesNo
   where
-    !dtd = HostStore $ toDyn dt
+    !dtd = HostStore $ wrapHostValue dt
     dt :: DataType YesNo
     dt = mkIntDataType @YesNo dti
 
-    dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
-    dtypeAllocator = return (Nothing, dtd)
+    dtypeAllocator :: Edh ObjectStore
+    dtypeAllocator = return dtd
 
 mkBoxColDt :: DataTypeIdent -> EdhValue -> Edh Object
 mkBoxColDt !dti !defv = do
   !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ pure ()
-  !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtBox =
         Object
-          { edh'obj'ident = idObj,
-            edh'obj'store = dtd,
+          { edh'obj'store = dtd,
             edh'obj'class = dtCls,
             edh'obj'supers = supersVar
           }
@@ -168,9 +163,9 @@ mkBoxColDt !dti !defv = do
               exitWithResult !colResult =
                 liftEdh $
                   EdhObject
-                    <$> createHostObjectM'
+                    <$> createArbiHostObjectM'
                       (edh'obj'class objCol)
-                      (toDyn $ someColumn colResult)
+                      (someColumn colResult)
                       [dtBox]
 
               vecOp = liftEIO $ do
@@ -270,12 +265,12 @@ mkBoxColDt !dti !defv = do
   iopdUpdateEdh clsArts $ edh'scope'entity clsScope
   return dtBox
   where
-    !dtd = HostStore $ toDyn dt
+    !dtd = HostStore $ wrapHostValue dt
     dt :: DataType EdhValue
     dt = mkBoxDataType dti defv (Just EdhDecimal)
 
-    dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
-    dtypeAllocator = return (Nothing, dtd)
+    dtypeAllocator :: Edh ObjectStore
+    dtypeAllocator = return dtd
 
 mkRealFracColDt ::
   forall a.
@@ -420,23 +415,21 @@ mkRealFracColDt !dtYesNo !dti !defv !maybeFromDec = do
     let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
     !clsScope <- contextScope . edh'context <$> edhThreadState
     iopdUpdateEdh clsArts $ edh'scope'entity clsScope
-  !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtObj =
         Object
-          { edh'obj'ident = idObj,
-            edh'obj'store = dtd,
+          { edh'obj'store = dtd,
             edh'obj'class = dtCls,
             edh'obj'supers = supersVar
           }
   return dtObj
   where
-    !dtd = HostStore $ toDyn dt
+    !dtd = HostStore $ wrapHostValue dt
     dt :: DataType a
     dt = mkRealFracDataType @a dti defv maybeFromDec
 
-    dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
-    dtypeAllocator = return (Nothing, dtd)
+    dtypeAllocator :: Edh ObjectStore
+    dtypeAllocator = return dtd
 
     fracPow :: a -> a -> a
     fracPow _ 0 = 1
@@ -588,23 +581,21 @@ mkFloatColDt !dtYesNo !dti = do
     let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
     !clsScope <- contextScope . edh'context <$> edhThreadState
     iopdUpdateEdh clsArts $ edh'scope'entity clsScope
-  !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtObj =
         Object
-          { edh'obj'ident = idObj,
-            edh'obj'store = dtd,
+          { edh'obj'store = dtd,
             edh'obj'class = dtCls,
             edh'obj'supers = supersVar
           }
   return dtObj
   where
-    !dtd = HostStore $ toDyn dt
+    !dtd = HostStore $ wrapHostValue dt
     dt :: DataType a
     dt = mkFloatDataType @a dti
 
-    dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
-    dtypeAllocator = return (Nothing, dtd)
+    dtypeAllocator :: Edh ObjectStore
+    dtypeAllocator = return dtd
 
 mkIntColDt ::
   forall a.
@@ -768,23 +759,21 @@ mkIntColDt !dtYesNo !dti = do
     let !clsArts = clsMths ++ [(AttrByName "__repr__", EdhString dti)]
     !clsScope <- contextScope . edh'context <$> edhThreadState
     iopdUpdateEdh clsArts $ edh'scope'entity clsScope
-  !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtObj =
         Object
-          { edh'obj'ident = idObj,
-            edh'obj'store = dtd,
+          { edh'obj'store = dtd,
             edh'obj'class = dtCls,
             edh'obj'supers = supersVar
           }
   return dtObj
   where
-    !dtd = HostStore $ toDyn dt
+    !dtd = HostStore $ wrapHostValue dt
     dt :: DataType a
     dt = mkIntDataType @a dti
 
-    dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
-    dtypeAllocator = return (Nothing, dtd)
+    dtypeAllocator :: Edh ObjectStore
+    dtypeAllocator = return dtd
 
     intPow :: a -> a -> a
     intPow _ 0 = 1
@@ -823,24 +812,22 @@ defBitsColDt !dtYesNo !dti = do
     defEdhProc'_ EdhMethod "__eq__" evsDtypeEqProc
     defEdhArt "__repr__" $ EdhString dti
 
-  !idObj <- newUniqueEdh
   !supersVar <- newTVarEdh []
   let !dtObj =
         Object
-          { edh'obj'ident = idObj,
-            edh'obj'store = dtd,
+          { edh'obj'store = dtd,
             edh'obj'class = dtCls,
             edh'obj'supers = supersVar
           }
   defEdhArt dti $ EdhObject dtObj
   return dtObj
   where
-    !dtd = HostStore $ toDyn dt
+    !dtd = HostStore $ wrapHostValue dt
     dt :: DataType a
     dt = mkBitsDataType @a dti
 
-    dtypeAllocator :: Edh (Maybe Unique, ObjectStore)
-    dtypeAllocator = return (Nothing, dtd)
+    dtypeAllocator :: Edh ObjectStore
+    dtypeAllocator = return dtd
 
 colCmpProc ::
   forall a.
@@ -856,9 +843,9 @@ colCmpProc !dtYesNo !cmp !other =
         exitWithResult !colResult =
           liftEdh $
             EdhObject
-              <$> createHostObjectM'
+              <$> createArbiHostObjectM'
                 (edh'obj'class objCol)
-                (toDyn $ someColumn colResult)
+                (someColumn colResult)
                 [dtYesNo]
 
         vecOp = liftEIO $ do
@@ -933,7 +920,7 @@ devColOpProc !op !other =
         exitWithNewClone !colResult =
           liftEdh $
             EdhObject
-              <$> mutCloneHostObjectM
+              <$> mutCloneArbiHostObjectM
                 objCol
                 objCol
                 (someColumn colResult)
@@ -1010,7 +997,7 @@ dirColOpProc !op !other =
         exitWithNewClone !colResult =
           liftEdh $
             EdhObject
-              <$> mutCloneHostObjectM
+              <$> mutCloneArbiHostObjectM
                 objCol
                 objCol
                 (someColumn colResult)

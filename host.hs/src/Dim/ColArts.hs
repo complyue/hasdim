@@ -6,11 +6,9 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.ByteString.Internal as B
-import Data.Dynamic
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Unique
 import qualified Data.Vector.Mutable as MV
 import Dim.Column
 import Dim.FlatArray
@@ -56,7 +54,7 @@ defineColumnClass !defaultDt =
       "length" ?: Int ->
       "dtype" ?: Object ->
       ArgsPack -> -- allow/ignore arbitrary ctor args for descendant classes
-      Edh (Maybe Unique, ObjectStore)
+      Edh ObjectStore
     columnAllocator
       (mandatoryArg -> !ctorCap)
       (defaultArg ctorCap -> !ctorLen)
@@ -79,25 +77,15 @@ defineColumnClass !defaultDt =
             (_fp, !cs) <- liftIO $ newDeviceArray @a ctorCap
             !csv <- newTMVarEdh cs
             !clv <- newTVarEdh ctorLen
-            return
-              ( Nothing,
-                HostStore $
-                  toDyn $
-                    SomeColumn (typeRep @DeviceArray) $
-                      InMemDevCol @a csv clv
-              )
+            pinAndStoreHostValue $
+              SomeColumn (typeRep @DeviceArray) $ InMemDevCol @a csv clv
           DirectDt dt -> case direct'data'default dt of
             (fill'val :: a) -> do
               (_iov, !cs) <- liftIO $ newDirectArray' @a fill'val ctorCap
               !csv <- newTMVarEdh cs
               !clv <- newTVarEdh ctorLen
-              return
-                ( Nothing,
-                  HostStore $
-                    toDyn $
-                      SomeColumn (typeRep @DirectArray) $
-                        InMemDirCol @a csv clv
-                )
+              pinAndStoreHostValue $
+                SomeColumn (typeRep @DirectArray) $ InMemDirCol @a csv clv
           DummyDt dti ->
             naM $ "you don't create Column of dummy dtype: " <> dti
 
@@ -129,22 +117,15 @@ defineColumnClass !defaultDt =
         extendsDt $ that : supers
         return nil
 
-    withThisColumn :: forall r. (Object -> SomeColumn -> Edh r) -> Edh r
-    withThisColumn withCol = do
-      !this <- edh'scope'this . contextScope . edh'context <$> edhThreadState
-      case fromDynamic =<< dynamicHostData this of
-        Nothing -> throwEdhM EvalError "bug: this is not a Column"
-        Just !col -> withCol this col
-
     colCapProc :: Edh EdhValue
     colCapProc =
-      withThisColumn $ \_this (SomeColumn _ !col) ->
+      thisHostObjectOf >>= \(SomeColumn _ !col) ->
         liftEIO (view'column'data col) >>= \(cs, _cl) ->
           return $ EdhDecimal $ fromIntegral $ array'capacity cs
 
     colLenProc :: Edh EdhValue
     colLenProc =
-      withThisColumn $ \_this (SomeColumn _ !col) ->
+      thisHostObjectOf >>= \(SomeColumn _ !col) ->
         liftEIO (read'column'length col) >>= \ !len ->
           return $ EdhDecimal $ fromIntegral len
 
@@ -154,178 +135,186 @@ defineColumnClass !defaultDt =
         then
           throwEdhM UsageError $
             "invalid newCap: " <> T.pack (show newCap)
-        else withThisColumn $ \_this (SomeColumn _ !col) -> do
-          void $ liftEIO $ grow'column'capacity col newCap
-          EdhObject . edh'scope'that . contextScope . edh'context
-            <$> edhThreadState
+        else
+          thisHostObjectOf >>= \(SomeColumn _ !col) -> do
+            void $ liftEIO $ grow'column'capacity col newCap
+            EdhObject . edh'scope'that . contextScope . edh'context
+              <$> edhThreadState
 
     colMarkLenProc :: "newLen" !: Int -> Edh EdhValue
-    colMarkLenProc (mandatoryArg -> !newLen) = withThisColumn $
-      \_this (SomeColumn _ !col) -> do
+    colMarkLenProc (mandatoryArg -> !newLen) =
+      thisHostObjectOf >>= \(SomeColumn _ !col) -> do
         void $ liftEIO $ mark'column'length col newLen
         EdhObject . edh'scope'that . contextScope . edh'context
           <$> edhThreadState
 
     colBlobProc :: Edh EdhValue
-    colBlobProc = withThisColumn $ \_this (SomeColumn _ !col) -> do
-      (cs, cl) <- liftEIO $ view'column'data col
-      (<|> return edhNA) $
-        array'data'ptr cs $ \(fp :: ForeignPtr a) ->
-          return $
-            EdhBlob $
-              B.fromForeignPtr
-                (castForeignPtr fp)
-                0
-                (cl * sizeOf (undefined :: a))
+    colBlobProc =
+      thisHostObjectOf >>= \(SomeColumn _ !col) -> do
+        (cs, cl) <- liftEIO $ view'column'data col
+        (<|> return edhNA) $
+          array'data'ptr cs $ \(fp :: ForeignPtr a) ->
+            return $
+              EdhBlob $
+                B.fromForeignPtr
+                  (castForeignPtr fp)
+                  0
+                  (cl * sizeOf (undefined :: a))
 
     colJsonProc :: Edh EdhValue
-    colJsonProc = withThisColumn $ \_this (SomeColumn _ !col) -> do
-      (cs, cl) <- liftEIO $ view'column'data col
-      if cl < 1
-        then return $ EdhString "[]"
-        else do
-          let go :: Int -> [Text] -> Edh EdhValue
-              go !i !elemJsonStrs
-                | i < 0 =
-                  return $
-                    EdhString $
-                      "[" <> T.intercalate "," elemJsonStrs <> "]"
-                | otherwise = do
-                  !ev <- liftIO $ array'reader cs i
-                  !elemVal <- toEdh ev
-                  !elemJsonStr <- edhValueJsonM elemVal
-                  go (i -1) $ elemJsonStr : elemJsonStrs
-          go (cl - 1) []
+    colJsonProc =
+      thisHostObjectOf >>= \(SomeColumn _ !col) -> do
+        (cs, cl) <- liftEIO $ view'column'data col
+        if cl < 1
+          then return $ EdhString "[]"
+          else do
+            let go :: Int -> [Text] -> Edh EdhValue
+                go !i !elemJsonStrs
+                  | i < 0 =
+                    return $
+                      EdhString $
+                        "[" <> T.intercalate "," elemJsonStrs <> "]"
+                  | otherwise = do
+                    !ev <- liftIO $ array'reader cs i
+                    !elemVal <- toEdh ev
+                    !elemJsonStr <- edhValueJsonM elemVal
+                    go (i -1) $ elemJsonStr : elemJsonStrs
+            go (cl - 1) []
 
     colReprProc :: Edh EdhValue
-    colReprProc = withThisColumn $ \this (SomeColumn _ !col) -> do
-      (cs, cl) <- liftEIO $ view'column'data col
-      !dto <- getColumnDtype this
-      !dtRepr <- edhObjReprM dto
-      let colRepr =
-            "Column( capacity= "
-              <> T.pack (show $ array'capacity cs)
-              <> ", length= "
-              <> T.pack (show cl)
-              <> ", dtype= "
-              <> dtRepr
-              <> " )"
-      return $ EdhString colRepr
+    colReprProc =
+      thatHostObjectOf >>= \(colInst, SomeColumn _ !col) -> do
+        (cs, cl) <- liftEIO $ view'column'data col
+        !dto <- getColumnDtype colInst
+        !dtRepr <- edhObjReprM dto
+        let colRepr =
+              "Column( capacity= "
+                <> T.pack (show $ array'capacity cs)
+                <> ", length= "
+                <> T.pack (show cl)
+                <> ", dtype= "
+                <> dtRepr
+                <> " )"
+        return $ EdhString colRepr
 
     colShowProc :: Edh EdhValue
-    colShowProc = withThisColumn $ \this (SomeColumn _ !col) -> do
-      (cs, cl) <- liftEIO $ view'column'data col
-      !dto <- getColumnDtype this
-      !dtRepr <- edhObjReprM dto
-      let colRepr =
-            "Column( capacity= "
-              <> T.pack (show $ array'capacity cs)
-              <> ", length= "
-              <> T.pack (show cl)
-              <> ", dtype= "
-              <> dtRepr
-              <> " )"
+    colShowProc =
+      thatHostObjectOf >>= \(colInst, SomeColumn _ !col) -> do
+        (cs, cl) <- liftEIO $ view'column'data col
+        !dto <- getColumnDtype colInst
+        !dtRepr <- edhObjReprM dto
+        let colRepr =
+              "Column( capacity= "
+                <> T.pack (show $ array'capacity cs)
+                <> ", length= "
+                <> T.pack (show cl)
+                <> ", dtype= "
+                <> dtRepr
+                <> " )"
 
-          readElem i = do
-            !hv <- liftIO $ array'reader cs i
-            toEdh hv >>= edhValueStrM
+            readElem i = do
+              !hv <- liftIO $ array'reader cs i
+              toEdh hv >>= edhValueStrM
 
-      !contentLines <- showColContent cl readElem
-      return $ EdhString $ colRepr <> "\n" <> contentLines
+        !contentLines <- showColContent cl readElem
+        return $ EdhString $ colRepr <> "\n" <> contentLines
 
     -- TODO impl. this following:
     --      https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Series.describe.html
     colDescProc :: Edh EdhValue
-    colDescProc = withThisColumn $ \this (SomeColumn _ !col) -> do
-      (cs, cl) <- liftEIO $ view'column'data col
-      !dto <- getColumnDtype this
-      !dtRepr <- edhObjReprM dto
-      let colRepr =
-            "Column( capacity= "
-              <> T.pack (show $ array'capacity cs)
-              <> ", length= "
-              <> T.pack (show cl)
-              <> ", dtype= "
-              <> dtRepr
-              <> " )"
+    colDescProc =
+      thatHostObjectOf >>= \(colInst, SomeColumn _ !col) -> do
+        (cs, cl) <- liftEIO $ view'column'data col
+        !dto <- getColumnDtype colInst
+        !dtRepr <- edhObjReprM dto
+        let colRepr =
+              "Column( capacity= "
+                <> T.pack (show $ array'capacity cs)
+                <> ", length= "
+                <> T.pack (show cl)
+                <> ", dtype= "
+                <> dtRepr
+                <> " )"
 
-      return $
-        EdhString $
-          " 🚧 Statistical Description of Column data,\n"
-            <> " 🏗  like Pandas' describe(), is yet to be implemented.\n"
-            <> colRepr
+        return $
+          EdhString $
+            " 🚧 Statistical Description of Column data,\n"
+              <> " 🏗  like Pandas' describe(), is yet to be implemented.\n"
+              <> colRepr
 
     colIdxReadProc :: EdhValue -> Edh EdhValue
-    colIdxReadProc !idxVal = withThisColumn $ \this !col -> do
-      let withBoolIdx ::
-            forall c f.
-            ManagedColumn c f YesNo =>
-            Object ->
-            c YesNo ->
-            Edh EdhValue
-          withBoolIdx _ !idxCol =
-            liftEIO (extractColumnBool this col idxCol) >>= \(!newColObj, _newCol) ->
-              return $ EdhObject newColObj
+    colIdxReadProc !idxVal =
+      thatHostObjectOf >>= \(colInst, !col) -> do
+        let withBoolIdx ::
+              forall c f.
+              ManagedColumn c f YesNo =>
+              Object ->
+              c YesNo ->
+              Edh EdhValue
+            withBoolIdx _ !idxCol =
+              liftEIO (extractColumnBool colInst col idxCol)
+                >>= \(!newColObj, _newCol) -> return $ EdhObject newColObj
 
-          withIntpIdx ::
-            forall c f.
-            ManagedColumn c f Int =>
-            Object ->
-            c Int ->
-            Edh EdhValue
-          withIntpIdx _ !idxCol =
-            liftEIO (extractColumnFancy this col idxCol) >>= \(!newColObj, _newCol) ->
-              return $ EdhObject newColObj
+            withIntpIdx ::
+              forall c f.
+              ManagedColumn c f Int =>
+              Object ->
+              c Int ->
+              Edh EdhValue
+            withIntpIdx _ !idxCol =
+              liftEIO (extractColumnFancy colInst col idxCol)
+                >>= \(!newColObj, _newCol) -> return $ EdhObject newColObj
 
-          withEdhIdx :: Edh EdhValue
-          withEdhIdx = do
-            that <-
-              edh'scope'that . contextScope . edh'context
-                <$> edhThreadState
-            parseEdhIndexM idxVal >>= \case
-              Left !err -> throwEdhM UsageError err
-              Right !idx -> case idx of
-                EdhIndex !i -> case col of
-                  SomeColumn _ col' -> do
-                    (!cs, _cl) <- liftEIO $ view'column'data col'
-                    !ev <- liftIO $ array'reader cs i
-                    toEdh ev
-                EdhAny -> return $ EdhObject that
-                EdhAll -> return $ EdhObject that
-                EdhSlice !start !stop !step -> case col of
-                  SomeColumn _ col' -> do
-                    (_cs, !cl) <- liftEIO $ view'column'data col'
-                    (!iStart, !iStop, !iStep) <-
-                      regulateEdhSliceM cl (start, stop, step)
-                    (!newColObj, _newCol) <-
-                      liftEIO $ sliceColumn this col iStart iStop iStep
-                    return $ EdhObject newColObj
+            withEdhIdx :: Edh EdhValue
+            withEdhIdx = do
+              that <-
+                edh'scope'that . contextScope . edh'context
+                  <$> edhThreadState
+              parseEdhIndexM idxVal >>= \case
+                Left !err -> throwEdhM UsageError err
+                Right !idx -> case idx of
+                  EdhIndex !i -> case col of
+                    SomeColumn _ col' -> do
+                      (!cs, _cl) <- liftEIO $ view'column'data col'
+                      !ev <- liftIO $ array'reader cs i
+                      toEdh ev
+                  EdhAny -> return $ EdhObject that
+                  EdhAll -> return $ EdhObject that
+                  EdhSlice !start !stop !step -> case col of
+                    SomeColumn _ col' -> do
+                      (_cs, !cl) <- liftEIO $ view'column'data col'
+                      (!iStart, !iStop, !iStep) <-
+                        regulateEdhSliceM cl (start, stop, step)
+                      (!newColObj, _newCol) <-
+                        liftEIO $ sliceColumn colInst col iStart iStop iStep
+                      return $ EdhObject newColObj
 
-      withColumnOf' @YesNo idxVal withBoolIdx
-        <|> withColumnOf' @Int idxVal withIntpIdx
-        <|> withEdhIdx
+        withColumnOf' @YesNo idxVal withBoolIdx
+          <|> withColumnOf' @Int idxVal withIntpIdx
+          <|> withEdhIdx
 
     colIdxWriteProc :: EdhValue -> EdhValue -> Edh EdhValue
-    colIdxWriteProc !idxVal !other = withThisColumn $ \_this !col -> do
-      idxAssignColumn col idxVal other
-      return other
+    colIdxWriteProc !idxVal !other =
+      thisHostObjectOf >>= \ !col -> do
+        idxAssignColumn col idxVal other
+        return other
 
     colCopyProc :: "capacity" ?: Int -> Edh EdhValue
-    colCopyProc (optionalArg -> !maybeCap) = withThisColumn $
-      \this (SomeColumn _ !col) -> do
+    colCopyProc (optionalArg -> !maybeCap) =
+      thatHostObjectOf >>= \(colInst, SomeColumn _ !col) -> do
         !cl <- liftEIO $ read'column'length col
         (disp, col') <-
           liftEIO $ copy'column'slice col (fromMaybe cl maybeCap) 0 cl 1
         case disp of
           StayComposed -> do
-            !newColObj <- mutCloneHostObjectM this this col'
+            !newColObj <- mutCloneArbiHostObjectM colInst colInst col'
             return $ EdhObject newColObj
           ExtractAlone -> do
-            !dto <- getColumnDtype this
+            !dto <- getColumnDtype colInst
             !newColObj <-
-              createHostObjectM'
-                (edh'obj'class this)
-                (toDyn col')
+              createArbiHostObjectM'
+                (edh'obj'class colInst)
+                col'
                 [dto]
             return $ EdhObject newColObj
 
@@ -390,9 +379,9 @@ arangeProc
                   !clv <- newTVarEdh len
                   let !col = InMemDevCol csv clv
                   EdhObject
-                    <$> createHostObjectM'
+                    <$> createArbiHostObjectM'
                       colClass
-                      (toDyn $ someColumn col)
+                      (someColumn col)
                       [dto]
               DirectDt (dt :: DirectDataType a) -> do
                 let tryNumDt :: Edh EdhValue
@@ -415,9 +404,9 @@ arangeProc
                         !clv <- newTVarEdh len
                         let !col = InMemDirCol csv clv
                         EdhObject
-                          <$> createHostObjectM'
+                          <$> createArbiHostObjectM'
                             colClass
-                            (toDyn $ someColumn col)
+                            (someColumn col)
                             [dto]
 
                     tryFromDec :: Edh EdhValue
@@ -441,9 +430,9 @@ arangeProc
                         !clv <- newTVarEdh len
                         let !col = InMemDirCol csv clv
                         EdhObject
-                          <$> createHostObjectM'
+                          <$> createArbiHostObjectM'
                             colClass
-                            (toDyn $ someColumn col)
+                            (someColumn col)
                             [dto]
 
                 tryNumDt <|> tryFromDec
@@ -517,9 +506,9 @@ randomProc
                     !clv <- newTVarEdh size
                     let !col = InMemDevCol csv clv
                     EdhObject
-                      <$> createHostObjectM'
+                      <$> createArbiHostObjectM'
                         colClass
-                        (toDyn $ someColumn col)
+                        (someColumn col)
                         [dto]
           DirectDt (dt :: DirectDataType a) ->
             (<|> notRndDt (direct'data'type'ident dt)) $
@@ -551,9 +540,9 @@ randomProc
                     !clv <- newTVarEdh size
                     let !col = InMemDirCol csv clv
                     EdhObject
-                      <$> createHostObjectM'
+                      <$> createArbiHostObjectM'
                         colClass
-                        (toDyn $ someColumn col)
+                        (someColumn col)
                         [dto]
           DummyDt dti ->
             naM $ "you don't create random Column of dummy dtype: " <> dti
@@ -588,9 +577,9 @@ whereProc !colClass !dtIntp (ArgsPack [EdhObject !colYesNo] !kwargs)
       !clv <- newTVarEdh len
       let !col' = InMemDevCol csv clv
       EdhObject
-        <$> createHostObjectM'
+        <$> createArbiHostObjectM'
           colClass
-          (toDyn $ someColumn col')
+          (someColumn col')
           [dtIntp]
 whereProc
   _colClass

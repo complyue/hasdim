@@ -11,7 +11,6 @@ import qualified Data.Lossless.Decimal as D
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Unique
 import Dim.Column
 import Dim.DbArray
 import Dim.DiskBack
@@ -48,7 +47,7 @@ defineDbArrayClass !clsColumn !defaultDt =
       "shape" ?: EdhValue ->
       "overwrite" ?: Bool ->
       ArgsPack -> -- allow/ignore arbitrary ctor args for descendant classes
-      Edh (Maybe Unique, ObjectStore)
+      Edh ObjectStore
     arrayAllocator
       (mandatoryArg -> !dataDir)
       (mandatoryArg -> !dataPath)
@@ -68,7 +67,7 @@ defineDbArrayClass !clsColumn !defaultDt =
             forall a.
             (Eq a, Storable a, EdhXchg a, Typeable a) =>
             Maybe ArrayShape ->
-            IO (Maybe Unique, ObjectStore)
+            IO ObjectStore
           goMemMap !mmapShape = do
             !asVar <- newEmptyTMVarIO
             mmapDbArray @a asVar dataDir dataPath mmapShape overwrite
@@ -76,10 +75,8 @@ defineDbArrayClass !clsColumn !defaultDt =
               readTMVar asVar >>= \case
                 Left !err -> throwSTM err
                 Right {} ->
-                  return
-                    ( Nothing,
-                      HostStore $ toDyn $ DbArray dataDir dataPath asVar
-                    )
+                  fmap HostStore $
+                    pinHostValue $ DbArray dataDir dataPath asVar
 
     col__init__ ::
       "dataDir" !: Text ->
@@ -263,8 +260,8 @@ defineDbArrayClass !clsColumn !defaultDt =
       !dbaSupers <- -- by far by design, there is only the dtype inside
         readTVarEdh $ edh'obj'supers dbaObj
       EdhObject
-        <$> createHostObjectM'
+        <$> createArbiHostObjectM'
           clsColumn
-          (toDyn $ someColumn $ DbColumn dba 0)
+          (someColumn $ DbColumn dba 0)
           -- inherit prototype based supers, including the dtype
           (dbaObj : dbaSupers)

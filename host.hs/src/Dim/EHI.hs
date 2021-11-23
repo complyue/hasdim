@@ -72,7 +72,7 @@ installDimBatteries !world = runProgramM_ world $ do
 
   installModuleM_ "dim/primitive/ops" $ do
     let defFoldOp :: forall t. Typeable t => AttrName -> t -> Edh ()
-        defFoldOp nm t = defEdhArt nm . EdhObject =<< wrapM' nm t
+        defFoldOp nm t = defEdhArt nm . EdhObject =<< wrapArbiM' nm t
 
     exportM_ $ do
       defineComputMethod_ "fold" foldComput
@@ -142,4 +142,4 @@ getPredefinedDtype' !dti =
 
 createColumnObject :: Object -> SomeColumn -> Object -> Edh Object
 createColumnObject !clsColumn !col !dto =
-  createHostObjectM' clsColumn (toDyn col) [dto]
+  createArbiHostObjectM' clsColumn col [dto]

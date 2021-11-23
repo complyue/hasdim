@@ -155,33 +155,15 @@ castColumn (SomeColumn _ (col :: c' a')) = case eqT of
 
 -- * Scripting helper utilities for columns
 
-withColumnSelf :: forall r. (Object -> SomeColumn -> Edh r) -> Edh r
-withColumnSelf withCol = do
-  !that <- edh'scope'that . contextScope . edh'context <$> edhThreadState
-  withColumn that withCol
-    <|> throwEdhM EvalError "bug: not a Column self as expected"
-
-{- HLINT ignore "Redundant <$>" -}
-
-withColumn :: forall r. Object -> (Object -> SomeColumn -> Edh r) -> Edh r
-withColumn !obj withCol = do
-  (obj :) <$> readTVarEdh (edh'obj'supers obj) >>= withComposition
-  where
-    withComposition :: [Object] -> Edh r
-    withComposition [] = naM "not an expected Column object"
-    withComposition (o : rest) = case fromDynamic =<< dynamicHostData o of
-      Nothing -> withComposition rest
-      Just col -> withCol o col
-
 asColumnOf ::
   forall a r.
   (Typeable a) =>
   Object ->
   (forall c f. ManagedColumn c f a => c a -> Edh r) ->
   Edh r
-asColumnOf !obj !act = case dynamicHostData obj of
+asColumnOf !obj !act = case objHostValue obj of
   Nothing -> naAct
-  Just dd -> case fromDynamic dd of
+  Just dd -> case unwrapHostValue dd of
     Nothing -> naAct
     Just (SomeColumn _ (col :: c b)) -> case eqT of
       Nothing -> naAct
@@ -267,11 +249,11 @@ sliceColumn !objCol (SomeColumn _ !col) !start !stop !step =
   where
     withSliced (disp, col') = liftEdh $ case disp of
       StayComposed ->
-        (,col') <$> mutCloneHostObjectM objCol objCol col'
+        (,col') <$> mutCloneArbiHostObjectM objCol objCol col'
       ExtractAlone -> do
         !dto <- getColumnDtype objCol
         let clsCol = edh'obj'class objCol
-        (,col') <$> createHostObjectM' clsCol (toDyn col') [dto]
+        (,col') <$> createArbiHostObjectM' clsCol col' [dto]
 
 extractColumnBool ::
   forall c' f'.
@@ -284,7 +266,7 @@ extractColumnBool !objCol (SomeColumn _ !col) !colMask = do
   !col' <- extract'column'bool col colMask
   liftEdh $ do
     !dto <- getColumnDtype objCol
-    (,col') <$> createHostObjectM' clsCol (toDyn col') [dto]
+    (,col') <$> createArbiHostObjectM' clsCol col' [dto]
   where
     clsCol = edh'obj'class objCol
 
@@ -299,7 +281,7 @@ extractColumnFancy !objCol (SomeColumn _ !col) !colIdxs = do
   !col' <- extract'column'fancy col colIdxs
   liftEdh $ do
     !dto <- getColumnDtype objCol
-    (,col') <$> createHostObjectM' clsCol (toDyn col') [dto]
+    (,col') <$> createArbiHostObjectM' clsCol col' [dto]
   where
     clsCol = edh'obj'class objCol
 

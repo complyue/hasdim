@@ -340,7 +340,7 @@ asDbArrayOf ::
   Object ->
   (DbArray a -> m r) ->
   m r
-asDbArrayOf !obj !exit = case dynamicHostData obj of
+asDbArrayOf !obj !exit = case objDynamicValue obj of
   Nothing -> mzero
   Just (Dynamic trDBA dba) ->
     case trDBA `eqTypeRep` typeRep @(DbArray a) of
@@ -396,7 +396,7 @@ withDbArraySelf !dbaExit = do
   where
     withComposition :: [Object] -> Edh r
     withComposition [] = naM "not an expected self DbArray"
-    withComposition (o : rest) = case dynamicHostData o of
+    withComposition (o : rest) = case objDynamicValue o of
       Nothing -> withComposition rest
       Just (Dynamic trDBA dba) -> case trDBA of
         App trDBAC _trA -> case trDBAC `eqTypeRep` typeRep @DbArray of
