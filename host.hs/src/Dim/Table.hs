@@ -105,7 +105,7 @@ markTable !newCnt tbl@(Table cv rcv _tcols) = withTblCols tbl $ \ !cols -> do
 
 defineTableClass :: Object -> Object -> Edh Object
 defineTableClass !dtBox !clsColumn =
-  defEdhClass "Table" (allocObjM tblAllocator) [] $ do
+  defEdhClass' "Table" tblAllocator [] $ do
     defEdhProc'_ EdhMethod "__cap__" tblCapProc
     defEdhProc'_ EdhMethod "__len__" tblLenProc
     defEdhProc'_ EdhMethod "__grow__" tblGrowProc

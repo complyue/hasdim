@@ -22,7 +22,7 @@ import Prelude
 
 defineColumnClass :: Object -> Edh Object
 defineColumnClass !defaultDt =
-  defEdhClass "Column" (allocObjM columnAllocator) [] $ do
+  defEdhClass' "Column" columnAllocator [] $ do
     defEdhProc'_ EdhMethod "__init__" col__init__
     defEdhProc'_ EdhMethod "__cap__" colCapProc
     defEdhProc'_ EdhMethod "__len__" colLenProc

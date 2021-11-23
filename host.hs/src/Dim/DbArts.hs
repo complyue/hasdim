@@ -22,7 +22,7 @@ import Prelude
 
 defineDbArrayClass :: Object -> Object -> Edh Object
 defineDbArrayClass !clsColumn !defaultDt =
-  defEdhClass "DbArray" (allocObjM arrayAllocator) [] $ do
+  defEdhClass' "DbArray" arrayAllocator [] $ do
     defEdhProc'_ EdhMethod "__init__" col__init__
     defEdhProc'_ EdhMethod "__len__" aryLen1dGetter
     defEdhProc'_ EdhMethod "__mark__" aryLen1dSetter

@@ -23,7 +23,7 @@ import Prelude
 
 mkYesNoColDt :: DataTypeIdent -> Edh Object
 mkYesNoColDt !dti = do
-  !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ pure ()
+  !dtCls <- mkEdhClass' dti dtypeAllocator [] $ pure ()
   !supersVar <- newTVarEdh []
   let !dtYesNo =
         Object
@@ -78,7 +78,7 @@ mkYesNoColDt !dti = do
 
 mkBoxColDt :: DataTypeIdent -> EdhValue -> Edh Object
 mkBoxColDt !dti !defv = do
-  !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ pure ()
+  !dtCls <- mkEdhClass' dti dtypeAllocator [] $ pure ()
   !supersVar <- newTVarEdh []
   let !dtBox =
         Object
@@ -281,7 +281,7 @@ mkRealFracColDt ::
   Maybe (D.Decimal -> a) ->
   Edh Object
 mkRealFracColDt !dtYesNo !dti !defv !maybeFromDec = do
-  !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
+  !dtCls <- mkEdhClass' dti dtypeAllocator [] $ do
     !clsMths <-
       sequence $
         [ (AttrByName nm,) <$> mkEdhProc vc nm hp
@@ -445,7 +445,7 @@ mkFloatColDt ::
   DataTypeIdent ->
   Edh Object
 mkFloatColDt !dtYesNo !dti = do
-  !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
+  !dtCls <- mkEdhClass' dti dtypeAllocator [] $ do
     !clsMths <-
       sequence $
         [ (AttrByName nm,) <$> mkEdhProc vc nm hp
@@ -604,7 +604,7 @@ mkIntColDt ::
   DataTypeIdent ->
   Edh Object
 mkIntColDt !dtYesNo !dti = do
-  !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
+  !dtCls <- mkEdhClass' dti dtypeAllocator [] $ do
     !clsMths <-
       sequence $
         [ (AttrByName nm,) <$> mkEdhProc vc nm hp
@@ -789,7 +789,7 @@ defBitsColDt ::
   DataTypeIdent ->
   Edh Object
 defBitsColDt !dtYesNo !dti = do
-  !dtCls <- mkEdhClass dti (allocObjM dtypeAllocator) [] $ do
+  !dtCls <- mkEdhClass' dti dtypeAllocator [] $ do
     defEdhProc'_ EdhMethod "(==)" $ colCmpProc @a dtYesNo (==)
     defEdhProc'_ EdhMethod "(==.)" $ colCmpProc @a dtYesNo (==)
     defEdhProc'_ EdhMethod "(!=)" $ colCmpProc @a dtYesNo (/=)
