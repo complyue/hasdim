@@ -197,11 +197,6 @@ TODO both bounds of the range are always treated as closed bound for now
    #}
   class Column {
 
-    __init__ :: (
-      capacity!int!Decimal,
-      length!int!Decimal || None,
-      dtype!Object || None,
-    ) -> nil
     {##
      # Construct a new Column object with specified capacity
      #
@@ -210,7 +205,9 @@ TODO both bounds of the range are always treated as closed bound for now
      # The data type defaults to float64 if not specified
      #}
     method __init__(
-      capacity, length= None, dtype as _ = float64,
+      capacity: 'Decimal',
+      length: 'Decimal' = capacity,
+      dtype: dtype as _ = float64,
       *** # allow/ignore arbitrary ctor args for descendant classes
     ) pass
 
@@ -404,11 +401,6 @@ TODO both bounds of the range are always treated as closed bound for now
    #}
   class Table {
 
-    __init__ :: (
-      capacity!int!Decimal,
-      row'count!int!Decimal || None,
-      **( column'id= Column, ),
-    ) -> nil
     {##
      # Construct a new Table object with specified capacity
      #
@@ -417,8 +409,9 @@ TODO both bounds of the range are always treated as closed bound for now
      # The data type defaults to float64 if not specified
      #}
     method __init__(
-      capacity, row'count= None, **columns,
-      *** # allow/ignore arbitrary ctor args for descendant classes
+      capacity: 'Decimal',
+      row'count: 'Decimal' = capacity,
+      **columns: (column'id: Column),
     ) pass
 
     # Respond to `cap()` by returning capacity of this table object
@@ -460,22 +453,16 @@ TODO both bounds of the range are always treated as closed bound for now
 
   }
 
-  DimSpec
-  :=: positive!int!Decimal
-  || dimName!String : positive!int!Decimal
-  Shape :=: ( *DimSpec, )
+
+  DimSpec :=: 'Decimal' | dimName := 'Decimal'
+  Shape :=: ( *_: +DimSpec, )
+
 
   {##
    # Disk backed Array
    #}
   class DbArray {
 
-    __init__ :: (
-      dataDir!dir!String,
-      dataPath!path!String,
-      dtype!Object= float64,
-      shape!Shape= None,
-    ) -> nil
     {##
      # Construct a new array backed by the specified data file on disk
      #
@@ -487,7 +474,10 @@ TODO both bounds of the range are always treated as closed bound for now
      # actual file length, together with itemsize from the dtype
      #}
     method __init__(
-      dataDir, dataPath, dtype as _ = None, shape as _ = None,
+      dataDir: 'String',
+      dataPath: 'String',
+      dtype: dtype as _ = float64,
+      shape: Shape as _ = asFileSize!None,
       *** # allow/ignore arbitrary ctor args for descendant classes
     ) pass
 
@@ -508,13 +498,12 @@ TODO both bounds of the range are always treated as closed bound for now
     # dba object
     method __show__() pass
 
-    asColumn :: () ->Column
     {##
      # View this dba as a `Column` object
      #
      # Data read/write are mmap'ed to the backing data file
      #}
-    method asColumn() pass
+    method asColumn() : Column pass
 
     {##
      # Directory containing the data file backing this dba
