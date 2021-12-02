@@ -16,25 +16,47 @@ then error( 'Missing host module: ' ++ __name__ )
 
 import * './dtypes'
 
+__this'module = this
+
 export {
 
-  arange :: (
-    start!int!Decimal : stop!int!Decimal : step!int!Decimal,
-    dtype!Object || None,
-  ) -> Column
-  arange :: (
-    start!int!Decimal : stop!int!Decimal,
-    dtype!Object || None,
-  ) -> Column
-  arange :: (
-    stop!int!Decimal,
-    dtype!Object || None,
-  ) -> Column
+  {## Forward declaration of the Column class #}
+  class Column {
+    method __init__(
+      capacity: 'Decimal',
+      length: 'Decimal' = capacity,
+      dtype: dtype as _ = float64,
+      *** # allow/ignore arbitrary ctor args for descendant classes
+    ) {
+      __this'module.Column # <- Follow this and you can navigate to the real definition to appear later in this module
+      # TODO forward declarations will not be necessary once we improved ELS analyzation algorithm
+    }
+  }
+
+  {## Type synonym for any dtype of floating point nature
+   # usually of IEEE 754 format/semantics
+   #}
+  float'dtype :=: float64 | float32
+
+  {## Type synonym for any dtype of integral nature #}
+  int'dtype :=: intp | int64 | int32
+
+  {## Slicing specification
+   # Also used to specify contents of index value arrays to construct
+   #}
+  SliceSpec :=: lower!'Decimal' .. upper!'Decimal'
+  | start!'Decimal' : stop!'Decimal' : step!'Decimal'
+  | start!'Decimal' : stop!'Decimal'
+  | stop!'Decimal'
+
+
   {##
    # Similar to Numpy's `arange()``, but the range needs to be specified with
    # pairs if not simply a positive integer for max value.
    #}
-  method arange( rangeSpec, dtype as _ = intp ) pass
+  method arange(
+    rangeSpec: SliceSpec, dtype: dtype as _ = intp
+  ) : Column pass
 
   {##
    # Create a random array with the specified size (both len and cap)
@@ -43,7 +65,9 @@ All elements will be in the specified range.
 
 TODO both bounds of the range are always treated as closed bound for now
    #}
-  method random( size, rangeSpec= 0..1, dtype as _ = float64 ) pass
+  method random(
+    size, rangeSpec= 0..1, dtype: dtype as _ = float64
+  ) : Column(dtype= float'dtype) pass
 
   where :: ( bool'index!Column ) -> Column
   {##
@@ -52,134 +76,152 @@ TODO both bounds of the range are always treated as closed bound for now
    #
    # see: https://numpy.org/doc/stable/reference/generated/numpy.where.html
    #}
-  method where( colBoolIdx ) pass
+  method where(
+    colBoolIdx: Column(dtype= yesno)
+  ) : Column(dtype= intp) pass
 
-  pi :: ( capacity!int!Decimal, float!dtype!Object || None ) -> Column
   {##
    # Create a column object with the specified capacity and every element
    # filled with mathematic constant π, per the specified dtype
    #}
-  method pi( cap as _, dtype as _ = float64 ) pass
+  method pi(
+    cap as _, dtype: dtype as _ = float64
+  ) : Column(dtype= float'dtype) pass
 
-  exp :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `exp`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:exp
      )
    #}
-  method exp( colObj ) pass
+  method exp(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  log :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `log`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:log
      )
    #}
-  method log( colObj ) pass
+  method log(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  sqrt :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `sqrt`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:sqrt
      )
    #}
-  method sqrt( colObj ) pass
+  method sqrt(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  sin :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `sin`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:sin
      )
    #}
-  method sin( colObj ) pass
+  method sin(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  cos :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `cos`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:cos
      )
    #}
-  method cos( colObj ) pass
+  method cos(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  tan :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `tan`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:tan
      )
    #}
-  method tan( colObj ) pass
+  method tan(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  asin :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `asin`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:asin
      )
    #}
-  method asin( colObj ) pass
+  method asin(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  acos :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `acos`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:acos
      )
    #}
-  method acos( colObj ) pass
+  method acos(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  atan :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `atan`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:atan
      )
    #}
-  method atan( colObj ) pass
+  method atan(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  sinh :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `sinh`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:sinh
      )
    #}
-  method sinh( colObj ) pass
+  method sinh(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  cosh :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `cosh`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:cosh
      )
    #}
-  method cosh( colObj ) pass
+  method cosh(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  tanh :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `tanh`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:tanh
      )
    #}
-  method tanh( colObj ) pass
+  method tanh(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  asinh :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `asinh`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:asinh
      )
    #}
-  method asinh( colObj ) pass
+  method asinh(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  acosh :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `acosh`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:acosh
      )
    #}
-  method acosh( colObj ) pass
+  method acosh(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
-  atanh :: ( float!Column ) -> float!Column
   {##
    # Vectorized [floating point `atanh`](
         https://hackage.haskell.org/package/base/docs/Prelude.html#v:atanh
      )
    #}
-  method atanh( colObj ) pass
+  method atanh(
+    colObj: Column(dtype= float'dtype)
+  ) : Column(dtype= float'dtype) pass
 
 
   {##
