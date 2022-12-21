@@ -81,6 +81,24 @@ export {
   intp = dtype()
 
   {##
+   # Data type for 64-bit unsigned integer values
+   #}
+  uint64 = dtype()
+  {##
+   # Alias for `uint64`
+   #}
+  u8 = uint64
+
+  {##
+   # Data type for 32-bit unsigned integer values
+   #}
+  uint32 = dtype()
+  {##
+   # Alias for `uint32`
+   #}
+  u4 = uint32
+
+  {##
    # Data type for Boolean values
    #}
   yesno = dtype()

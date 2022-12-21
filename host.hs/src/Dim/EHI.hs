@@ -49,6 +49,8 @@ installDimBatteries !world = runProgramM_ world $ do
   int32 <- mkIntColDt @Int32 yesno "int32"
   int8 <- mkIntColDt @Int8 yesno "int8"
   intp <- mkIntColDt @Int yesno "intp"
+  uint64 <- mkIntColDt @Word64 yesno "uint64"
+  uint32 <- mkIntColDt @Word32 yesno "uint32"
 
   installModuleM_ "dim/dtypes" $
     exportM_ $ do
@@ -66,6 +68,10 @@ installDimBatteries !world = runProgramM_ world $ do
       defEdhArt "int8" $ EdhObject int8
       defEdhArt "byte" $ EdhObject int8
       defEdhArt "intp" $ EdhObject intp
+      defEdhArt "uint64" $ EdhObject uint64
+      defEdhArt "u8" $ EdhObject uint64
+      defEdhArt "uint32" $ EdhObject uint32
+      defEdhArt "u4" $ EdhObject uint32
       defEdhArt "bool" $ EdhObject yesno
       -- for numpy compat, not all values are objects in Edh
       defEdhArt "object" $ EdhObject box
