@@ -6,8 +6,6 @@ import Control.Applicative
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Internal as B
 import Data.Dynamic
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
@@ -17,12 +15,9 @@ import qualified Data.Text as T
 import Dim.FlatArray
 import Event.Analytics.EHI
 import Foreign hiding (void)
-import Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
 import Language.Edh.EHI
-import System.Directory
 import System.FilePath
 import System.IO
-import System.IO.MMap
 import Type.Reflection
 import Prelude
 
@@ -119,75 +114,9 @@ edhArrayShape (ArrayShape !shape) =
     edhDim ("", size) = EdhDecimal $ fromIntegral size
     edhDim (name, size) = EdhNamedValue name $ EdhDecimal $ fromIntegral size
 
-data DbArrayHeader = DbArrayHeader
-  { -- | version of file data layout
-    array'layout'version :: {-# UNPACK #-} !Int32,
-    -- | a.k.a. padded header size
-    array'data'offset :: {-# UNPACK #-} !Int32,
-    -- | padded item size
-    array'item'size :: {-# UNPACK #-} !Int32,
-    -- | alignment required for an item
-    array'item'align :: {-# UNPACK #-} !Int32,
-    -- | number of valid items in the array, to be read/written on-the-fly
-    -- rest of the file content should be considered pre-allocated capacity
-    array'data'length :: {-# UNPACK #-} !Int64
-  }
-  deriving (Eq)
-
-instance Storable DbArrayHeader where
-  -- this is highly fragile in covering different ISA or even C compilers or
-  -- even different versions of them, which is used to build the Python/Numpy
-  -- and other programs we interchange data files with.
-  --
-  -- strive to be compliant with mainstream toolchains of Ubuntu 18.04 on x64,
-  -- as far as working with decent macOS on x64 during development.
-  peek !ptr = do
-    !ver <- peekByteOff ptr 0
-    !doff <- peekByteOff ptr 4
-    !isz <- peekByteOff ptr 8
-    !ial <- peekByteOff ptr 12
-    !vlen <- peekByteOff ptr 16
-    return $ DbArrayHeader ver doff isz ial vlen
-  poke !ptr (DbArrayHeader !ver !doff !isz ial !vlen) = do
-    pokeByteOff ptr 0 ver
-    pokeByteOff ptr 4 doff
-    pokeByteOff ptr 8 isz
-    pokeByteOff ptr 12 ial
-    pokeByteOff ptr 16 vlen
-
-  -- a disk file for array is always mmaped from beginning, data following the
-  -- header. align the header so start of data is aligned with at least 512
-  -- bits for possible SIMD performance improvement or even compliance
-  alignment _ = 64
-
-  -- so 40 bytes is unused in the head as far
-  sizeOf _ = 24
-
-dbArrayHeaderSize, dbArrayHeaderAlign :: Int
-dbArrayHeaderSize = sizeOf (undefined :: DbArrayHeader)
-dbArrayHeaderAlign = alignment (undefined :: DbArrayHeader)
-
-readDbArrayLength :: Ptr DbArrayHeader -> IO Int64
-readDbArrayLength !ptr = peekByteOff ptr 16
-
-writeDbArrayLength :: Ptr DbArrayHeader -> Int64 -> IO ()
-writeDbArrayLength !ptr !vlen = pokeByteOff ptr 16 vlen
-
-dbArrayHeaderV0 :: Int -> Int -> DbArrayHeader
-dbArrayHeaderV0 !item'size !item'align =
-  DbArrayHeader
-    { array'layout'version = 0,
-      array'data'offset =
-        fromIntegral $
-          dbArrayHeaderAlign
-            * (1 + div dbArrayHeaderSize dbArrayHeaderAlign),
-      array'item'size = fromIntegral item'size,
-      array'item'align = fromIntegral item'align,
-      array'data'length = 0
-    }
-
 -- | Disk backed array
-data DbArray a = (Eq a, Storable a, EdhXchg a, Typeable a) =>
+data DbArray a
+  = (Eq a, Storable a, EdhXchg a, Typeable a) =>
   DbArray
   { -- | root dir for data files
     db'array'dir :: !Text,
@@ -209,124 +138,26 @@ mmapDbArray ::
   Maybe ArrayShape ->
   Bool ->
   IO ()
-mmapDbArray !asVar !dataDir !dataPath !maybeShape !overwrite = do
-  when overwrite $
-    catch (removeFile dataFilePath) $ \(_ :: IOException) -> pure ()
-  case maybeShape of
-    -- create if not exists, or load existing file with truncation
-    Just !shape ->
-      handle (atomically . void . tryPutTMVar asVar . Left) $ do
-        let !cap = dbArraySize shape
-        createDirectoryIfMissing True dataFileDir
-        withFile dataFilePath ReadWriteMode $ \ !dfh ->
-          B.hGetNonBlocking dfh dbArrayHeaderSize >>= \case
-            -- existing and with a header long enough
-            !headerPayload | B.length headerPayload == dbArrayHeaderSize ->
-              do
-                let (!fpHdr, !fpOffHdr, _) = B.toForeignPtr headerPayload
-                withForeignPtr (plusForeignPtr fpHdr fpOffHdr) $
-                  \ !pHdr' -> do
-                    let (pHdr :: Ptr DbArrayHeader) = castPtr pHdr'
-                    !hdr <- peek pHdr
-                    let !mmap'size =
-                          fromIntegral (array'data'offset hdr)
-                            + cap
-                            * item'size
-                    when
-                      ( fromIntegral (dbArraySize1d shape)
-                          < array'data'length hdr
-                      )
-                      $ throwHostIO UsageError $
-                        T.pack $
-                          "len1d of shape "
-                            <> show (dbArraySize1d shape)
-                            <> " too small to cover valid data in data file: "
-                            <> show (array'data'length hdr)
-                    -- mind to avoid truncating file shorter,
-                    -- i.e. possible data loss
-                    (fp, _, _) <-
-                      mmapFileForeignPtr dataFilePath ReadWriteEx $
-                        Just (0, mmap'size)
-                    let !hdrLongLive =
-                          unsafeForeignPtrToPtr $ castForeignPtr fp
-                        !fa =
-                          DeviceArray @a cap $
-                            plusForeignPtr fp $
-                              fromIntegral $ array'data'offset hdr
-                    atomically $ do
-                      void $ tryTakeTMVar asVar
-                      void $
-                        tryPutTMVar asVar $
-                          Right
-                            (shape, hdrLongLive, fa)
-
-            -- don't have a header long enough, most prolly not existing
-            -- todo more care for abnormal situations
-            _ -> do
-              let !hdr = dbArrayHeaderV0 item'size item'align
-                  !mmap'size =
-                    fromIntegral (array'data'offset hdr) + cap * item'size
-              (fp, _, _) <-
-                mmapFileForeignPtr dataFilePath ReadWriteEx $
-                  Just (0, mmap'size)
-              let !hdrLongLive = unsafeForeignPtrToPtr $ castForeignPtr fp
-              poke hdrLongLive hdr
-              atomically $ do
-                void $ tryTakeTMVar asVar
-                void $
-                  tryPutTMVar asVar $
-                    Right
-                      ( shape,
-                        hdrLongLive,
-                        DeviceArray @a cap $
-                          plusForeignPtr fp $
-                            fromIntegral $ array'data'offset hdr
-                      )
-
-    -- load existing array file, use header and file length to calculate
-    -- shape, assuming 1d
-    Nothing ->
-      handle (atomically . void . tryPutTMVar asVar . Left) $
-        withFile dataFilePath ReadWriteMode $
-          \ !dfh ->
-            hFileSize dfh >>= \case
-              -- existing and with a header long enough
-              !fileSize | fileSize >= fromIntegral dbArrayHeaderSize -> do
-                (fp, _, _) <-
-                  mmapFileForeignPtr dataFilePath ReadWriteEx $
-                    Just (0, fromIntegral fileSize)
-                let !hdrLongLive =
-                      unsafeForeignPtrToPtr $ castForeignPtr fp
-                !hdr <- peek hdrLongLive
-                let data'bytes'len :: Int64 =
-                      fromIntegral fileSize
-                        - fromIntegral (array'data'offset hdr)
-                    cap :: Int =
-                      fromIntegral
-                        data'bytes'len
-                        `div` fromIntegral item'size
-                atomically $ do
-                  void $ tryTakeTMVar asVar
-                  void $
-                    tryPutTMVar asVar $
-                      Right
-                        ( ArrayShape (("", cap) :| []),
-                          hdrLongLive,
-                          DeviceArray @a cap $
-                            plusForeignPtr fp $
-                              fromIntegral $ array'data'offset hdr
-                        )
-
-              -- don't have a header long enough, most prolly not existing
-              -- todo more care of abnormal situations
-              _ ->
-                throwHostIO UsageError $
-                  "invalid disk file for array: " <> T.pack dataFilePath
+mmapDbArray !asVar !dataDir !dataPath !maybeShape !overwrite =
+  handle (atomically . void . tryPutTMVar asVar . Left) $ case maybeShape of
+    Just !shape -> do
+      (dbaHdr, dba) <- mmapDBA dataFilePath (Just $ dbArraySize shape) overwrite
+      atomically $ do
+        void $ tryTakeTMVar asVar
+        void $ tryPutTMVar asVar $ Right (shape, dbaHdr, dba)
+    Nothing -> do
+      (dbaHdr, dba) <- mmapDBA dataFilePath Nothing overwrite
+      atomically $ do
+        void $ tryTakeTMVar asVar
+        void $
+          tryPutTMVar asVar $
+            Right
+              ( ArrayShape (("", device'array'cap dba) :| []),
+                dbaHdr,
+                dba
+              )
   where
     !dataFilePath = T.unpack dataDir </> T.unpack (dataPath <> ".dba")
-    !dataFileDir = takeDirectory dataFilePath
-    item'size = sizeOf (undefined :: a)
-    item'align = alignment (undefined :: a)
 
 dbArrayShape :: forall a. DbArray a -> STM ArrayShape
 dbArrayShape !dba =
@@ -357,7 +188,7 @@ asDbArrayOf' !val !exit = case edhUltimate val of
   EdhObject !obj -> asDbArrayOf obj exit
   _ -> mzero
 
-withDbArrayOf :: forall a. Typeable a => Object -> Edh (Object, DbArray a)
+withDbArrayOf :: forall a. (Typeable a) => Object -> Edh (Object, DbArray a)
 withDbArrayOf !obj = do
   supers <- readTVarEdh $ edh'obj'supers obj
   withComposition $ obj : supers
@@ -367,13 +198,13 @@ withDbArrayOf !obj = do
     withComposition (o : rest) =
       asDbArrayOf @a o (return . (o,)) <|> withComposition rest
 
-withDbArrayOf' :: forall a. Typeable a => EdhValue -> Edh (Object, DbArray a)
+withDbArrayOf' :: forall a. (Typeable a) => EdhValue -> Edh (Object, DbArray a)
 withDbArrayOf' !val = case edhUltimate val of
   EdhObject !obj -> do
     withDbArrayOf obj
   _ -> naM ""
 
-withDbArraySelfOf :: forall a. Typeable a => Edh (Object, DbArray a)
+withDbArraySelfOf :: forall a. (Typeable a) => Edh (Object, DbArray a)
 withDbArraySelfOf = do
   that <- edh'scope'that . contextScope . edh'context <$> edhThreadState
   (withDbArrayOf @a that <|>) $
